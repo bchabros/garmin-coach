@@ -4,6 +4,7 @@ No I/O, no side effects. Missing fields become None rather than raising, so a
 sparse onboarding payload normalizes without special-casing at the call site.
 The discipline mapping lives here (single source of truth, easy to extend).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,7 +20,9 @@ _DISCIPLINE = {
 }
 
 
-def map_discipline(gtype: str | None, name: str | None = None, elev_gain: float | None = None) -> str | None:
+def map_discipline(
+    gtype: str | None, name: str | None = None, elev_gain: float | None = None
+) -> str | None:
     """Map a Garmin activity type to a discipline label.
 
     Running with a trail signal (name mentions trail, or notable elevation) is
@@ -154,9 +157,12 @@ def normalize_sleep(date: str, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _hrv_baseline(v: Any) -> Any:
-    """Garmin's HRV baseline is null during onboarding, then a band object
-    {lowUpper, balancedLow, balancedUpper, markerValue}. Reduce to the balanced
-    band's lower edge (a stable integer); raw_payloads keeps the full band."""
+    """Reduce Garmin's HRV baseline to one stable scalar value.
+
+    The baseline is null during onboarding, then a band object with values such
+    as lowUpper, balancedLow, balancedUpper, and markerValue. raw_payloads keeps
+    the full band.
+    """
     if isinstance(v, dict):
         return v.get("balancedLow")
     return v
@@ -179,9 +185,15 @@ def normalize_hrv(date: str, p: dict[str, Any]) -> dict[str, Any]:
 # Wellness fields that count as "real data"; if all are null the day is an
 # explicit gap (onboarding / watch not worn) -> has_data = 0.
 _WELLNESS_SIGNALS = (
-    "totalSteps", "restingHeartRate", "averageStressLevel", "maxStressLevel",
-    "bodyBatteryHighestValue", "bodyBatteryLowestValue", "avgWakingRespirationValue",
-    "moderateIntensityMinutes", "vigorousIntensityMinutes",
+    "totalSteps",
+    "restingHeartRate",
+    "averageStressLevel",
+    "maxStressLevel",
+    "bodyBatteryHighestValue",
+    "bodyBatteryLowestValue",
+    "avgWakingRespirationValue",
+    "moderateIntensityMinutes",
+    "vigorousIntensityMinutes",
 )
 
 
@@ -246,14 +258,12 @@ def _first_device(mapping: Any) -> dict[str, Any]:
 
 def normalize_status(date: str, p: dict[str, Any]) -> dict[str, Any]:
     """Normalize a get_training_status payload to a `training_status_daily` row."""
-    ts = _first_device(
-        (p.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData")
-    )
+    ts = _first_device((p.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData"))
     acute = ts.get("acuteTrainingLoadDTO") or {}
     lb = _first_device(
         (p.get("mostRecentTrainingLoadBalance") or {}).get("metricsTrainingLoadBalanceDTOMap")
     )
-    vo2 = ((p.get("mostRecentVO2Max") or {}).get("generic") or {})
+    vo2 = (p.get("mostRecentVO2Max") or {}).get("generic") or {}
     return {
         "date": date,
         "status": ts.get("trainingStatusFeedbackPhrase"),

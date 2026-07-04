@@ -1,4 +1,5 @@
 """Config seam: env-backed settings with sane defaults."""
+
 from __future__ import annotations
 
 from garmin_coach.config import Settings

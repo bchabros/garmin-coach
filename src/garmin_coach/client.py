@@ -5,6 +5,7 @@ just fetches and returns raw payloads, so sync.py can depend on the GarminClient
 protocol and be tested with a fake. Not unit-tested (network/auth); validated by
 the live backfill.
 """
+
 from __future__ import annotations
 
 import getpass
@@ -64,19 +65,25 @@ class GarminTransport:
         self._api = api
 
     def get_activities(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        """Fetch activity summaries for an inclusive date range."""
         return self._api.get_activities_by_date(start_date, end_date)
 
     def get_sleep(self, date: str) -> dict[str, Any] | None:
+        """Fetch sleep data for one date."""
         return self._api.get_sleep_data(date)
 
     def get_hrv(self, date: str) -> dict[str, Any] | None:
+        """Fetch nightly HRV data for one date."""
         return self._api.get_hrv_data(date)
 
     def get_wellness(self, date: str) -> dict[str, Any] | None:
+        """Fetch daily wellness summary data for one date."""
         return self._api.get_user_summary(date)
 
     def get_readiness(self, date: str) -> Any:
+        """Fetch training readiness data for one date."""
         return self._api.get_training_readiness(date)
 
     def get_status(self, date: str) -> dict[str, Any] | None:
+        """Fetch training status data for one date."""
         return self._api.get_training_status(date)

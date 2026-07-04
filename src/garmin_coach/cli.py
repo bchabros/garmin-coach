@@ -1,4 +1,5 @@
 """Command-line entry point. Phase 0 exposes only `backfill`."""
+
 from __future__ import annotations
 
 import argparse
@@ -24,19 +25,26 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
     sub = parser.add_subparsers(dest="command", required=True)
 
     bf = sub.add_parser("backfill", help="Pull a date range into the DB (raw + core).")
-    bf.add_argument("--from", dest="from_date", default=None,
-                    help="Start date YYYY-MM-DD (default: DATA_START_DATE).")
-    bf.add_argument("--to", dest="to_date", default=None,
-                    help="End date YYYY-MM-DD (default: yesterday).")
+    bf.add_argument(
+        "--from",
+        dest="from_date",
+        default=None,
+        help="Start date YYYY-MM-DD (default: DATA_START_DATE).",
+    )
+    bf.add_argument(
+        "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
+    )
     bf.set_defaults(func=_cmd_backfill)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line interface."""
     args = build_parser().parse_args(argv)
     return args.func(args)
 

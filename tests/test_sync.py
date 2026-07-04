@@ -1,4 +1,5 @@
 """Backfill orchestration seam. Observes resulting DB state; client is injected."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -24,8 +25,13 @@ def test_backfill_fills_core_tables(conn, fake_client, fixture):
     sync.backfill(client, conn, "2026-06-08", "2026-06-10")
 
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
-    for table in ("sleep", "hrv_nightly", "daily_wellness",
-                  "training_readiness", "training_status_daily"):
+    for table in (
+        "sleep",
+        "hrv_nightly",
+        "daily_wellness",
+        "training_readiness",
+        "training_status_daily",
+    ):
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1, table
     # raw captured for every successful pull
     assert conn.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0] >= 6
@@ -36,12 +42,25 @@ def test_backfill_is_idempotent_for_core(conn, fake_client, fixture):
     sync.backfill(client, conn, "2026-06-08", "2026-06-10")
     sync.backfill(client, conn, "2026-06-08", "2026-06-10")
 
-    counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-              for t in ("activities", "sleep", "hrv_nightly", "daily_wellness",
-                        "training_readiness", "training_status_daily")}
-    assert counts == {"activities": 1, "sleep": 1, "hrv_nightly": 1,
-                      "daily_wellness": 1, "training_readiness": 1,
-                      "training_status_daily": 1}
+    counts = {
+        t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in (
+            "activities",
+            "sleep",
+            "hrv_nightly",
+            "daily_wellness",
+            "training_readiness",
+            "training_status_daily",
+        )
+    }
+    assert counts == {
+        "activities": 1,
+        "sleep": 1,
+        "hrv_nightly": 1,
+        "daily_wellness": 1,
+        "training_readiness": 1,
+        "training_status_daily": 1,
+    }
 
 
 def test_backfill_marks_empty_wellness_day(conn, fake_client, fixture):

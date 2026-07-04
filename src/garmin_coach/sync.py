@@ -5,6 +5,7 @@ guarantee here is idempotency — re-running converges the core tables — and
 "raw first" so a re-run after a crash reprocesses without re-hitting Garmin.
 Every write for a given day happens in one transaction (raw + core atomic).
 """
+
 from __future__ import annotations
 
 import datetime as dt
@@ -18,12 +19,29 @@ from . import db, models
 class GarminClient(Protocol):
     """Transport seam. sync depends on this, not on garminconnect directly."""
 
-    def get_activities(self, start_date: str, end_date: str) -> list[dict[str, Any]]: ...
-    def get_sleep(self, date: str) -> dict[str, Any] | None: ...
-    def get_hrv(self, date: str) -> dict[str, Any] | None: ...
-    def get_wellness(self, date: str) -> dict[str, Any] | None: ...
-    def get_readiness(self, date: str) -> Any: ...
-    def get_status(self, date: str) -> dict[str, Any] | None: ...
+    def get_activities(self, start_date: str, end_date: str) -> list[dict[str, Any]]:
+        """Fetch activity summaries for an inclusive date range."""
+        ...
+
+    def get_sleep(self, date: str) -> dict[str, Any] | None:
+        """Fetch sleep data for one date."""
+        ...
+
+    def get_hrv(self, date: str) -> dict[str, Any] | None:
+        """Fetch nightly HRV data for one date."""
+        ...
+
+    def get_wellness(self, date: str) -> dict[str, Any] | None:
+        """Fetch daily wellness summary data for one date."""
+        ...
+
+    def get_readiness(self, date: str) -> Any:
+        """Fetch training readiness data for one date."""
+        ...
+
+    def get_status(self, date: str) -> dict[str, Any] | None:
+        """Fetch training status data for one date."""
+        ...
 
 
 # Per-day streams: (endpoint label, client method, normalizer, target table).
@@ -49,14 +67,13 @@ def backfill(
     from_date: str,
     to_date: str | None = None,
 ) -> None:
-    """Backfill [from_date .. to_date]. to_date defaults to yesterday (today is
-    incomplete — HRV/sleep land after the night)."""
+    """Backfill the inclusive date range from `from_date` to `to_date`.
+
+    to_date defaults to yesterday because today is incomplete; HRV and sleep
+    land after the night.
+    """
     start = dt.date.fromisoformat(from_date)
-    end = (
-        dt.date.fromisoformat(to_date)
-        if to_date
-        else dt.date.today() - dt.timedelta(days=1)
-    )
+    end = dt.date.fromisoformat(to_date) if to_date else dt.date.today() - dt.timedelta(days=1)
 
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []

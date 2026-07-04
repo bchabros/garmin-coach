@@ -24,7 +24,7 @@ don't advance until it's met. The established loop for a new phase is:
   injected fake client). `client.py` (real transport) and `cli.py` are out of seam —
   validated by a live run, not unit tests.
 - One vertical slice at a time: one test → minimal impl → repeat. No bulk test-first.
-- Before committing a change: `poetry run pytest && poetry run ruff check src tests && poetry run mypy src`.
+- Before committing a change: `task check` (or `poetry run pytest && poetry run ruff check src tests && poetry run mypy src` if Task is unavailable).
 
 ## Commands
 
@@ -33,7 +33,10 @@ poetry install
 poetry run garmin-coach backfill --from 2026-06-08   # [--to YYYY-MM-DD]
 poetry run pytest        # offline: fake client + fixtures
 poetry run ruff check src tests
+poetry run ruff check src --select D --ignore D100,D104,D105,D107
 poetry run mypy src
+task check               # tests + lint + docstrings + mypy
+task run FROM=2026-06-08 # local backfill; optional TO=YYYY-MM-DD
 ```
 
 ## Architecture
@@ -52,6 +55,7 @@ marts/views, never mixed into core.
 
 - **Poetry**, not `uv`/`pip`, for all dependency work (despite what the BUILD doc says).
 - Python 3.13. Code and docstrings in **English**; commit messages in English.
+- New and changed public docstrings should use **Google-style docstrings**.
 - Schema source of truth is the package copy `src/garmin_coach/schema.sql`, loaded via
   `importlib.resources`. `docs/schema.sql` is a snapshot kept identical by
   `tests/test_schema_sync.py` — edit the package copy, then re-sync docs.

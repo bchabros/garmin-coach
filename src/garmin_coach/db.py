@@ -5,6 +5,7 @@ via importlib.resources so the package is self-contained. Upserts key on the
 primary key (activity_id / date) so re-running a backfill converges, never
 duplicates. raw_payloads is append-only by design.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -14,6 +15,7 @@ from typing import Any
 
 
 def connect(path: str) -> sqlite3.Connection:
+    """Open a SQLite connection with foreign keys enabled."""
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -57,6 +59,7 @@ def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) 
 
 
 def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert an `activities` row by activity ID."""
     _upsert(conn, "activities", row, pk="activity_id")
 
 

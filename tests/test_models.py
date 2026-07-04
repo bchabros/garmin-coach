@@ -1,4 +1,5 @@
 """Normalizer seam: pure payload dict -> row dict functions."""
+
 from __future__ import annotations
 
 from garmin_coach import models
@@ -29,11 +30,13 @@ def test_normalize_activity_maps_core_fields(fixture):
 
 
 def test_normalize_activity_missing_fields_become_none(fixture):
-    row = models.normalize_activity({
-        "activityId": 1,
-        "startTimeLocal": "2026-06-09 07:00:00",
-        "activityType": {"typeKey": "strength_training"},
-    })
+    row = models.normalize_activity(
+        {
+            "activityId": 1,
+            "startTimeLocal": "2026-06-09 07:00:00",
+            "activityType": {"typeKey": "strength_training"},
+        }
+    )
     assert row["activity_id"] == 1
     assert row["discipline"] == "Siła"
     assert row["avg_hr"] is None
@@ -57,9 +60,9 @@ def test_normalize_sleep_maps_summary(fixture):
     assert row["rem_s"] == 5400
     assert row["light_s"] == 11880
     assert row["awake_s"] == 5880
-    assert row["score"] == 66            # sleepScores.overall.value
+    assert row["score"] == 66  # sleepScores.overall.value
     assert row["score_feedback"] == "NEGATIVE_DISCONTINUOUS"
-    assert row["resting_hr"] == 48       # top-level restingHeartRate
+    assert row["resting_hr"] == 48  # top-level restingHeartRate
     assert row["avg_sleep_hr"] == 53
     assert row["avg_overnight_hrv"] == 68
     assert row["awake_count"] == 3
@@ -68,7 +71,7 @@ def test_normalize_sleep_maps_summary(fixture):
 def test_normalize_hrv_maps_summary(fixture):
     row = models.normalize_hrv("2026-06-10", fixture("hrv_day"))
     assert row["date"] == "2026-06-10"
-    assert row["avg_hrv"] == 68          # hrvSummary.lastNightAvg
+    assert row["avg_hrv"] == 68  # hrvSummary.lastNightAvg
     assert row["night_high_5min"] == 120
     assert row["weekly_avg"] is None
     assert row["garmin_baseline"] is None
@@ -82,7 +85,7 @@ def test_normalize_hrv_baseline_is_scalar_after_onboarding(fixture):
     row = models.normalize_hrv("2026-07-01", fixture("hrv_balanced_day"))
     assert row["avg_hrv"] == 68
     assert row["status"] == "BALANCED"
-    assert row["garmin_baseline"] == 57       # balancedLow (lower edge of balanced band)
+    assert row["garmin_baseline"] == 57  # balancedLow (lower edge of balanced band)
     assert not isinstance(row["garmin_baseline"], dict)
 
 
@@ -114,14 +117,14 @@ def test_normalize_readiness_from_list(fixture):
     assert row["score"] is None
     assert row["recovery_time_min"] == 3412
     assert row["sleep_factor_pct"] == 0
-    assert row["stress_factor_pct"] == 0     # stressHistoryFactorPercent
+    assert row["stress_factor_pct"] == 0  # stressHistoryFactorPercent
     assert row["valid_sleep"] == 1
 
 
 def test_normalize_status_picks_single_device(fixture):
     row = models.normalize_status("2026-06-10", fixture("status_day"))
     assert row["date"] == "2026-06-10"
-    assert row["status"] == "NO_STATUS_1"        # feedback phrase, not numeric code
+    assert row["status"] == "NO_STATUS_1"  # feedback phrase, not numeric code
     assert row["garmin_acute_load"] == 329
     assert row["garmin_chronic_load"] == 146
     assert row["garmin_acwr"] is None

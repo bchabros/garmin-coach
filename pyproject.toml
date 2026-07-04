@@ -33,6 +33,9 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py313"
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.mypy]
 python_version = "3.13"
 ignore_missing_imports = true

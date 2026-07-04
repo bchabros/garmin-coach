@@ -1,0 +1,84 @@
+version: "3"
+
+vars:
+  FROM: '{{.FROM | default "2026-06-08"}}'
+
+tasks:
+  default:
+    desc: Run the full local verification suite.
+    cmds:
+      - task: check
+
+  install:
+    desc: Install project dependencies with Poetry.
+    cmds:
+      - poetry install
+
+  test:
+    aliases: [tests]
+    desc: Run all offline tests.
+    cmds:
+      - poetry run pytest -p no:cacheprovider
+
+  test:all:
+    desc: Run all tests with short failure summaries.
+    cmds:
+      - poetry run pytest -ra -p no:cacheprovider
+
+  lint:
+    aliases: [ruff]
+    desc: Run Ruff lint checks.
+    cmds:
+      - poetry run ruff check src tests --no-cache
+
+  lint:fix:
+    desc: Run Ruff lint checks and apply safe fixes.
+    cmds:
+      - poetry run ruff check src tests --fix --no-cache
+
+  format:
+    desc: Format Python source and tests with Ruff.
+    cmds:
+      - poetry run ruff format src tests
+
+  docstrings:
+    desc: Check source docstrings with Ruff pydocstyle using Google convention.
+    cmds:
+      - poetry run ruff check src --select D --ignore D100,D104,D105,D107 --no-cache
+
+  typecheck:
+    aliases: [mypy]
+    desc: Run mypy over source code.
+    cmds:
+      - poetry run mypy src --cache-dir /tmp/garmin-coach-mypy-cache
+
+  check:
+    aliases: [ci]
+    desc: Run tests, lint, docstrings, and type checking.
+    cmds:
+      - task: test
+      - task: lint
+      - task: docstrings
+      - task: typecheck
+
+  backfill:
+    desc: Run Garmin backfill. Override with FROM=YYYY-MM-DD and optional TO=YYYY-MM-DD.
+    cmds:
+      - >-
+        poetry run garmin-coach backfill --from {{.FROM}}{{if .TO}} --to {{.TO}}{{end}}
+
+  run:
+    desc: Run the default local app command.
+    cmds:
+      - task: backfill
+
+  schema:check:
+    desc: Verify the packaged schema matches the docs snapshot.
+    cmds:
+      - poetry run pytest tests/test_schema_sync.py -p no:cacheprovider
+
+  clean:
+    desc: Remove local Python and tool caches.
+    cmds:
+      - rm -rf .pytest_cache .ruff_cache .mypy_cache
+      - 'find . -type d -name __pycache__ -prune -exec rm -rf {} +'

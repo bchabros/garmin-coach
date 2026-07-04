@@ -1,4 +1,5 @@
 """Shared test infrastructure: fixture loading, in-memory DB, fake Garmin client."""
+
 from __future__ import annotations
 
 import json

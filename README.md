@@ -13,9 +13,9 @@ and what's missing.
   too flaky for a pipeline (timeouts, >1 MB payloads).
 - **Metrics + coach layer** reads the finished DB, never hits Garmin live.
 
-One repo, two work surfaces (Claude Code builds/maintains it; Claude Cowork points at
-the same DB and runs the coach skill). See [docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md)
-for the full brief.
+One repo, several work surfaces: Claude Code and Codex build/maintain it, while
+Claude Cowork points at the same DB and runs the coach skill. See
+[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md) for the full brief.
 
 ## Status
 
@@ -33,6 +33,10 @@ for the full brief.
 ```
 garmin-coach/
 ├── pyproject.toml            # Poetry: deps, scripts, tool config
+├── Taskfile.yml              # task shortcuts for tests, lint, checks, backfill
+├── AGENTS.md                 # Codex/agent working rules
+├── CLAUDE.md                 # Claude Code working rules
+├── .codex/                   # Codex local notes and companion files
 ├── .env.example             # copy to .env (GARMIN_EMAIL, DATA_START_DATE, DB_PATH, ...)
 ├── docs/
 │   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, metric specs)
@@ -59,7 +63,7 @@ upserted) → **mart** (`daily_metrics`, recomputed; phase 2+).
 
 ## Setup
 
-Requires Python 3.13 and [Poetry](https://python-poetry.org/).
+Requires Python 3.13 and [Poetry](https://python-poetry.org/). [Task](https://taskfile.dev/) is optional but recommended; every task wraps the underlying Poetry command.
 
 ```bash
 poetry install
@@ -71,9 +75,12 @@ cp .env.example .env      # then fill in GARMIN_EMAIL (password optional)
 ```bash
 # First run prompts for password + MFA once, then caches OAuth tokens to
 # ~/.garminconnect; later runs resume from them (no login endpoint, no rate limits).
-poetry run garmin-coach backfill --from 2026-06-08
+task run FROM=2026-06-08
 
-# Idempotent: re-running never duplicates core rows (raw_payloads is append-only).
+# Optional end date for a bounded local run.
+task backfill FROM=2026-06-08 TO=2026-06-30
+
+# Poetry fallback if Task is not installed.
 poetry run garmin-coach backfill --from 2026-06-08
 ```
 
@@ -83,16 +90,32 @@ training status. Raw JSON is stored first, then normalized into core tables.
 
 ## Development
 
+Use the Taskfile for the normal local loop:
+
 ```bash
-poetry run pytest        # 22 tests, no network (fake client + fixtures)
+task check        # tests + Ruff lint + Google-style docstring check + mypy
+task test         # offline tests only (fake client + fixtures)
+task lint         # Ruff lint over src and tests
+task docstrings   # Ruff pydocstyle check for source docstrings
+task typecheck    # mypy over src
+task format       # apply Ruff formatting when intentionally reformatting
+task schema:check # verify docs/schema.sql matches the packaged schema
+```
+
+Poetry equivalents are still available when Task is not installed:
+
+```bash
+poetry run pytest
 poetry run ruff check src tests
+poetry run ruff check src --select D --ignore D100,D104,D105,D107
 poetry run mypy src
 ```
 
-**Conventions:** code/docstrings in English, commit messages in English. Tests run
-fully offline — the transport is injected, and fixtures are anonymized real payloads
-(no PII: user IDs, names, geolocation, device IDs stripped). Metric definitions and
-the phasing plan live in [docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md).
+**Conventions:** code/docstrings in English, public docstrings in Google style,
+commit messages in English. Tests run fully offline — the transport is injected,
+and fixtures are anonymized real payloads (no PII: user IDs, names, geolocation,
+device IDs stripped). Metric definitions and the phasing plan live in
+[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md).
 
 ## Privacy
 

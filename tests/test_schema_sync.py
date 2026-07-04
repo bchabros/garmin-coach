@@ -1,4 +1,5 @@
 """Guard: the runtime schema (package resource) must not drift from the docs snapshot."""
+
 from __future__ import annotations
 
 import importlib.resources

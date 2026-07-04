@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__garmin__get_sleep_data",
+      "mcp__garmin__get_hrv",
+      "mcp__garmin__get_training_readiness",
+      "mcp__garmin__get_training_status",
+      "mcp__garmin__get_daily_summary",
+      "Bash(python3 - /Users/Chabi/.claude/projects/-Users-Chabi-Documents-garmin-coach/76fd8643-f7e0-467c-99c2-56d6a37c8f10/tool-results/mcp-garmin-get_sleep_data-1783190749847.txt)",
+      "Bash(poetry config *)",
+      "Bash(poetry install *)",
+      "Bash(poetry run *)"
+    ]
+  }
+}

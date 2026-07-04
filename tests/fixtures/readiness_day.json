@@ -1,0 +1,18 @@
+[
+  {
+    "calendarDate": "2026-06-10",
+    "timestampLocal": "2026-06-10T07:32:53.0",
+    "level": "NONE",
+    "feedbackShort": "UNKNOWN",
+    "score": null,
+    "sleepScore": 66,
+    "sleepScoreFactorPercent": 0,
+    "recoveryTime": 3412,
+    "acwrFactorPercent": 0,
+    "hrvFactorPercent": 0,
+    "hrvWeeklyAverage": 511,
+    "stressHistoryFactorPercent": 0,
+    "sleepHistoryFactorPercent": 0,
+    "validSleep": true
+  }
+]

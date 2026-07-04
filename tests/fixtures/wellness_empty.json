@@ -1,0 +1,19 @@
+{
+  "calendarDate": "2026-05-20",
+  "totalSteps": null,
+  "totalDistanceMeters": null,
+  "floorsAscended": null,
+  "moderateIntensityMinutes": null,
+  "vigorousIntensityMinutes": null,
+  "minHeartRate": null,
+  "maxHeartRate": null,
+  "restingHeartRate": null,
+  "averageStressLevel": null,
+  "maxStressLevel": null,
+  "avgWakingRespirationValue": null,
+  "averageSpo2": null,
+  "bodyBatteryChargedValue": null,
+  "bodyBatteryDrainedValue": null,
+  "bodyBatteryHighestValue": null,
+  "bodyBatteryLowestValue": null
+}

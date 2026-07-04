@@ -1,0 +1,38 @@
+[tool.poetry]
+name = "garmin-coach"
+version = "0.1.0"
+description = "Local Garmin Connect ETL + training coach (system-of-record in SQLite)"
+authors = ["Chabros <chabros96@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "garmin_coach", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+garminconnect = "*"
+curl-cffi = "*"
+pydantic = "*"
+pydantic-settings = "*"
+python-dotenv = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+ruff = "*"
+mypy = "*"
+
+[tool.poetry.scripts]
+garmin-coach = "garmin_coach.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true

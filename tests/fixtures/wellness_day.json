@@ -1,0 +1,30 @@
+{
+  "calendarDate": "2026-06-10",
+  "totalSteps": 13062,
+  "totalDistanceMeters": 11488,
+  "floorsAscended": 5.63681,
+  "moderateIntensityMinutes": 0,
+  "vigorousIntensityMinutes": 0,
+  "minHeartRate": 45,
+  "maxHeartRate": 120,
+  "restingHeartRate": 48,
+  "lastSevenDaysAvgRestingHeartRate": 50,
+  "averageStressLevel": 30,
+  "maxStressLevel": 94,
+  "restStressDuration": 33240,
+  "lowStressDuration": 15000,
+  "mediumStressDuration": 8940,
+  "highStressDuration": 3060,
+  "avgWakingRespirationValue": 14,
+  "highestRespirationValue": 21,
+  "lowestRespirationValue": 6,
+  "averageSpo2": null,
+  "lowestSpo2": null,
+  "bodyBatteryChargedValue": 75,
+  "bodyBatteryDrainedValue": 73,
+  "bodyBatteryHighestValue": 89,
+  "bodyBatteryLowestValue": 19,
+  "bodyBatteryDynamicFeedbackEvent": {
+    "feedbackShortType": "SLEEP_PREPARATION_STRESSFUL_AND_INACTIVE"
+  }
+}

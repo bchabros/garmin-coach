@@ -1,0 +1,20 @@
+# secrets & local data
+.env
+*.db
+*.db-wal
+*.db-shm
+data/
+raw/
+reports/
+
+# garmin tokens
+.garminconnect/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+poetry.lock.bak

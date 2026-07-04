@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from garmin_coach import sync
+from garmin_coach import db, models, sync
 
 
 def _client_with_day(fake_client, fixture, date="2026-06-10"):
@@ -70,6 +70,132 @@ def test_backfill_marks_empty_wellness_day(conn, fake_client, fixture):
         "SELECT has_data FROM daily_wellness WHERE date=?", ("2026-05-20",)
     ).fetchone()[0]
     assert has_data == 0
+
+
+class SleepFailsOnDateClient:
+    def __init__(self, base, failing_date):
+        self.base = base
+        self.failing_date = failing_date
+        self.calls = base.calls
+
+    def get_activities(self, start_date: str, end_date: str):
+        return self.base.get_activities(start_date, end_date)
+
+    def get_sleep(self, date: str):
+        self.calls.append(("sleep", date))
+        if date == self.failing_date:
+            raise TimeoutError("sleep timeout")
+        return self.base.by_day.get("sleep", {}).get(date)
+
+    def get_hrv(self, date: str):
+        return self.base.get_hrv(date)
+
+    def get_wellness(self, date: str):
+        return self.base.get_wellness(date)
+
+    def get_readiness(self, date: str):
+        return self.base.get_readiness(date)
+
+    def get_status(self, date: str):
+        return self.base.get_status(date)
+
+
+class ActivitiesRangeFailsClient:
+    def __init__(self, activities):
+        self.activities = activities
+        self.calls: list[tuple[str, str]] = []
+
+    def get_activities(self, start_date: str, end_date: str):
+        self.calls.append(("activities", f"{start_date}..{end_date}"))
+        if start_date != end_date:
+            raise TimeoutError("activities range timeout")
+        return self.activities if start_date == "2026-06-08" else []
+
+    def get_sleep(self, date: str):
+        self.calls.append(("sleep", date))
+        return None
+
+    def get_hrv(self, date: str):
+        self.calls.append(("hrv", date))
+        return None
+
+    def get_wellness(self, date: str):
+        self.calls.append(("wellness", date))
+        return None
+
+    def get_readiness(self, date: str):
+        self.calls.append(("readiness", date))
+        return None
+
+    def get_status(self, date: str):
+        self.calls.append(("status", date))
+        return None
+
+
+def test_incremental_sync_falls_back_to_daily_activity_ranges(conn, fixture):
+    client = ActivitiesRangeFailsClient(fixture("activities_range"))
+
+    result = sync.sync_incremental(
+        client,
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-09",
+        max_attempts=1,
+        retry_base_seconds=0,
+    )
+
+    activity_calls = [call for call in client.calls if call[0] == "activities"]
+    assert activity_calls == [
+        ("activities", "2026-06-08..2026-06-09"),
+        ("activities", "2026-06-08..2026-06-08"),
+        ("activities", "2026-06-09..2026-06-09"),
+    ]
+    assert db.get_sync_watermark(conn, "activities") == "2026-06-09"
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
+    assert "activities" in result.progressed_streams
+
+
+def test_incremental_sync_isolates_failed_stream_and_keeps_other_watermarks(
+    conn, fake_client, fixture
+):
+    base = fake_client(
+        by_day={
+            "sleep": {"2026-06-08": fixture("sleep_day")},
+            "hrv": {"2026-06-09": fixture("hrv_day")},
+        }
+    )
+    client = SleepFailsOnDateClient(base, failing_date="2026-06-09")
+
+    result = sync.sync_incremental(
+        client,
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-09",
+        max_attempts=2,
+        retry_base_seconds=0,
+    )
+
+    assert [call for call in client.calls if call == ("sleep", "2026-06-09")] == [
+        ("sleep", "2026-06-09"),
+        ("sleep", "2026-06-09"),
+    ]
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-08"
+    assert db.get_sync_watermark(conn, "hrv") == "2026-06-09"
+    assert any("sleep" in warning and "2026-06-09" in warning for warning in result.warnings)
+
+
+def test_incremental_sync_bootstraps_from_core_and_fetches_only_missing_dates(
+    conn, fake_client, fixture
+):
+    db.upsert_daily(conn, "sleep", models.normalize_sleep("2026-06-10", fixture("sleep_day")))
+    client = fake_client(by_day={"sleep": {"2026-06-11": fixture("sleep_day")}})
+
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-11")
+
+    sleep_calls = [date for endpoint, date in client.calls if endpoint == "sleep"]
+    assert sleep_calls == ["2026-06-11"]
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-11"
+    assert conn.execute("SELECT COUNT(*) FROM sleep").fetchone()[0] == 2
 
 
 def test_backfill_excludes_today_when_to_date_omitted(conn, fake_client):

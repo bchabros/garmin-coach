@@ -18,3 +18,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 poetry.lock.bak
+
+# IDEs
+.idea/
+*.diff
+*.patch

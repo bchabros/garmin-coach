@@ -87,5 +87,6 @@ marts/views, never mixed into core.
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) — committed
   in the Phase 0 PRD (D9) but not yet implemented.
-- Next up: **Phase 1** — incremental sync (`sync_state` watermark), retry/backoff,
-  per-day fallback for range endpoints that time out, stream isolation.
+- Phase 1 live validation: run `garmin-coach sync` twice against the local DB and confirm
+  partial-failure behavior with real Garmin transport if practical.
+- Next up after validation: **Phase 2** — metrics mart (`features.py` -> `daily_metrics`).

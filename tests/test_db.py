@@ -61,3 +61,30 @@ def test_upsert_daily_idempotent(conn, fixture):
     db.upsert_daily(conn, "sleep", row)
     assert conn.execute("SELECT COUNT(*) FROM sleep").fetchone()[0] == 1
     assert conn.execute("SELECT score FROM sleep WHERE date=?", ("2026-06-10",)).fetchone()[0] == 66
+
+
+def test_sync_watermark_round_trips(conn):
+    db.set_sync_watermark(conn, "sleep", "2026-06-10")
+
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-10"
+
+
+def test_bootstrap_sync_watermark_uses_core_max_date(conn, fixture):
+    db.upsert_daily(conn, "sleep", models.normalize_sleep("2026-06-10", fixture("sleep_day")))
+    db.upsert_daily(conn, "sleep", models.normalize_sleep("2026-06-11", fixture("sleep_day")))
+
+    watermark = db.bootstrap_sync_watermark(
+        conn, stream="sleep", core_table="sleep", data_start_date="2026-06-08"
+    )
+
+    assert watermark == "2026-06-11"
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-11"
+
+
+def test_bootstrap_sync_watermark_uses_day_before_data_start_when_core_empty(conn):
+    watermark = db.bootstrap_sync_watermark(
+        conn, stream="sleep", core_table="sleep", data_start_date="2026-06-08"
+    )
+
+    assert watermark == "2026-06-07"
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-07"

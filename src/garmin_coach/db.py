@@ -47,6 +47,44 @@ def insert_raw(
     )
 
 
+def get_sync_watermark(conn: sqlite3.Connection, stream: str) -> str | None:
+    """Return the last synced date for a stream, if it has been initialized."""
+    row = conn.execute(
+        "SELECT last_synced_date FROM sync_state WHERE stream=?", (stream,)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def set_sync_watermark(conn: sqlite3.Connection, stream: str, last_synced_date: str) -> None:
+    """Store a stream watermark idempotently."""
+    conn.execute(
+        """
+        INSERT INTO sync_state(stream, last_synced_date, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(stream) DO UPDATE SET
+            last_synced_date=excluded.last_synced_date,
+            updated_at=excluded.updated_at
+        """,
+        (stream, last_synced_date, _dt.datetime.now().isoformat(timespec="seconds")),
+    )
+
+
+def bootstrap_sync_watermark(
+    conn: sqlite3.Connection, stream: str, core_table: str, data_start_date: str
+) -> str:
+    """Initialize a missing stream watermark from core data or the data start date."""
+    existing = get_sync_watermark(conn, stream)
+    if existing is not None:
+        return existing
+
+    row = conn.execute(f"SELECT MAX(date) FROM {core_table}").fetchone()
+    watermark = row[0] if row and row[0] else (
+        _dt.date.fromisoformat(data_start_date) - _dt.timedelta(days=1)
+    ).isoformat()
+    set_sync_watermark(conn, stream, watermark)
+    return watermark
+
+
 def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) -> None:
     cols = list(row.keys())
     placeholders = ",".join("?" for _ in cols)

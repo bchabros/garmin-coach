@@ -22,7 +22,7 @@ Claude Cowork points at the same DB and runs the coach skill. See
 | Phase | Scope | State |
 |-------|-------|-------|
 | **0** | Raw capture + idempotent backfill | ✅ **Done** — see [docs/prd/phase-0.md](docs/prd/phase-0.md) |
-| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ⏳ Next |
+| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ✅ Implemented offline; live validation pending |
 | 2 | Metrics mart (`features.py` → `daily_metrics`) | Planned |
 | 3 | Coach skill (report + charts) | Planned |
 | 4 | Automation (cron/launchd, alerts) | Planned |

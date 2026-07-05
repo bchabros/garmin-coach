@@ -87,5 +87,9 @@ marts/views, never mixed into core.
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) — committed
   in the Phase 0 PRD (D9) but not yet implemented.
-- Next up: **Phase 1** — incremental sync (`sync_state` watermark), retry/backoff,
-  per-day fallback for range endpoints that time out, stream isolation.
+- Phase 1 (incremental sync, retry/backoff, per-day fallback, stream isolation) — **done**.
+- Phase 2 (`features.py` → `daily_metrics` mart) — **done**; decisions in `docs/prd/phase-2.md`
+  + `docs/adr/0002-phase-2-metrics-semantics.md`; golden regression in `tests/test_features.py`.
+- Next up: **Phase 3** — `skills/coach/SKILL.md`: read `daily_metrics`, emit report + 2 charts
+  (HRV ±1 SD band, ACWR over time) and coach signals (`AEROBIC_LOW_SHORTAGE`, monthly load
+  targets from `get_training_status`). See BUILD doc §7.

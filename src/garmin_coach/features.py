@@ -1,0 +1,187 @@
+"""Phase 2 metrics layer: compute the ``daily_metrics`` mart from core tables.
+
+Reads only core (never Garmin live), recomputes one row per calendar day from
+``data_start`` through the latest core date, and upserts by ``date``. The mart is
+fully reproducible from core and is never a system of record.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import sqlite3
+import statistics
+
+from . import db
+
+HRV_WINDOW_NIGHTS = 60
+
+
+def _date_range(start: str, end: str) -> list[str]:
+    d0 = _dt.date.fromisoformat(start)
+    d1 = _dt.date.fromisoformat(end)
+    return [(d0 + _dt.timedelta(days=i)).isoformat() for i in range((d1 - d0).days + 1)]
+
+
+def _latest_core_date(conn: sqlite3.Connection) -> str | None:
+    dates: list[str] = []
+    row = conn.execute("SELECT MAX(date(start_local)) FROM activities").fetchone()
+    if row and row[0]:
+        dates.append(row[0])
+    for table in ("hrv_nightly", "daily_wellness", "sleep"):
+        row = conn.execute(f"SELECT MAX(date) FROM {table}").fetchone()
+        if row and row[0]:
+            dates.append(row[0])
+    return max(dates) if dates else None
+
+
+def _load_by_day(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    """Aggregate per-day total load and the three TE-based load balance buckets.
+
+    Bucketing (Garmin logic): anaerobic when anaero_te >= 1.0; otherwise low when
+    aero_te < 2.5, else high. NULL TE is treated as 0; NULL training_load
+    contributes 0. Buckets always sum to load_day.
+    """
+    days: dict[str, dict[str, float]] = {}
+    for date, aero_te, anaero_te, load in conn.execute(
+        "SELECT date(start_local), aero_te, anaero_te, training_load FROM activities"
+    ):
+        agg = days.setdefault(
+            date, {"load_day": 0.0, "load_low": 0.0, "load_high": 0.0, "load_anaerobic": 0.0}
+        )
+        load = load or 0.0
+        agg["load_day"] += load
+        if (anaero_te or 0.0) >= 1.0:
+            agg["load_anaerobic"] += load
+        elif (aero_te or 0.0) < 2.5:
+            agg["load_low"] += load
+        else:
+            agg["load_high"] += load
+    return days
+
+
+def _zone_minutes_by_day(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    """z1..z5 minutes per activity day: sum of hr_zX_s / 60."""
+    days: dict[str, dict[str, float]] = {}
+    for date, z1, z2, z3, z4, z5 in conn.execute(
+        "SELECT date(start_local), COALESCE(SUM(hr_z1_s),0), COALESCE(SUM(hr_z2_s),0), "
+        "COALESCE(SUM(hr_z3_s),0), COALESCE(SUM(hr_z4_s),0), COALESCE(SUM(hr_z5_s),0) "
+        "FROM activities GROUP BY date(start_local)"
+    ):
+        days[date] = {
+            "z1_min": z1 / 60, "z2_min": z2 / 60, "z3_min": z3 / 60,
+            "z4_min": z4 / 60, "z5_min": z5 / 60,
+        }
+    return days
+
+
+def _recovery_by_day(conn: sqlite3.Connection) -> dict[str, dict[str, int | None]]:
+    """sleep_score and rhr (daily_wellness.rhr, else sleep.resting_hr) per day."""
+    rec: dict[str, dict[str, int | None]] = {}
+    for date, score, resting_hr in conn.execute(
+        "SELECT date, score, resting_hr FROM sleep"
+    ):
+        rec[date] = {"sleep_score": score, "rhr": resting_hr}
+    for date, rhr in conn.execute("SELECT date, rhr FROM daily_wellness"):
+        entry = rec.setdefault(date, {"sleep_score": None, "rhr": None})
+        if rhr is not None:
+            entry["rhr"] = rhr
+    return rec
+
+
+def _hrv_by_day(conn: sqlite3.Connection, through_date: str) -> dict[str, int]:
+    """Nightly avg_hrv keyed by date, excluding NULL nights."""
+    return {
+        date: hrv
+        for date, hrv in conn.execute(
+            "SELECT date, avg_hrv FROM hrv_nightly WHERE avg_hrv IS NOT NULL AND date <= ?",
+            (through_date,),
+        )
+    }
+
+
+def _hrv_band(hrv_by_day: dict[str, int]) -> tuple[float | None, float | None]:
+    """Compute the whole-window HRV baseline and sample SD.
+
+    Baseline is the median and SD is the sample std (ddof=1) over the last
+    HRV_WINDOW_NIGHTS nights. Returns (None, None) if there is no data, and an
+    SD of None when fewer than two nights are available.
+    """
+    nights = [hrv_by_day[d] for d in sorted(hrv_by_day)][-HRV_WINDOW_NIGHTS:]
+    if not nights:
+        return None, None
+    baseline = statistics.median(nights)
+    sd = statistics.stdev(nights) if len(nights) >= 2 else None
+    return baseline, sd
+
+
+def features(
+    conn: sqlite3.Connection,
+    *,
+    data_start_date: str,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> None:
+    """Recompute the ``daily_metrics`` mart and upsert it by date.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        data_start_date: First real-data date; earlier days are explicit gaps.
+        from_date: First day to emit (default: ``data_start_date``). Trailing
+            windows still look back into core beyond this date.
+        to_date: Last day to emit (default: latest core date).
+    """
+    end = to_date or _latest_core_date(conn)
+    if end is None:
+        return
+    start = from_date or data_start_date
+
+    load_by_day = _load_by_day(conn)
+    empty_load = {"load_day": 0.0, "load_low": 0.0, "load_high": 0.0, "load_anaerobic": 0.0}
+
+    def _load_day(d: _dt.date) -> float:
+        return load_by_day.get(d.isoformat(), empty_load)["load_day"]
+
+    start_d = _dt.date.fromisoformat(data_start_date)
+
+    def _acwr(day: str) -> dict[str, float | int | None]:
+        d = _dt.date.fromisoformat(day)
+        acute = sum(_load_day(d - _dt.timedelta(days=i)) for i in range(7)) / 7
+        chronic = sum(_load_day(d - _dt.timedelta(days=i)) for i in range(28)) / 28
+        n_chronic = sum(1 for i in range(28) if (d - _dt.timedelta(days=i)) >= start_d)
+        return {
+            "acute7": acute,
+            "chronic28": chronic,
+            "acwr": (acute / chronic) if chronic else None,
+            "n_chronic": n_chronic,
+        }
+
+    zones_by_day = _zone_minutes_by_day(conn)
+    empty_zones = {"z1_min": 0.0, "z2_min": 0.0, "z3_min": 0.0, "z4_min": 0.0, "z5_min": 0.0}
+    recovery_by_day = _recovery_by_day(conn)
+    empty_recovery: dict[str, int | None] = {"sleep_score": None, "rhr": None}
+    hrv_by_day = _hrv_by_day(conn, end)
+    hrv_baseline, hrv_sd = _hrv_band(hrv_by_day)
+    threshold = hrv_baseline - hrv_sd if hrv_baseline is not None and hrv_sd is not None else None
+
+    for date in _date_range(start, end):
+        hrv = hrv_by_day.get(date)
+        low_flag: int | None = None
+        if hrv is not None and threshold is not None:
+            low_flag = 1 if hrv < threshold else 0
+        load = load_by_day.get(date, empty_load)
+        row = {
+            "date": date,
+            "load_day": load["load_day"],
+            "load_low": load["load_low"],
+            "load_high": load["load_high"],
+            "load_anaerobic": load["load_anaerobic"],
+            "hrv": hrv,
+            "hrv_baseline": hrv_baseline,
+            "hrv_sd": hrv_sd,
+            "hrv_low_flag": low_flag,
+            **_acwr(date),
+            **zones_by_day.get(date, empty_zones),
+            **recovery_by_day.get(date, empty_recovery),
+        }
+        db.upsert_daily(conn, "daily_metrics", row)
+    conn.commit()

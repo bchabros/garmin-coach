@@ -7,7 +7,7 @@ import os
 import sqlite3
 from typing import TYPE_CHECKING
 
-from . import client, db, sync
+from . import client, db, features, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -53,6 +53,23 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_features(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    features.features(
+        conn,
+        data_start_date=settings.data_start_date,
+        from_date=args.from_date,
+        to_date=args.to_date,
+    )
+    conn.close()
+    print(f"features complete: {args.from_date or settings.data_start_date} .. {args.to_date or 'latest'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
@@ -75,6 +92,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
     )
     sc.set_defaults(func=_cmd_sync)
+
+    ft = sub.add_parser("features", help="Recompute the daily_metrics mart from core data.")
+    ft.add_argument(
+        "--from",
+        dest="from_date",
+        default=None,
+        help="First day to emit YYYY-MM-DD (default: DATA_START_DATE).",
+    )
+    ft.add_argument(
+        "--to", dest="to_date", default=None, help="Last day to emit YYYY-MM-DD (default: latest core date)."
+    )
+    ft.set_defaults(func=_cmd_features)
     return parser
 
 

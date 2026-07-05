@@ -9,7 +9,15 @@
       "Bash(python3 - /Users/Chabi/.claude/projects/-Users-Chabi-Documents-garmin-coach/76fd8643-f7e0-467c-99c2-56d6a37c8f10/tool-results/mcp-garmin-get_sleep_data-1783190749847.txt)",
       "Bash(poetry config *)",
       "Bash(poetry install *)",
-      "Bash(poetry run *)"
+      "Bash(poetry run *)",
+      "Bash(echo \"=== grilling SKILL ===\"; cat /Users/Chabi/.claude/skills/grilling/SKILL.md 2>/dev/null | head -80; echo; echo \"=== domain-modeling exists? ===\"; find /Users/Chabi/.claude/skills -iname '*domain*' 2>/dev/null; echo \"=== phase-1 PRD head ===\"; head -40 /Users/Chabi/Documents/garmin-coach/docs/prd/phase-1.md)",
+      "Bash(sqlite3 data/garmin.db \".schema daily_metrics\")",
+      "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('activities'\\);\")",
+      "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('hrv_nightly'\\);\")",
+      "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('sleep'\\);\")",
+      "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('daily_wellness'\\);\")",
+      "Bash(sqlite3 -header -column data/garmin.db \"SELECT date, hrv, hrv_baseline, round\\(hrv_sd,2\\) sd, hrv_low_flag flag, round\\(load_day,1\\) load, round\\(acwr,3\\) acwr, n_chronic FROM daily_metrics WHERE date IN \\('2026-06-11','2026-06-17','2026-06-27','2026-07-03'\\) ORDER BY date;\")",
+      "Bash(sqlite3 data/garmin.db \"SELECT count\\(*\\), min\\(date\\), max\\(date\\) FROM daily_metrics;\")"
     ]
   }
 }

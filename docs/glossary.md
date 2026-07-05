@@ -42,6 +42,27 @@ code, docstrings, PRDs, and ADRs.
 - **Discipline** - human-facing sport grouping (Bieganie, Hyrox/HIIT, Sila, Skitury,
   Trail) mapped from the Garmin `gtype`.
 
+## Coach terms (mart -> report)
+
+- **digest** - compact recomputed view built by `build_digest(conn, ...)` from
+  `daily_metrics` + `training_status_daily`: a headline block plus a list of signals.
+  Serialized to `reports/{date}/digest.json`; the token boundary the coach skill reads
+  instead of raw mart rows. Non-durable, not a system of record.
+- **signal** - a single coach finding `{code, severity, facts, garmin_agrees?}` with
+  `severity` in `info|warn|alert` and `facts` a flat dict of scalars. Codes:
+  `AEROBIC_LOW_SHORTAGE`, `ACWR_OUT_OF_RANGE`, `HRV_LOW_MORNING`, `TWO_HARD_DAYS`,
+  `HRV_SLEEP_CONFOUND` (BUILD section 7 rules 1-5).
+- **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below
+  target while hard-load share is above ("add Z2"). Computed from our buckets;
+  cross-checked against Garmin's `training_status_daily.balance_phrase` via
+  `garmin_agrees`.
+- **garmin_agrees** - whether our derived signal concurs with Garmin's own phrase for
+  the same finding; strengthens or hedges the report wording, never a passthrough.
+- **report** - the dated coach artifact under `reports/{date}/`: `report.md` (narrative
+  written by the skill from the digest), `digest.json`, and two PNG charts
+  (`hrv_band.png`, `acwr.png`). `garmin-coach report` produces everything except the
+  Markdown narrative.
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier
@@ -49,7 +70,8 @@ code, docstrings, PRDs, and ADRs.
 - **watermark** - per-stream `sync_state.last_synced_date`; how incremental sync
   tracks progress.
 - **seam** - the agreed boundary a test exercises: pure normalizers (`models.py`),
-  the persistence layer (`db.py`), the sync orchestrator (`sync.py`), and now the
-  features materializer (`features.py`) at the DB boundary.
+  the persistence layer (`db.py`), the sync orchestrator (`sync.py`), the features
+  materializer (`features.py`), and now the digest builder
+  (`build_digest`/`digest.py`) at the DB boundary.
 - **golden regression** - a test that reproduces the reference hand-analysis
   (2026-06-09..07-04) from frozen real anonymized core data.

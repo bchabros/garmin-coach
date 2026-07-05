@@ -90,6 +90,9 @@ marts/views, never mixed into core.
 - Phase 1 (incremental sync, retry/backoff, per-day fallback, stream isolation) — **done**.
 - Phase 2 (`features.py` → `daily_metrics` mart) — **done**; decisions in `docs/prd/phase-2.md`
   + `docs/adr/0002-phase-2-metrics-semantics.md`; golden regression in `tests/test_features.py`.
-- Next up: **Phase 3** — `skills/coach/SKILL.md`: read `daily_metrics`, emit report + 2 charts
-  (HRV ±1 SD band, ACWR over time) and coach signals (`AEROBIC_LOW_SHORTAGE`, monthly load
-  targets from `get_training_status`). See BUILD doc §7.
+- Phase 3 (`digest.py`/`signals.py` → `garmin-coach report` → `skills/coach/SKILL.md`) — **done**;
+  decisions in `docs/prd/phase-3.md` + `docs/adr/0003-phase-3-coach-signals.md`; golden
+  regression in `tests/test_digest.py`. Deterministic engine builds `reports/{date}/digest.json`
+  + 2 charts (HRV ±1 SD, ACWR); the skill writes `report.md` from the digest (never the raw
+  mart, never Garmin). Signals 1–5 from BUILD §7; rule 6 (plan vs actual) deferred to Phase 5.
+- Next up: **Phase 4/5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`).

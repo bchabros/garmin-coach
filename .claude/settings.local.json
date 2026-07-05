@@ -17,7 +17,13 @@
       "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('sleep'\\);\")",
       "Bash(sqlite3 data/garmin.db \"SELECT name FROM pragma_table_info\\('daily_wellness'\\);\")",
       "Bash(sqlite3 -header -column data/garmin.db \"SELECT date, hrv, hrv_baseline, round\\(hrv_sd,2\\) sd, hrv_low_flag flag, round\\(load_day,1\\) load, round\\(acwr,3\\) acwr, n_chronic FROM daily_metrics WHERE date IN \\('2026-06-11','2026-06-17','2026-06-27','2026-07-03'\\) ORDER BY date;\")",
-      "Bash(sqlite3 data/garmin.db \"SELECT count\\(*\\), min\\(date\\), max\\(date\\) FROM daily_metrics;\")"
+      "Bash(sqlite3 data/garmin.db \"SELECT count\\(*\\), min\\(date\\), max\\(date\\) FROM daily_metrics;\")",
+      "Bash(ls -la /Users/Chabi/Documents/garmin-coach/.claude/commands/ 2>/dev/null; echo \"---\"; ls -la /Users/Chabi/.claude/commands/ 2>/dev/null)",
+      "Bash(sqlite3 data/garmin.db \"SELECT COUNT\\(*\\), MIN\\(date\\), MAX\\(date\\) FROM daily_metrics;\")",
+      "Bash(head -26 .gitignore)",
+      "Bash(mv /tmp/gi .gitignore)",
+      "Bash(git -C /Users/Chabi/Documents/garmin-coach diff HEAD -- CLAUDE.md docs/glossary.md pyproject.toml src/garmin_coach/cli.py .gitignore .claude/settings.local.json)",
+      "Bash(git -C /Users/Chabi/Documents/garmin-coach diff HEAD -- docs/glossary.md pyproject.toml src/garmin_coach/cli.py .gitignore)"
     ]
   }
 }

@@ -13,6 +13,7 @@ curl-cffi = "*"
 pydantic = "*"
 pydantic-settings = "*"
 python-dotenv = "*"
+matplotlib = "^3.11.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"

@@ -7,7 +7,7 @@ import os
 import sqlite3
 from typing import TYPE_CHECKING
 
-from . import client, db, features, sync
+from . import client, db, features, report, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -70,6 +70,18 @@ def _cmd_features(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    out = report.generate_report(conn, from_date=args.from_date, to_date=args.to_date)
+    conn.close()
+    print(f"report complete: {out} (digest.json + charts; run the coach skill for report.md)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
@@ -104,6 +116,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="Last day to emit YYYY-MM-DD (default: latest core date)."
     )
     ft.set_defaults(func=_cmd_features)
+
+    rp = sub.add_parser("report", help="Build the coach digest + charts into reports/{date}/.")
+    rp.add_argument(
+        "--from", dest="from_date", default=None,
+        help="Window start YYYY-MM-DD (default: trailing 28 days).",
+    )
+    rp.add_argument(
+        "--to", dest="to_date", default=None,
+        help="Window end YYYY-MM-DD (default: latest mart day).",
+    )
+    rp.set_defaults(func=_cmd_report)
     return parser
 
 

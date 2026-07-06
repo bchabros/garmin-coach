@@ -21,45 +21,62 @@ Claude Cowork points at the same DB and runs the coach skill. See
 
 | Phase | Scope | State |
 |-------|-------|-------|
-| **0** | Raw capture + idempotent backfill | ✅ **Done** — see [docs/prd/phase-0.md](docs/prd/phase-0.md) |
-| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ✅ Implemented offline; live validation pending |
-| 2 | Metrics mart (`features.py` → `daily_metrics`) | Planned |
-| 3 | Coach skill (report + charts) | Planned |
-| 4 | Automation (cron/launchd, alerts) | Planned |
-| 5 | Plan-vs-actual, trends, multi-sport | Planned |
+| 0 | Raw capture + idempotent backfill | ✅ Done — [docs/prd/phase-0.md](docs/prd/phase-0.md) |
+| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ✅ Done — [docs/prd/phase-1.md](docs/prd/phase-1.md), [ADR 0001](docs/adr/0001-phase-1-incremental-sync.md) |
+| 2 | Metrics mart (`features.py` → `daily_metrics`) | ✅ Done — [docs/prd/phase-2.md](docs/prd/phase-2.md), [ADR 0002](docs/adr/0002-phase-2-metrics-semantics.md) |
+| 3 | Coach skill (digest + charts + `report.md`) | ✅ Done — [docs/prd/phase-3.md](docs/prd/phase-3.md), [ADR 0003](docs/adr/0003-phase-3-coach-signals.md) |
+| **4** | Automation (nightly orchestrator, alerts, launchd/cron) | ✅ **Done** — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md) |
+| 5 | Plan-vs-actual, deload/trend detection, multi-sport | Planned |
 
 ## Layout
 
 ```
 garmin-coach/
 ├── pyproject.toml            # Poetry: deps, scripts, tool config
-├── Taskfile.yml              # task shortcuts for tests, lint, checks, backfill
+├── Taskfile.yml              # task shortcuts for tests, lint, checks, backfill, daily
 ├── AGENTS.md                 # Codex/agent working rules
 ├── CLAUDE.md                 # Claude Code working rules
 ├── .codex/                   # Codex local notes and companion files
-├── .env.example             # copy to .env (GARMIN_EMAIL, DATA_START_DATE, DB_PATH, ...)
+├── .env.example              # copy to .env (GARMIN_EMAIL, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
 │   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, metric specs)
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
-│   ├── coach-skill.md        # coach skill spec (phase 3)
-│   └── prd/phase-0.md        # Phase 0 PRD: decisions, spec, DoD, test plan
+│   ├── glossary.md           # domain vocabulary
+│   ├── adr/                  # decision records (0001–0004, one per phase)
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-4)
+├── scripts/
+│   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
+│   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
+├── skills/coach/SKILL.md     # narrative layer: reads digest.json, writes report.md
 ├── src/garmin_coach/
-│   ├── config.py             # pydantic-settings: .env + paths
+│   ├── config.py             # pydantic-settings: .env + paths + logging config
 │   ├── client.py             # transport: login (+MFA), garminconnect method map
 │   ├── db.py                 # connect, schema bootstrap, idempotent upserts
 │   ├── models.py             # pure normalizers payload→row + discipline mapping
-│   ├── sync.py               # backfill: raw-first, upsert core, excludes "today"
-│   ├── cli.py                # argparse entry point (`garmin-coach backfill`)
+│   ├── sync.py                 # backfill + incremental sync: raw-first, upsert core,
+│   │                           #   retry/backoff, per-day fallback, isolated streams
+│   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
+│   ├── digest.py             # headline + coach signals over the mart (build_digest)
+│   ├── signals.py            # pure signal rules invoked by digest.py
+│   ├── charts.py             # HRV band + ACWR matplotlib charts
+│   ├── report.py             # orchestrates digest + charts → reports/{date}/
+│   ├── daily.py              # nightly orchestrator: sync → features → alerts
+│   ├── cli.py                # argparse entry point (backfill/sync/features/report/daily)
 │   └── schema.sql            # runtime schema (loaded via importlib.resources)
 ├── tests/
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader
-│   ├── fixtures/             # anonymized real Garmin payloads
-│   └── test_*.py             # models, db, sync, config, schema-sync guard
+│   ├── fixtures/             # anonymized real Garmin payloads + golden fixtures
+│   └── test_*.py             # one module per seam (models, db, sync, features,
+│                              #   digest, daily, config, cli, schema-sync guard)
+├── logs/daily.log            # rotating nightly-run log (gitignored)
+├── reports/{date}/           # digest.json + charts + report.md (gitignored)
 └── data/garmin.db            # SQLite system-of-record (gitignored)
 ```
 
 Data layout is medallion: **raw** (`raw_payloads`, append-only) → **core** (normalized,
-upserted) → **mart** (`daily_metrics`, recomputed; phase 2+).
+upserted) → **mart** (`daily_metrics`, recomputed by `features`). `digest.py` reads the
+mart and produces the compact digest the coach skill narrates; `daily.py` reruns the
+whole chain unattended and reduces the digest to log-worthy alerts.
 
 ## Setup
 
@@ -87,6 +104,42 @@ poetry run garmin-coach backfill --from 2026-06-08
 `backfill` pulls `[--from .. yesterday]` (today is skipped — HRV/sleep land after the
 night) across six streams: activities, sleep, HRV, wellness, training readiness,
 training status. Raw JSON is stored first, then normalized into core tables.
+
+Once backfilled, the rest of the pipeline runs incrementally:
+
+```bash
+poetry run garmin-coach sync                 # pull only what's missing since each stream's watermark
+poetry run garmin-coach features             # recompute the daily_metrics mart from core
+poetry run garmin-coach report               # write reports/{date}/digest.json + 2 charts
+task daily                                   # sync -> features -> alerts, no charts (nightly path)
+```
+
+Run the coach skill (`skills/coach/SKILL.md`) in Cowork against the same DB to turn
+the latest `digest.json` + charts into a narrated `report.md`.
+
+## Automation
+
+`garmin-coach daily` (wrapped by `scripts/daily.sh`) runs sync → features → alert
+extraction unattended, exits `0`/`1`/`2` for `ok`/`degraded`/`failed`, and logs to a
+rotating file (`LOG_PATH`, default `logs/daily.log`). Alerts are the Phase 3 coach
+signals (`HRV_LOW_MORNING`, `ACWR_OUT_OF_RANGE`, `AEROBIC_LOW_SHORTAGE`,
+`TWO_HARD_DAYS`) logged at `WARNING`/`ERROR`. It never renders charts or calls Garmin
+outside the sync stage — those stay in the weekly `report` run.
+
+To schedule it on macOS: copy `scripts/com.garmincoach.daily.plist.example` to
+`~/Library/LaunchAgents/com.garmincoach.daily.plist`, fill in the absolute repo path
+and a `PATH` that resolves `poetry` (launchd's default `PATH` is minimal), then
+`launchctl load` it. Two gotchas worth knowing up front:
+
+- **Keep the repo out of `~/Documents`, `~/Desktop`, `~/Downloads`.** macOS TCC
+  blocks launchd-spawned processes from those folders even though an interactive
+  Terminal session has access; `~` itself (or e.g. `~/dev/...`) is unaffected.
+- **`poetry` needs an explicit `PATH`.** launchd doesn't source your shell profile,
+  so the plist's `EnvironmentVariables.PATH` must include wherever `poetry`
+  actually lives (check with `which poetry`).
+
+Scheduling is documented, not auto-installed — loading the launchd job is a step you
+run yourself.
 
 ## Development
 
@@ -119,6 +172,6 @@ device IDs stripped). Metric definitions and the phasing plan live in
 
 ## Privacy
 
-Health data is sensitive. `.env`, `data/*.db`, `raw/`, `reports/`, and Garmin tokens
-are gitignored — only code, `schema.sql`, and docs are committed. Keep the DB and
-backups local/private.
+Health data is sensitive. `.env`, `data/*.db`, `raw/`, `reports/`, `logs/`, and Garmin
+tokens are gitignored — only code, `schema.sql`, and docs are committed. Keep the DB
+and backups local/private.

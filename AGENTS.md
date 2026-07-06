@@ -87,6 +87,20 @@ marts/views, never mixed into core.
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) — committed
   in the Phase 0 PRD (D9) but not yet implemented.
-- Phase 1 live validation: run `garmin-coach sync` twice against the local DB and confirm
-  partial-failure behavior with real Garmin transport if practical.
-- Next up after validation: **Phase 2** — metrics mart (`features.py` -> `daily_metrics`).
+- Phase 1 (incremental sync, retry/backoff, per-day fallback, stream isolation) — **done**.
+- Phase 2 (`features.py` → `daily_metrics` mart) — **done**; decisions in `docs/prd/phase-2.md`
+  + `docs/adr/0002-phase-2-metrics-semantics.md`; golden regression in `tests/test_features.py`.
+- Phase 3 (`digest.py`/`signals.py` → `garmin-coach report` → `skills/coach/SKILL.md`) — **done**;
+  decisions in `docs/prd/phase-3.md` + `docs/adr/0003-phase-3-coach-signals.md`; golden
+  regression in `tests/test_digest.py`. Deterministic engine builds `reports/{date}/digest.json`
+  + 2 charts (HRV ±1 SD, ACWR); the skill writes `report.md` from the digest (never the raw
+  mart, never Garmin). Signals 1–5 from BUILD §7; rule 6 (plan vs actual) deferred to Phase 5.
+- Phase 4 (automation) — **done**; decisions in `docs/prd/phase-4.md` + `docs/adr/0004-phase-4-automation.md`;
+  seam tests in `tests/test_daily.py`. Seam `daily.run_daily(client, conn, ...) → DailyResult` runs
+  sync → features → `build_digest` (alerts only; **no charts** on the nightly path). Alerts = digest
+  signals with `warn`/`alert` severity (reused from Phase 3, no new thresholds), logged WARNING/ERROR.
+  Status/exit contract: `ok`/0, `degraded`/1 (isolated stream failure), `failed`/2 (stage crash or
+  total sync outage). `garmin-coach daily [--to]` + `scripts/daily.sh` (thin) + launchd plist example;
+  logging via in-process `RotatingFileHandler` (`configure_logging`, config keys `LOG_PATH`/
+  `LOG_MAX_BYTES`/`LOG_BACKUP_COUNT`). Scheduling is documented, not auto-installed.
+- Next up: **Phase 5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`, deload/trend detection).

@@ -103,4 +103,15 @@ marts/views, never mixed into core.
   total sync outage). `garmin-coach daily [--to]` + `scripts/daily.sh` (thin) + launchd plist example;
   logging via in-process `RotatingFileHandler` (`configure_logging`, config keys `LOG_PATH`/
   `LOG_MAX_BYTES`/`LOG_BACKUP_COUNT`). Scheduling is documented, not auto-installed.
-- Next up: **Phase 5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`, deload/trend detection).
+- Phase 5 (`weekly.py` → `weekly_metrics` mart, plan-vs-actual, deload) — **done**; decisions in
+  `docs/prd/phase-5.md` + `docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md`; golden
+  regression + seam tests in `tests/test_weekly.py` (+ `tests/test_signals.py`). Seam
+  `weekly.rollup(conn, *, data_start_date, through_date=None)` rolls the daily mart up into
+  `weekly_metrics` for **complete weeks only** (Mon–Sun ≤ cutoff), run as the second half of
+  `garmin-coach features` (no new command). Actual intent classified by load; `plan_adherence` =
+  exact matches / 7 vs `plan_template`; Foster `monotony`/`strain` (NULL when uncomputable);
+  `max_consec_hard`; recovery means skip null days. New signal `DELOAD_ADVISED` (prospective, `warn`)
+  joins `build_digest`, which gains a `weekly` section (facts + per-day plan-vs-actual); the coach
+  skill renders "Tydzień: plan vs realizacja". New `coach_thresholds`: `monotony_high`,
+  `deload_load_rise_weeks`, `deload_min_history_weeks`, `deload_drop_pct`. Deferred (BUILD §12):
+  multi-sport/`discipline` weighting, VO2max/threshold **trend charts**, PDF/Notion export.

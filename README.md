@@ -25,8 +25,8 @@ Claude Cowork points at the same DB and runs the coach skill. See
 | 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ✅ Done — [docs/prd/phase-1.md](docs/prd/phase-1.md), [ADR 0001](docs/adr/0001-phase-1-incremental-sync.md) |
 | 2 | Metrics mart (`features.py` → `daily_metrics`) | ✅ Done — [docs/prd/phase-2.md](docs/prd/phase-2.md), [ADR 0002](docs/adr/0002-phase-2-metrics-semantics.md) |
 | 3 | Coach skill (digest + charts + `report.md`) | ✅ Done — [docs/prd/phase-3.md](docs/prd/phase-3.md), [ADR 0003](docs/adr/0003-phase-3-coach-signals.md) |
-| **4** | Automation (nightly orchestrator, alerts, launchd/cron) | ✅ **Done** — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md) |
-| 5 | Plan-vs-actual, deload/trend detection, multi-sport | Planned |
+| 4 | Automation (nightly orchestrator, alerts, launchd/cron) | ✅ Done — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md) |
+| **5** | Weekly rollups, plan-vs-actual, deload detection | ✅ **Done** — [docs/prd/phase-5.md](docs/prd/phase-5.md), [ADR 0005](docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md) |
 
 ## Layout
 
@@ -42,8 +42,8 @@ garmin-coach/
 │   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, metric specs)
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
 │   ├── glossary.md           # domain vocabulary
-│   ├── adr/                  # decision records (0001–0004, one per phase)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-4)
+│   ├── adr/                  # decision records (0001–0005, one per phase)
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-5)
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -56,8 +56,9 @@ garmin-coach/
 │   ├── sync.py                 # backfill + incremental sync: raw-first, upsert core,
 │   │                           #   retry/backoff, per-day fallback, isolated streams
 │   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
-│   ├── digest.py             # headline + coach signals over the mart (build_digest)
-│   ├── signals.py            # pure signal rules invoked by digest.py
+│   ├── weekly.py             # mart: weekly_metrics rollup + plan-vs-actual (run by features)
+│   ├── digest.py             # headline + coach signals + weekly section (build_digest)
+│   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED)
 │   ├── charts.py             # HRV band + ACWR matplotlib charts
 │   ├── report.py             # orchestrates digest + charts → reports/{date}/
 │   ├── daily.py              # nightly orchestrator: sync → features → alerts
@@ -66,17 +67,19 @@ garmin-coach/
 ├── tests/
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader
 │   ├── fixtures/             # anonymized real Garmin payloads + golden fixtures
-│   └── test_*.py             # one module per seam (models, db, sync, features,
-│                              #   digest, daily, config, cli, schema-sync guard)
+│   └── test_*.py             # one module per seam (models, db, sync, features, weekly,
+│                              #   signals, digest, daily, config, cli, schema-sync guard)
 ├── logs/daily.log            # rotating nightly-run log (gitignored)
 ├── reports/{date}/           # digest.json + charts + report.md (gitignored)
 └── data/garmin.db            # SQLite system-of-record (gitignored)
 ```
 
 Data layout is medallion: **raw** (`raw_payloads`, append-only) → **core** (normalized,
-upserted) → **mart** (`daily_metrics`, recomputed by `features`). `digest.py` reads the
-mart and produces the compact digest the coach skill narrates; `daily.py` reruns the
-whole chain unattended and reduces the digest to log-worthy alerts.
+upserted) → **mart** (`daily_metrics`, recomputed by `features`; `weekly_metrics`,
+rolled up from it by `weekly` for every *complete* week). `digest.py` reads both marts
+and produces the compact digest (headline, signals, weekly plan-vs-actual) the coach
+skill narrates; `daily.py` reruns the whole chain unattended and reduces the digest to
+log-worthy alerts.
 
 ## Setup
 
@@ -109,7 +112,7 @@ Once backfilled, the rest of the pipeline runs incrementally:
 
 ```bash
 poetry run garmin-coach sync                 # pull only what's missing since each stream's watermark
-poetry run garmin-coach features             # recompute the daily_metrics mart from core
+poetry run garmin-coach features             # recompute daily_metrics, then roll up weekly_metrics
 poetry run garmin-coach report               # write reports/{date}/digest.json + 2 charts
 task daily                                   # sync -> features -> alerts, no charts (nightly path)
 ```
@@ -121,10 +124,11 @@ the latest `digest.json` + charts into a narrated `report.md`.
 
 `garmin-coach daily` (wrapped by `scripts/daily.sh`) runs sync → features → alert
 extraction unattended, exits `0`/`1`/`2` for `ok`/`degraded`/`failed`, and logs to a
-rotating file (`LOG_PATH`, default `logs/daily.log`). Alerts are the Phase 3 coach
-signals (`HRV_LOW_MORNING`, `ACWR_OUT_OF_RANGE`, `AEROBIC_LOW_SHORTAGE`,
-`TWO_HARD_DAYS`) logged at `WARNING`/`ERROR`. It never renders charts or calls Garmin
-outside the sync stage — those stay in the weekly `report` run.
+rotating file (`LOG_PATH`, default `logs/daily.log`). Alerts are any digest signal with
+`warn`/`alert` severity (`HRV_LOW_MORNING`, `ACWR_OUT_OF_RANGE`, `AEROBIC_LOW_SHORTAGE`,
+`TWO_HARD_DAYS`, and — once a week has closed — `DELOAD_ADVISED`) logged at
+`WARNING`/`ERROR`. It never renders charts or calls Garmin outside the sync stage —
+those stay in the weekly `report` run.
 
 To schedule it on macOS: copy `scripts/com.garmincoach.daily.plist.example` to
 `~/Library/LaunchAgents/com.garmincoach.daily.plist`, fill in the absolute repo path

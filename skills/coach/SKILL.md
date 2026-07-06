@@ -41,6 +41,16 @@ read the raw mart** - you consume the compact digest only.
        *upcoming* risk (the Friday-into-Saturday pattern), not just history.
      - `HRV_SLEEP_CONFOUND` -> caution: the worst HRV may be sleep-driven, not training;
        do not confuse causes.
+     - `DELOAD_ADVISED` -> load has climbed for several weeks into a hot ACWR or high
+       monotony; suggest a back-off (deload) week. State `rise_weeks`, `acwr_end`, and
+       `monotony` from `facts`.
+   - **Tydzień: plan vs realizacja** - only if the digest has a non-null `weekly` block
+     (the latest complete week). One line on the week's numbers (`load_total`, the
+     low/high/anaero shares, `monotony`/`strain`, `max_consec_hard`), then the adherence:
+     state `plan_adherence` and walk the `plan_vs_actual` rows where `match` is false,
+     naming the direction (e.g. "pt: plan quality, było rest"). If `was_deload` is true,
+     say so - a deliberate deload is not lost fitness. Skip this block entirely when
+     `weekly` is null.
    - **Wykresy** - embed both: `![HRV](hrv_band.png)` and `![ACWR](acwr.png)`.
    - **Zastrzeżenie** - end with the digest `disclaimer` verbatim.
 

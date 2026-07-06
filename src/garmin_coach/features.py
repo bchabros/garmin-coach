@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import db
+from . import db, weekly
 
 HRV_WINDOW_NIGHTS = 60
 
@@ -185,3 +185,6 @@ def features(
         }
         db.upsert_daily(conn, "daily_metrics", row)
     conn.commit()
+
+    # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
+    weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)

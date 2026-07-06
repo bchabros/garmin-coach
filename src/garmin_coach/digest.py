@@ -11,6 +11,7 @@ import datetime as _dt
 import sqlite3
 
 from . import signals as _signals
+from . import weekly as _weekly
 
 DISCLAIMER = (
     "This is a reading of your recorded data, not medical or coaching advice."
@@ -27,7 +28,18 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "aero_high_target_share": 0.40,
     "hrv_sleep_r_min": 0.5,
     "hrv_sleep_min_pairs": 7,
+    "monotony_high": 2.0,
+    "deload_load_rise_weeks": 3,
+    "deload_min_history_weeks": 3,
+    "deload_drop_pct": 0.40,
 }
+
+_WEEKLY_FACT_COLS = (
+    "week_start", "load_total", "low_share", "high_share", "anaero_share",
+    "z2_min", "threshold_min", "z5_min", "monotony", "strain", "acwr_end",
+    "hrv_mean", "hrv_trend", "rhr_mean", "sleep_score_mean",
+    "n_sessions", "n_quality", "n_rest_days", "max_consec_hard", "plan_adherence",
+)
 
 LOAD_HIGHLIGHT_DAYS = 7
 WINDOW_DAYS = 28
@@ -136,6 +148,42 @@ def _headline(rows: list[dict], recent: list[dict], thresholds: dict[str, float]
     }
 
 
+def _read_weekly(conn: sqlite3.Connection) -> list[dict]:
+    """All ``weekly_metrics`` rows in week order (oldest first)."""
+    cur = conn.execute("SELECT * FROM weekly_metrics ORDER BY week_start")
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def _was_deload(weekly_rows: list[dict], drop_pct: float) -> bool | None:
+    """Retrospective fact: did ``load_total`` drop by >= ``drop_pct`` vs the prior week.
+
+    ``None`` when there's no predecessor week or its ``load_total`` is zero.
+    """
+    if len(weekly_rows) < 2:
+        return None
+    prev_load = weekly_rows[-2].get("load_total")
+    if not prev_load:
+        return None
+    latest_load = weekly_rows[-1].get("load_total") or 0
+    return (prev_load - latest_load) / prev_load >= drop_pct
+
+
+def _weekly_section(
+    conn: sqlite3.Connection, weekly_rows: list[dict], thr: dict[str, float]
+) -> dict | None:
+    """Facts for the latest complete week plus its per-day plan-vs-actual table."""
+    if not weekly_rows:
+        return None
+    latest = weekly_rows[-1]
+    section = {k: latest.get(k) for k in _WEEKLY_FACT_COLS}
+    section["was_deload"] = _was_deload(weekly_rows, thr["deload_drop_pct"])
+    section["plan_vs_actual"] = _weekly.plan_vs_actual(
+        conn, latest["week_start"], thr["hard_te_load"]
+    )
+    return section
+
+
 def build_digest(
     conn: sqlite3.Connection,
     *,
@@ -155,13 +203,17 @@ def build_digest(
         A dict with ``window``, ``headline``, ``signals``, and ``disclaimer``.
     """
     thr = merge_thresholds(thresholds)
+    weekly_rows = _read_weekly(conn)
+    weekly_section = _weekly_section(conn, weekly_rows, thr)
+    deload = _signals.deload_advised(weekly_rows, thr)
     from_date, to_date = _resolve_window(conn, from_date, to_date)
     if from_date is None or to_date is None:
-        # Empty mart and no explicit range: nothing to report.
+        # Empty daily mart and no explicit range: only weekly rollups may report.
         return {
             "window": {"from": from_date, "to": to_date, "days": 0},
             "headline": _headline([], [], thr),
-            "signals": [],
+            "signals": [deload] if deload is not None else [],
+            "weekly": weekly_section,
             "disclaimer": DISCLAIMER,
         }
     window = {
@@ -179,6 +231,7 @@ def build_digest(
         _signals.hrv_low_morning(rows, thr),
         _signals.two_hard_days(rows, thr, to_date),
         _signals.hrv_sleep_confound(rows, thr),
+        deload,
     )
     signals = sorted(
         (s for s in candidates if s is not None),
@@ -188,5 +241,6 @@ def build_digest(
         "window": window,
         "headline": headline,
         "signals": signals,
+        "weekly": weekly_section,
         "disclaimer": DISCLAIMER,
     }

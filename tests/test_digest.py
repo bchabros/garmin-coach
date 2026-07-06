@@ -280,6 +280,61 @@ def test_signals_are_ordered_by_severity(conn):
     assert severities[-1] == "info"
 
 
+def _week(conn, **row):
+    db.upsert_weekly(conn, row)
+
+
+def test_weekly_section_carries_plan_vs_actual_and_deload_fires(conn):
+    """build_digest exposes a ``weekly`` section for the latest complete week
+    (facts + a 7-day plan-vs-actual table) and appends DELOAD_ADVISED when the
+    weekly history warrants it."""
+    _week(conn, week_start="2026-06-08", load_total=400, acwr_end=1.0, monotony=1.0)
+    _week(conn, week_start="2026-06-15", load_total=600, acwr_end=1.2, monotony=1.0)
+    _week(conn, week_start="2026-06-22", load_total=800, acwr_end=1.6, monotony=1.0,
+          plan_adherence=6 / 7)
+    # Daily rows for the latest week so plan-vs-actual can classify by load.
+    _mart(conn, date="2026-06-22", load_day=0)      # Mon: rest (plan rest -> match)
+    _mart(conn, date="2026-06-23", load_day=200)    # Tue: quality (plan quality -> match)
+    _mart(conn, date="2026-06-26", load_day=0)      # Fri: rest (plan quality -> mismatch)
+
+    d = build_digest(conn, from_date="2026-06-22", to_date="2026-06-28")
+
+    wk = d["weekly"]
+    assert wk["week_start"] == "2026-06-22"
+    assert abs(wk["plan_adherence"] - 6 / 7) < 1e-9
+    pva = wk["plan_vs_actual"]
+    assert len(pva) == 7
+    assert pva[0] == {"dow": 0, "date": "2026-06-22", "planned": "rest",
+                      "actual": "rest", "match": True}
+    fri = next(p for p in pva if p["date"] == "2026-06-26")
+    assert fri["planned"] == "quality" and fri["actual"] == "rest" and fri["match"] is False
+
+    assert "DELOAD_ADVISED" in _codes(d)
+
+
+def test_weekly_section_flags_retrospective_deload_on_big_load_drop(conn):
+    """``was_deload`` is true when the latest week's load_total fell by at least
+    ``deload_drop_pct`` vs the prior week; false on a mild drop; None with no history."""
+    _week(conn, week_start="2026-06-08", load_total=1000)
+    _week(conn, week_start="2026-06-15", load_total=500)  # 50% drop >= 40% default
+
+    d = build_digest(conn, from_date="2026-06-15", to_date="2026-06-21")
+    assert d["weekly"]["was_deload"] is True
+
+    conn.execute("DELETE FROM weekly_metrics")
+    _week(conn, week_start="2026-06-08", load_total=1000)
+    _week(conn, week_start="2026-06-15", load_total=800)  # 20% drop < 40% default
+
+    d = build_digest(conn, from_date="2026-06-15", to_date="2026-06-21")
+    assert d["weekly"]["was_deload"] is False
+
+    conn.execute("DELETE FROM weekly_metrics")
+    _week(conn, week_start="2026-06-15", load_total=500)  # no predecessor week
+
+    d = build_digest(conn, from_date="2026-06-15", to_date="2026-06-21")
+    assert d["weekly"]["was_deload"] is None
+
+
 def test_golden_regression_over_real_mart_slice(conn):
     """Seed the frozen real mart (2026-06-08..07-03) and assert the deterministic
     digest against independently-verified values (see docs/prd/phase-3.md)."""

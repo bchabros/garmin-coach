@@ -30,7 +30,10 @@
       "Bash(cat grilling/SKILL.md)",
       "Bash(cat grill-me/SKILL.md)",
       "Bash(chmod +x scripts/daily.sh)",
-      "Bash(poetry env *)"
+      "Bash(poetry env *)",
+      "Read(//Users/Chabi/.agents/skills/grill-with-docs/**)",
+      "Read(//private/var/folders/78/p_f9j60x7y35v_tvsjrt49xw0000gn/T/skills-yKQxwP/skills/engineering/domain-modeling/**)",
+      "Read(//private/var/folders/78/p_f9j60x7y35v_tvsjrt49xw0000gn/T/skills-yKQxwP/**)"
     ]
   }
 }

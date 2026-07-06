@@ -89,9 +89,10 @@ def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) 
     cols = list(row.keys())
     placeholders = ",".join("?" for _ in cols)
     updates = ",".join(f"{c}=excluded.{c}" for c in cols if c != pk)
+    conflict = f"DO UPDATE SET {updates}" if updates else "DO NOTHING"
     sql = (
         f"INSERT INTO {table} ({','.join(cols)}) VALUES ({placeholders}) "
-        f"ON CONFLICT({pk}) DO UPDATE SET {updates}"
+        f"ON CONFLICT({pk}) {conflict}"
     )
     conn.execute(sql, [row[c] for c in cols])
 
@@ -104,3 +105,8 @@ def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     """Upsert a one-row-per-date table (sleep, hrv_nightly, daily_wellness, ...)."""
     _upsert(conn, table, row, pk="date")
+
+
+def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert a `weekly_metrics` row by week_start (the Monday)."""
+    _upsert(conn, "weekly_metrics", row, pk="week_start")

@@ -313,7 +313,11 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('acwr_sweet_hi',        1.3, 'top of sweet spot'),
  ('acwr_min_chronic_days', 28, 'ACWR unreliable below this n_chronic'),
  ('hr_z2_upper_bpm',      140, 'approx Z2 ceiling; refine from user_settings zones'),
- ('hard_te_load',         150, 'session considered "hard" above this training_load');
+ ('hard_te_load',         150, 'session considered "hard" above this training_load'),
+ ('monotony_high',        2.0, 'Foster monotony above this flags overtraining (Phase 5)'),
+ ('deload_load_rise_weeks', 3, 'consecutive rising-load weeks that arm DELOAD_ADVISED'),
+ ('deload_min_history_weeks', 3, 'below this many complete weeks the deload signal is silent'),
+ ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (

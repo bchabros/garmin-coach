@@ -179,3 +179,44 @@ def hrv_low_morning(rows: list[dict], thresholds: dict[str, float]) -> dict | No
             "threshold": threshold,
         },
     }
+
+
+def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dict | None:
+    """Rule 6 (prospective): load has climbed into an overtraining flag.
+
+    Fires when there is enough history and ``load_total`` rose strictly across
+    the most recent ``deload_load_rise_weeks`` complete weeks and the latest week
+    is either in hot ACWR (> ``acwr_risk_high``) or high monotony
+    (> ``monotony_high``). Silent when history is too short - it never guesses.
+    Retrospective "this week was a deload" stays a report fact, not a signal.
+    """
+    min_history = thresholds["deload_min_history_weeks"]
+    rise = int(thresholds["deload_load_rise_weeks"])
+    if len(weekly_rows) < max(min_history, rise) or rise < 2:
+        return None
+
+    recent = weekly_rows[-rise:]
+    loads = [(w.get("load_total") or 0) for w in recent]
+    rising = all(loads[i] < loads[i + 1] for i in range(len(loads) - 1))
+    if not rising:
+        return None
+
+    latest = weekly_rows[-1]
+    acwr_end = latest.get("acwr_end")
+    monotony = latest.get("monotony")
+    hot_acwr = acwr_end is not None and acwr_end > thresholds["acwr_risk_high"]
+    high_monotony = monotony is not None and monotony > thresholds["monotony_high"]
+    if not (hot_acwr or high_monotony):
+        return None
+
+    return {
+        "code": "DELOAD_ADVISED",
+        "severity": "warn",
+        "facts": {
+            "week_start": latest.get("week_start"),
+            "load_total": latest.get("load_total"),
+            "rise_weeks": rise,
+            "acwr_end": acwr_end,
+            "monotony": monotony,
+        },
+    }

@@ -72,6 +72,12 @@ tasks:
     cmds:
       - task: backfill
 
+  daily:
+    desc: Run the nightly pipeline locally (sync -> features -> alerts). Optional TO=YYYY-MM-DD.
+    cmds:
+      - >-
+        poetry run garmin-coach daily{{if .TO}} --to {{.TO}}{{end}}
+
   schema:check:
     desc: Verify the packaged schema matches the docs snapshot.
     cmds:

@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # Where garminconnect caches OAuth tokens.
     garmintokens: str = "~/.garminconnect"
 
+    # Nightly-run logging (Phase 4). Rotation is size-based, in-process.
+    log_path: str = "./logs/daily.log"
+    log_max_bytes: int = 1_000_000
+    log_backup_count: int = 5
+
 
 def get_settings() -> Settings:
     """Load runtime settings."""

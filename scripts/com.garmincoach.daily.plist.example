@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent example for the nightly garmin-coach run.
+
+  Install (on your own terms):
+    1. Edit the two /ABSOLUTE/PATH/TO/garmin-coach placeholders below.
+    2. cp scripts/com.garmincoach.daily.plist.example \
+         ~/Library/LaunchAgents/com.garmincoach.daily.plist
+    3. launchctl load ~/Library/LaunchAgents/com.garmincoach.daily.plist
+
+  Runs at 06:00 local daily. Backfill excludes "today", so pulling in the
+  morning captures the previous night's HRV/sleep. StandardOut/Error here are a
+  coarse launchd capture; the rotated app log lives at logs/daily.log (LOG_PATH).
+
+  launchd gives child processes a minimal PATH, so `poetry` (and any other
+  tool installed outside /usr/bin:/bin:/usr/sbin:/sbin) will not resolve
+  unless its directory is added below. Adjust /Users/YOUR_USER/.local/bin
+  (and any other dirs `which poetry` needs) to match your machine.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.garmincoach.daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABSOLUTE/PATH/TO/garmin-coach/scripts/daily.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/ABSOLUTE/PATH/TO/garmin-coach</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/YOUR_USER/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>6</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/ABSOLUTE/PATH/TO/garmin-coach/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/ABSOLUTE/PATH/TO/garmin-coach/logs/launchd.err.log</string>
+</dict>
+</plist>

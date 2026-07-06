@@ -95,4 +95,12 @@ marts/views, never mixed into core.
   regression in `tests/test_digest.py`. Deterministic engine builds `reports/{date}/digest.json`
   + 2 charts (HRV ±1 SD, ACWR); the skill writes `report.md` from the digest (never the raw
   mart, never Garmin). Signals 1–5 from BUILD §7; rule 6 (plan vs actual) deferred to Phase 5.
-- Next up: **Phase 4/5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`).
+- Phase 4 (automation) — **done**; decisions in `docs/prd/phase-4.md` + `docs/adr/0004-phase-4-automation.md`;
+  seam tests in `tests/test_daily.py`. Seam `daily.run_daily(client, conn, ...) → DailyResult` runs
+  sync → features → `build_digest` (alerts only; **no charts** on the nightly path). Alerts = digest
+  signals with `warn`/`alert` severity (reused from Phase 3, no new thresholds), logged WARNING/ERROR.
+  Status/exit contract: `ok`/0, `degraded`/1 (isolated stream failure), `failed`/2 (stage crash or
+  total sync outage). `garmin-coach daily [--to]` + `scripts/daily.sh` (thin) + launchd plist example;
+  logging via in-process `RotatingFileHandler` (`configure_logging`, config keys `LOG_PATH`/
+  `LOG_MAX_BYTES`/`LOG_BACKUP_COUNT`). Scheduling is documented, not auto-installed.
+- Next up: **Phase 5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`, deload/trend detection).

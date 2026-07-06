@@ -6,6 +6,7 @@
 data/
 raw/
 reports/
+logs/
 
 # garmin tokens
 .garminconnect/

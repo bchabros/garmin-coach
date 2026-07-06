@@ -23,7 +23,14 @@
       "Bash(head -26 .gitignore)",
       "Bash(mv /tmp/gi .gitignore)",
       "Bash(git -C /Users/Chabi/Documents/garmin-coach diff HEAD -- CLAUDE.md docs/glossary.md pyproject.toml src/garmin_coach/cli.py .gitignore .claude/settings.local.json)",
-      "Bash(git -C /Users/Chabi/Documents/garmin-coach diff HEAD -- docs/glossary.md pyproject.toml src/garmin_coach/cli.py .gitignore)"
+      "Bash(git -C /Users/Chabi/Documents/garmin-coach diff HEAD -- docs/glossary.md pyproject.toml src/garmin_coach/cli.py .gitignore)",
+      "Read(//Users/Chabi/.claude/**)",
+      "Bash(cat grill-with-docs/SKILL.md)",
+      "Bash(cat to-prd/SKILL.md)",
+      "Bash(cat grilling/SKILL.md)",
+      "Bash(cat grill-me/SKILL.md)",
+      "Bash(chmod +x scripts/daily.sh)",
+      "Bash(poetry env *)"
     ]
   }
 }

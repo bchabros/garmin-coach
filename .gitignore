@@ -4,6 +4,7 @@
 *.db-wal
 *.db-shm
 data/
+plans/
 raw/
 reports/
 logs/
@@ -24,3 +25,5 @@ poetry.lock.bak
 .idea/
 *.diff
 *.patch
+
+.DS_Store

@@ -3,6 +3,10 @@
 > Dokument wykonawczy. Odczytaj całość, potem realizuj **fazami** (0 → 5). Każda faza ma
 > *Definition of Done*; nie przechodź dalej, dopóki DoD nie jest spełnione. Kod w Pythonie.
 > Komentarze/docstringi po angielsku, commit messages po angielsku.
+>
+> **STATUS: fazy 0–5 ukończone.** Ten dokument jest zapisem historycznym budowy
+> (spec + statusy per faza poniżej). Dalszy rozwój żyje w **`docs/ROADMAP.md`**
+> (fazy 6+, jedno źródło łączące potrzeby z sesji coachingowych i przegląd rynku).
 
 ---
 
@@ -121,6 +125,10 @@ garmin-coach/
 - **DoD:** `garmin-coach sync` odpalony dwa razy pod rząd jest idempotentny; padnięcie jednego
   streamu nie wywala całego runu; watermark się przesuwa.
 
+- **✅ STATUS: DONE.** Watermark per stream w `sync_state`, retry z backoffem, fallback
+  per-dzień, izolacja streamów. Decyzje: `docs/prd/phase-1.md` +
+  `docs/adr/0001-phase-1-incremental-sync.md`; testy seamowe w `tests/test_sync.py`.
+
 ### Faza 2 — warstwa metryk (mart)
 - `features.py` liczy i materializuje do `daily_metrics` (definicje w sekcji 6):
   HRV baseline (mediana krocząca) + SD + flaga `< baseline − 1·SD`; ACWR (acute7/chronic28) +
@@ -129,11 +137,22 @@ garmin-coach/
 - **DoD:** `garmin-coach features` odtwarza wyniki z analizy referencyjnej dla 09.06–04.07
   (baseline ≈ 68 ms, SD ≈ 11 ms, próg ≈ 57 ms; ACWR na 03.07 ≈ 1.0, ref. Garmin 1.1).
 
+- **✅ STATUS: DONE.** `features.py` materializuje mart `daily_metrics`; złota regresja w
+  `tests/test_features.py`. Decyzje: `docs/prd/phase-2.md` +
+  `docs/adr/0002-phase-2-metrics-semantics.md`.
+
 ### Faza 3 — skill „coach"
 - `skills/coach/SKILL.md` (konwencja skilli — Twoja działka): enkapsuluje **reguły** (sekcja 7),
   czyta `daily_metrics`, zwraca raport + wykresy. Agent nie „myśli od zera".
 - **DoD:** w Cowork „przejrzyj mój ostatni tydzień" produkuje raport tekstowy + 2 wykresy
   (HRV z pasmem ±1 SD, ACWR w czasie) i listę konkretnych sygnałów.
+
+- **✅ STATUS: DONE.** Deterministyczny silnik (`digest.py`/`signals.py` →
+  `garmin-coach report`) buduje `reports/{date}/digest.json` + 2 wykresy; skill pisze
+  `report.md` wyłącznie z digestu (nigdy z surowego martu, nigdy z Garmina). Sygnały 1–5
+  z sekcji 7; reguła 6 (plan vs actual) przesunięta do Fazy 5. Decyzje:
+  `docs/prd/phase-3.md` + `docs/adr/0003-phase-3-coach-signals.md`; złota regresja w
+  `tests/test_digest.py`.
 
 ### Faza 4 — automatyzacja
 - `scripts/daily.sh` (sync → features) pod cron/launchd. Cotygodniowy review z Cowork.
@@ -141,10 +160,25 @@ garmin-coach/
   deload"; `AEROBIC_LOW_SHORTAGE` → „dołóż Z2".
 - **DoD:** nocny run działa bez interakcji; log rotowany; błąd = niezerowy exit + wpis w logu.
 
+- **✅ STATUS: DONE.** Seam `daily.run_daily(client, conn, ...) → DailyResult`
+  (sync → features → digest, bez wykresów na nocnej ścieżce); alerty = sygnały
+  warn/alert z digestu; kontrakt exit: `ok`/0, `degraded`/1, `failed`/2.
+  `garmin-coach daily` + cienki `scripts/daily.sh` + przykładowy plist launchd;
+  logowanie przez `RotatingFileHandler`. Decyzje: `docs/prd/phase-4.md` +
+  `docs/adr/0004-phase-4-automation.md`; testy w `tests/test_daily.py`.
+
 ### Faza 5 — domknięcie pętli
 - Plan-vs-actual (szablon tygodnia użytkownika kontra faktyczne logi), detekcja deloadu,
   trendy VO2max/próg, multi-sport gdy wróci sezon skiturowy (`discipline` już jest w schemacie).
 - **DoD:** raport pokazuje rozjazd „plan vs realizacja" i wykrywa „dwa twarde dni z rzędu".
+
+- **✅ STATUS: DONE.** `weekly.py` → mart `weekly_metrics` (tylko pełne tygodnie
+  pon–ndz); plan-vs-actual (`plan_adherence` vs `plan_template`), Foster
+  `monotony`/`strain`, `max_consec_hard`, nowy sygnał `DELOAD_ADVISED`; digest zyskał
+  sekcję `weekly`, raport „Tydzień: plan vs realizacja". Decyzje: `docs/prd/phase-5.md`
+  + `docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md`; testy w
+  `tests/test_weekly.py` + `tests/test_signals.py`. Trendy VO2max/próg, multi-sport
+  weighting i eksport PDF/Notion odłożone → `docs/ROADMAP.md`.
 
 ---
 

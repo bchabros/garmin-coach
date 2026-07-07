@@ -33,7 +33,14 @@
       "Bash(poetry env *)",
       "Read(//Users/Chabi/.agents/skills/grill-with-docs/**)",
       "Read(//private/var/folders/78/p_f9j60x7y35v_tvsjrt49xw0000gn/T/skills-yKQxwP/skills/engineering/domain-modeling/**)",
-      "Read(//private/var/folders/78/p_f9j60x7y35v_tvsjrt49xw0000gn/T/skills-yKQxwP/**)"
+      "Read(//private/var/folders/78/p_f9j60x7y35v_tvsjrt49xw0000gn/T/skills-yKQxwP/**)",
+      "WebSearch",
+      "WebFetch(domain:developer.garmin.com)",
+      "WebFetch(domain:forum.intervals.icu)",
+      "WebFetch(domain:athletica.ai)",
+      "WebFetch(domain:pypi.org)",
+      "WebFetch(domain:github.com)",
+      "Bash(git -C /Users/Chabi/garmin-coach status --short)"
     ]
   }
 }

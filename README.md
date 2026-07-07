@@ -56,7 +56,8 @@ garmin-coach/
 │   ├── sync.py                 # backfill + incremental sync: raw-first, upsert core,
 │   │                           #   retry/backoff, per-day fallback, isolated streams
 │   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
-│   ├── weekly.py             # mart: weekly_metrics rollup + plan-vs-actual (run by features)
+│   ├── weekly.py             # mart: weekly_metrics + weekly_plan_actual (run by features)
+│   ├── thresholds.py         # coach threshold policy: defaults + DB overrides
 │   ├── digest.py             # headline + coach signals + weekly section (build_digest)
 │   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED)
 │   ├── charts.py             # HRV band + ACWR matplotlib charts
@@ -75,11 +76,11 @@ garmin-coach/
 ```
 
 Data layout is medallion: **raw** (`raw_payloads`, append-only) → **core** (normalized,
-upserted) → **mart** (`daily_metrics`, recomputed by `features`; `weekly_metrics`,
-rolled up from it by `weekly` for every *complete* week). `digest.py` reads both marts
-and produces the compact digest (headline, signals, weekly plan-vs-actual) the coach
-skill narrates; `daily.py` reruns the whole chain unattended and reduces the digest to
-log-worthy alerts.
+upserted) → **mart** (`daily_metrics`, recomputed by `features`; `weekly_metrics`
+and `weekly_plan_actual`, rolled up from it by `weekly` for every *complete* week).
+`digest.py` reads the marts and produces the compact digest (headline, signals,
+weekly plan-vs-actual) the coach skill narrates; `daily.py` reruns the whole chain
+unattended and reduces the digest to log-worthy alerts.
 
 ## Setup
 

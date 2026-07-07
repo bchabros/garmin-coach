@@ -13,7 +13,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, NamedTuple, Protocol
+from typing import Any, Callable, Protocol
 
 from . import db, models
 
@@ -30,6 +30,16 @@ class SyncResult:
     def had_progress(self) -> bool:
         """Return whether at least one stream advanced its watermark."""
         return bool(self.progressed_streams)
+
+    @property
+    def total_outage(self) -> bool:
+        """Return whether attempted streams all failed to progress."""
+        return bool(self.warnings and self.attempted_streams and not self.had_progress)
+
+    @property
+    def degraded(self) -> bool:
+        """Return whether some stream failed after another stream progressed."""
+        return bool(self.warnings and self.had_progress)
 
 
 class GarminClient(Protocol):
@@ -60,7 +70,19 @@ class GarminClient(Protocol):
         ...
 
 
-class SyncStream(NamedTuple):
+@dataclass
+class SyncContext:
+    """Shared execution config for one ``sync_incremental`` run's stream helpers."""
+
+    client: GarminClient
+    conn: sqlite3.Connection
+    result: SyncResult
+    max_attempts: int
+    retry_base_seconds: float
+
+
+@dataclass(frozen=True)
+class SyncStream:
     """Definition of a daily data stream."""
 
     name: str
@@ -68,6 +90,17 @@ class SyncStream(NamedTuple):
     method: str
     normalize: Callable[[str, Any], dict[str, Any]]
     table: str
+
+    def fetch(self, client: GarminClient, date: str) -> Any:
+        """Fetch this stream's payload for one date through the transport seam."""
+        return getattr(client, self.method)(date)
+
+    def store(self, conn: sqlite3.Connection, date: str, payload: Any) -> None:
+        """Store one payload raw-first, then normalized into its core table."""
+        if payload is None:
+            return
+        db.insert_raw(conn, self.endpoint, date, json.dumps(payload))
+        db.upsert_daily(conn, self.table, self.normalize(date, payload))
 
 
 # Per-day streams definition
@@ -128,6 +161,15 @@ def _call_with_retry(action: Callable[[], Any], max_attempts: int, retry_base_se
     raise last_error or RuntimeError("retry failed without an exception")
 
 
+def _store_activities(
+    conn: sqlite3.Connection, ref_date: str, activities: list[dict[str, Any]]
+) -> None:
+    """Store activity range payload raw-first, then upsert each core activity."""
+    db.insert_raw(conn, "get_activities_by_date", ref_date, json.dumps(activities))
+    for act in activities:
+        db.upsert_activity(conn, models.normalize_activity(act))
+
+
 def backfill(
     client: GarminClient,
     conn: sqlite3.Connection,
@@ -144,20 +186,82 @@ def backfill(
 
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []
-    db.insert_raw(conn, "get_activities_by_date", from_date, json.dumps(activities))
-    for act in activities:
-        db.upsert_activity(conn, models.normalize_activity(act))
+    _store_activities(conn, from_date, activities)
     conn.commit()
 
     for d in _daterange(start, end):
         date = d.isoformat()
         for stream in _DAY_STREAMS:
-            payload = getattr(client, stream.method)(date)
-            if payload is None:
-                continue
-            db.insert_raw(conn, stream.endpoint, date, json.dumps(payload))
-            db.upsert_daily(conn, stream.table, stream.normalize(date, payload))
+            stream.store(conn, date, stream.fetch(client, date))
         conn.commit()
+
+
+def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
+    """Advance the activities stream, using range fetch then per-day fallback."""
+    ctx.result.attempted_streams.add("activities")
+    start_s = start.isoformat()
+    end_s = end.isoformat()
+
+    def fetch_activity_range() -> list[dict[str, Any]]:
+        return ctx.client.get_activities(start_s, end_s)
+
+    try:
+        activities = (
+            _call_with_retry(fetch_activity_range, ctx.max_attempts, ctx.retry_base_seconds) or []
+        )
+    except Exception:
+        for d in _daterange(start, end):
+            date = d.isoformat()
+
+            def fetch_activity_day(fetch_date: str = date) -> list[dict[str, Any]]:
+                return ctx.client.get_activities(fetch_date, fetch_date)
+
+            try:
+                activities = _call_with_retry(
+                    fetch_activity_day,
+                    ctx.max_attempts,
+                    ctx.retry_base_seconds,
+                ) or []
+            except Exception as exc:
+                ctx.result.warnings.append(f"activities failed for {date}: {exc}")
+                ctx.conn.commit()
+                break
+
+            _store_activities(ctx.conn, date, activities)
+            db.set_sync_watermark(ctx.conn, "activities", date)
+            ctx.result.progressed_streams.add("activities")
+            ctx.conn.commit()
+    else:
+        _store_activities(ctx.conn, start_s, activities)
+        db.set_sync_watermark(ctx.conn, "activities", end_s)
+        ctx.result.progressed_streams.add("activities")
+        ctx.conn.commit()
+
+
+def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end: dt.date) -> None:
+    """Advance one daily stream from its first missing date to the cutoff."""
+    ctx.result.attempted_streams.add(stream.name)
+    for d in _daterange(start, end):
+        date = d.isoformat()
+
+        def fetch_daily_payload(fetch_date: str = date) -> Any:
+            return stream.fetch(ctx.client, fetch_date)
+
+        try:
+            payload = _call_with_retry(
+                fetch_daily_payload,
+                ctx.max_attempts,
+                ctx.retry_base_seconds,
+            )
+        except Exception as exc:
+            ctx.result.warnings.append(f"{stream.name} failed for {date}: {exc}")
+            ctx.conn.commit()
+            break
+
+        stream.store(ctx.conn, date, payload)
+        db.set_sync_watermark(ctx.conn, stream.name, date)
+        ctx.result.progressed_streams.add(stream.name)
+        ctx.conn.commit()
 
 
 def sync_incremental(
@@ -170,51 +274,14 @@ def sync_incremental(
 ) -> SyncResult:
     """Pull only dates after each stream's watermark through `to_date`/yesterday."""
     end = _default_end(to_date)
-    result = SyncResult()
+    ctx = SyncContext(client, conn, SyncResult(), max_attempts, retry_base_seconds)
 
     activity_watermark = db.bootstrap_sync_watermark(
         conn, stream="activities", core_table="activities", data_start_date=data_start_date
     )
     activity_start = _next_date(activity_watermark)
     if activity_start <= end:
-        result.attempted_streams.add("activities")
-        start_s = activity_start.isoformat()
-        end_s = end.isoformat()
-        def fetch_activity_range() -> list[dict[str, Any]]:
-            return client.get_activities(start_s, end_s)
-
-        try:
-            activities = _call_with_retry(fetch_activity_range, max_attempts, retry_base_seconds) or []
-        except Exception:
-            for d in _daterange(activity_start, end):
-                date = d.isoformat()
-                def fetch_activity_day(fetch_date: str = date) -> list[dict[str, Any]]:
-                    return client.get_activities(fetch_date, fetch_date)
-
-                try:
-                    activities = _call_with_retry(
-                        fetch_activity_day,
-                        max_attempts,
-                        retry_base_seconds,
-                    ) or []
-                except Exception as exc:
-                    result.warnings.append(f"activities failed for {date}: {exc}")
-                    conn.commit()
-                    break
-
-                db.insert_raw(conn, "get_activities_by_date", date, json.dumps(activities))
-                for act in activities:
-                    db.upsert_activity(conn, models.normalize_activity(act))
-                db.set_sync_watermark(conn, "activities", date)
-                result.progressed_streams.add("activities")
-                conn.commit()
-        else:
-            db.insert_raw(conn, "get_activities_by_date", start_s, json.dumps(activities))
-            for act in activities:
-                db.upsert_activity(conn, models.normalize_activity(act))
-            db.set_sync_watermark(conn, "activities", end_s)
-            result.progressed_streams.add("activities")
-            conn.commit()
+        _sync_activities(ctx, activity_start, end)
 
     for stream in _DAY_STREAMS:
         watermark = db.bootstrap_sync_watermark(
@@ -224,29 +291,6 @@ def sync_incremental(
         if start > end:
             continue
 
-        result.attempted_streams.add(stream.name)
-        for d in _daterange(start, end):
-            date = d.isoformat()
+        _sync_daily_stream(stream, ctx, start, end)
 
-            def fetch_daily_payload(s: SyncStream = stream, fetch_date: str = date) -> Any:
-                return getattr(client, s.method)(fetch_date)
-
-            try:
-                payload = _call_with_retry(
-                    fetch_daily_payload,
-                    max_attempts,
-                    retry_base_seconds,
-                )
-            except Exception as exc:
-                result.warnings.append(f"{stream.name} failed for {date}: {exc}")
-                conn.commit()
-                break
-
-            if payload is not None:
-                db.insert_raw(conn, stream.endpoint, date, json.dumps(payload))
-                db.upsert_daily(conn, stream.table, stream.normalize(date, payload))
-            db.set_sync_watermark(conn, stream.name, date)
-            result.progressed_streams.add(stream.name)
-            conn.commit()
-
-    return result
+    return ctx.result

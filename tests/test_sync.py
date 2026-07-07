@@ -72,6 +72,25 @@ def test_backfill_marks_empty_wellness_day(conn, fake_client, fixture):
     assert has_data == 0
 
 
+def test_sync_result_classifies_total_outage_and_degraded():
+    """SyncResult owns partial-success vs total-outage policy."""
+    total = sync.SyncResult(
+        attempted_streams={"sleep"},
+        progressed_streams=set(),
+        warnings=["sleep failed"],
+    )
+    partial = sync.SyncResult(
+        attempted_streams={"sleep", "hrv"},
+        progressed_streams={"hrv"},
+        warnings=["sleep failed"],
+    )
+
+    assert total.total_outage is True
+    assert total.degraded is False
+    assert partial.total_outage is False
+    assert partial.degraded is True
+
+
 class SleepFailsOnDateClient:
     def __init__(self, base, failing_date):
         self.base = base

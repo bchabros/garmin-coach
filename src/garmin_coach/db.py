@@ -110,3 +110,27 @@ def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> N
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert a `weekly_metrics` row by week_start (the Monday)."""
     _upsert(conn, "weekly_metrics", row, pk="week_start")
+
+
+def replace_weekly_plan_actual(
+    conn: sqlite3.Connection, week_start: str, rows: list[dict[str, Any]]
+) -> None:
+    """Replace per-day plan-vs-actual facts for one completed week."""
+    conn.execute("DELETE FROM weekly_plan_actual WHERE week_start = ?", (week_start,))
+    conn.executemany(
+        """
+        INSERT INTO weekly_plan_actual(week_start, dow, date, planned, actual, matched)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                week_start,
+                row["dow"],
+                row["date"],
+                row["planned"],
+                row["actual"],
+                1 if row["match"] else 0,
+            )
+            for row in rows
+        ],
+    )

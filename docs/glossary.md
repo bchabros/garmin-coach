@@ -8,7 +8,8 @@ code, docstrings, PRDs, and ADRs.
 - **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten.
 - **core** - normalized, upserted-by-PK tables (`activities`, `daily_wellness`,
   `sleep`, `hrv_nightly`, `sync_state`). The system of record.
-- **mart** - recomputed, derived tables (`daily_metrics`; `weekly_metrics` later).
+- **mart** - recomputed, derived tables (`daily_metrics`, `weekly_metrics`,
+  `weekly_plan_actual`).
   Never a system of record; safe to drop and rebuild from core.
 
 ## Metrics (mart)
@@ -45,13 +46,16 @@ code, docstrings, PRDs, and ADRs.
 ## Coach terms (mart -> report)
 
 - **digest** - compact recomputed view built by `build_digest(conn, ...)` from
-  `daily_metrics` + `training_status_daily`: a headline block plus a list of signals.
+  `daily_metrics`, `weekly_metrics`, `weekly_plan_actual`, and
+  `training_status_daily`: a headline block plus a list of signals.
   Serialized to `reports/{date}/digest.json`; the token boundary the coach skill reads
   instead of raw mart rows. Non-durable, not a system of record.
 - **signal** - a single coach finding `{code, severity, facts, garmin_agrees?}` with
   `severity` in `info|warn|alert` and `facts` a flat dict of scalars. Codes:
   `AEROBIC_LOW_SHORTAGE`, `ACWR_OUT_OF_RANGE`, `HRV_LOW_MORNING`, `TWO_HARD_DAYS`,
-  `HRV_SLEEP_CONFOUND` (BUILD section 7 rules 1-5).
+  `HRV_SLEEP_CONFOUND`, `DELOAD_ADVISED`.
+- **report horizon** - the single `to_date`/window that scopes a digest; daily facts,
+  weekly facts, and weekly signals must all sit at or before this horizon.
 - **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below
   target while hard-load share is above ("add Z2"). Computed from our buckets;
   cross-checked against Garmin's `training_status_daily.balance_phrase` via
@@ -71,7 +75,8 @@ code, docstrings, PRDs, and ADRs.
   tracks progress.
 - **seam** - the agreed boundary a test exercises: pure normalizers (`models.py`),
   the persistence layer (`db.py`), the sync orchestrator (`sync.py`), the features
-  materializer (`features.py`), and now the digest builder
-  (`build_digest`/`digest.py`) at the DB boundary.
+  materializer (`features.py`), the weekly rollup (`weekly.py`), threshold policy
+  (`thresholds.py`), and the digest builder (`build_digest`/`digest.py`) at the DB
+  boundary.
 - **golden regression** - a test that reproduces the reference hand-analysis
   (2026-06-09..07-04) from frozen real anonymized core data.

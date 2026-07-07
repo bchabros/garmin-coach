@@ -12,18 +12,12 @@ import sqlite3
 import statistics as _stats
 
 from . import db
+from . import thresholds as _thresholds
 
 
 def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
     row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
     return row[0] if row and row[0] else None
-
-
-def _threshold(conn: sqlite3.Connection, key: str, default: float) -> float:
-    row = conn.execute(
-        "SELECT value FROM coach_thresholds WHERE key = ?", (key,)
-    ).fetchone()
-    return row[0] if row and row[0] is not None else default
 
 
 def _plan_intents(conn: sqlite3.Connection) -> dict[int, str]:
@@ -53,6 +47,12 @@ def _max_consec_hard(loads: list[float], hard: float) -> int:
     return best
 
 
+def _week_grid(monday: _dt.date, daily: dict[str, dict]) -> list[dict | None]:
+    """Return the 7 daily-mart rows (or None) for the week starting on ``monday``."""
+    dates = [(monday + _dt.timedelta(days=i)).isoformat() for i in range(7)]
+    return [daily.get(d) for d in dates]
+
+
 def _daily_rows(conn: sqlite3.Connection) -> dict[str, dict]:
     cur = conn.execute("SELECT * FROM daily_metrics")
     cols = [c[0] for c in cur.description]
@@ -77,21 +77,15 @@ def _complete_weeks(data_start: str, end: str) -> list[_dt.date]:
     return weeks
 
 
-def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> list[dict]:
-    """Per-day plan-vs-actual for one week: planned intent, actual intent, match.
-
-    Actual intent is classified by load (see ``_actual_intent``); planned intent
-    comes from ``plan_template``. Used by the digest to surface the direction of
-    each divergence, which the adherence ratio alone cannot show.
-    """
-    plan = _plan_intents(conn)
-    daily = _daily_rows(conn)
-    monday = _dt.date.fromisoformat(week_start)
+def _intent_rows(
+    monday: _dt.date, week_rows: list[dict | None], plan: dict[int, str], hard: float
+) -> list[dict]:
+    """Per-day planned and actual intent facts for one completed week."""
     out: list[dict] = []
     for dow in range(7):
         date = (monday + _dt.timedelta(days=dow)).isoformat()
         planned = plan.get(dow)
-        actual = _actual_intent(daily.get(date), hard)
+        actual = _actual_intent(week_rows[dow], hard)
         out.append(
             {
                 "dow": dow,
@@ -102,6 +96,36 @@ def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> li
             }
         )
     return out
+
+
+def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> list[dict]:
+    """Return the stored per-day plan-vs-actual facts for one completed week.
+
+    Falls back to deriving the facts when a DB predates the materialized detail
+    table contents, preserving the public interface for older local data.
+    """
+    stored = conn.execute(
+        "SELECT dow, date, planned, actual, matched FROM weekly_plan_actual "
+        "WHERE week_start = ? ORDER BY dow",
+        (week_start,),
+    ).fetchall()
+    if stored:
+        return [
+            {
+                "dow": dow,
+                "date": date,
+                "planned": planned,
+                "actual": actual,
+                "match": bool(matched),
+            }
+            for dow, date, planned, actual, matched in stored
+        ]
+
+    plan = _plan_intents(conn)
+    daily = _daily_rows(conn)
+    monday = _dt.date.fromisoformat(week_start)
+    week_rows = _week_grid(monday, daily)
+    return _intent_rows(monday, week_rows, plan, hard)
 
 
 def rollup(
@@ -122,14 +146,14 @@ def rollup(
     if end is None:
         return
 
-    hard = _threshold(conn, "hard_te_load", 150)
+    hard = _thresholds.read(conn)["hard_te_load"]
     plan = _plan_intents(conn)
     daily = _daily_rows(conn)
     prev_hrv_mean: float | None = None
     for monday in _complete_weeks(data_start_date, end):
-        week_dates = [(monday + _dt.timedelta(days=i)).isoformat() for i in range(7)]
-        week_rows = [daily.get(d) for d in week_dates]
-        row = _week_row(monday, week_rows, plan, hard)
+        week_rows = _week_grid(monday, daily)
+        intent_rows = _intent_rows(monday, week_rows, plan, hard)
+        row = _week_row(monday, week_rows, intent_rows, hard)
         hrv_mean = row["hrv_mean"]
         row["hrv_trend"] = (
             hrv_mean - prev_hrv_mean
@@ -137,6 +161,7 @@ def rollup(
             else None
         )
         db.upsert_weekly(conn, row)
+        db.replace_weekly_plan_actual(conn, row["week_start"], intent_rows)
         prev_hrv_mean = hrv_mean if hrv_mean is not None else prev_hrv_mean
     conn.commit()
 
@@ -164,7 +189,7 @@ def _mean_nonnull(days: list[dict], col: str) -> float | None:
 
 
 def _week_row(
-    monday: _dt.date, week_rows: list[dict | None], plan: dict[int, str], hard: float
+    monday: _dt.date, week_rows: list[dict | None], intent_rows: list[dict], hard: float
 ) -> dict:
     days = [r for r in week_rows if r is not None]
     loads = [(r.get("load_day") or 0) if r else 0 for r in week_rows]
@@ -175,8 +200,8 @@ def _week_row(
     monotony = _monotony(loads)
     strain = load_total * monotony if monotony is not None else None
 
-    actual = [_actual_intent(week_rows[dow], hard) for dow in range(7)]
-    matches = sum(1 for dow in range(7) if plan.get(dow) == actual[dow])
+    actual = [row["actual"] for row in intent_rows]
+    matches = sum(1 for row in intent_rows if row["match"])
     return {
         "week_start": monday.isoformat(),
         "load_total": load_total,

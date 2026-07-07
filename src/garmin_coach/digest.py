@@ -11,28 +11,14 @@ import datetime as _dt
 import sqlite3
 
 from . import signals as _signals
+from . import thresholds as _thresholds
 from . import weekly as _weekly
 
 DISCLAIMER = (
     "This is a reading of your recorded data, not medical or coaching advice."
 )
 
-DEFAULT_THRESHOLDS: dict[str, float] = {
-    "hrv_low_k_sd": 1,
-    "acwr_risk_low": 0.8,
-    "acwr_sweet_hi": 1.3,
-    "acwr_risk_high": 1.5,
-    "acwr_min_chronic_days": 28,
-    "hard_te_load": 150,
-    "aero_low_target_share": 0.60,
-    "aero_high_target_share": 0.40,
-    "hrv_sleep_r_min": 0.5,
-    "hrv_sleep_min_pairs": 7,
-    "monotony_high": 2.0,
-    "deload_load_rise_weeks": 3,
-    "deload_min_history_weeks": 3,
-    "deload_drop_pct": 0.40,
-}
+DEFAULT_THRESHOLDS = _thresholds.DEFAULTS
 
 _WEEKLY_FACT_COLS = (
     "week_start", "load_total", "low_share", "high_share", "anaero_share",
@@ -48,7 +34,7 @@ _SEVERITY_ORDER = {"alert": 0, "warn": 1, "info": 2}
 
 def merge_thresholds(thresholds: dict[str, float] | None) -> dict[str, float]:
     """Effective thresholds: code defaults overridden by the ``coach_thresholds`` table."""
-    return {**DEFAULT_THRESHOLDS, **(thresholds or {})}
+    return _thresholds.merge(thresholds)
 
 
 def _resolve_window(
@@ -148,9 +134,17 @@ def _headline(rows: list[dict], recent: list[dict], thresholds: dict[str, float]
     }
 
 
-def _read_weekly(conn: sqlite3.Connection) -> list[dict]:
-    """All ``weekly_metrics`` rows in week order (oldest first)."""
-    cur = conn.execute("SELECT * FROM weekly_metrics ORDER BY week_start")
+def _read_weekly(conn: sqlite3.Connection, through_date: str | None = None) -> list[dict]:
+    """Read weekly rows in week order, optionally scoped to a report horizon."""
+    if through_date is None:
+        cur = conn.execute("SELECT * FROM weekly_metrics ORDER BY week_start")
+    else:
+        cur = conn.execute(
+            "SELECT * FROM weekly_metrics "
+            "WHERE date(week_start, '+6 days') <= date(?) "
+            "ORDER BY week_start",
+            (through_date,),
+        )
     cols = [c[0] for c in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
@@ -203,10 +197,10 @@ def build_digest(
         A dict with ``window``, ``headline``, ``signals``, and ``disclaimer``.
     """
     thr = merge_thresholds(thresholds)
-    weekly_rows = _read_weekly(conn)
+    from_date, to_date = _resolve_window(conn, from_date, to_date)
+    weekly_rows = _read_weekly(conn, to_date)
     weekly_section = _weekly_section(conn, weekly_rows, thr)
     deload = _signals.deload_advised(weekly_rows, thr)
-    from_date, to_date = _resolve_window(conn, from_date, to_date)
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
         return {

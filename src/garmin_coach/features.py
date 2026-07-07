@@ -22,6 +22,16 @@ def _date_range(start: str, end: str) -> list[str]:
     return [(d0 + _dt.timedelta(days=i)).isoformat() for i in range((d1 - d0).days + 1)]
 
 
+def _mart_start(data_start_date: str, from_date: str | None) -> str:
+    """Start date for mart materialization, expanded for weekly coherence."""
+    if from_date is None:
+        return data_start_date
+    data_start = _dt.date.fromisoformat(data_start_date)
+    requested = _dt.date.fromisoformat(from_date)
+    week_start = requested - _dt.timedelta(days=requested.weekday())
+    return max(data_start, week_start).isoformat()
+
+
 def _latest_core_date(conn: sqlite3.Connection) -> str | None:
     dates: list[str] = []
     row = conn.execute("SELECT MAX(date(start_local)) FROM activities").fetchone()
@@ -126,14 +136,15 @@ def features(
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         data_start_date: First real-data date; earlier days are explicit gaps.
-        from_date: First day to emit (default: ``data_start_date``). Trailing
-            windows still look back into core beyond this date.
+        from_date: First changed day to emit. The actual recompute may expand
+            backward to the Monday of that week so ``weekly_metrics`` never reads
+            stale earlier days from the same week.
         to_date: Last day to emit (default: latest core date).
     """
     end = to_date or _latest_core_date(conn)
     if end is None:
         return
-    start = from_date or data_start_date
+    start = _mart_start(data_start_date, from_date)
 
     load_by_day = _load_by_day(conn)
     empty_load = {"load_day": 0.0, "load_low": 0.0, "load_high": 0.0, "load_anaerobic": 0.0}

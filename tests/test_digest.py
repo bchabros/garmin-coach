@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pathlib
 
-from garmin_coach import db
+from garmin_coach import db, weekly
 from garmin_coach.digest import build_digest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
@@ -310,6 +310,45 @@ def test_weekly_section_carries_plan_vs_actual_and_deload_fires(conn):
     assert fri["planned"] == "quality" and fri["actual"] == "rest" and fri["match"] is False
 
     assert "DELOAD_ADVISED" in _codes(d)
+
+
+def test_weekly_section_uses_rollup_time_plan_vs_actual(conn):
+    """The digest reads the weekly plan facts materialized by rollup."""
+    for date, load in (
+        ("2026-06-08", 0),
+        ("2026-06-09", 200),
+        ("2026-06-10", 50),
+        ("2026-06-11", 0),
+        ("2026-06-12", 0),
+        ("2026-06-13", 200),
+        ("2026-06-14", 50),
+    ):
+        db.upsert_daily(conn, "daily_metrics", {"date": date, "load_day": load})
+    weekly.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-14")
+    conn.execute("UPDATE plan_template SET intent = 'rest'")
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-14")
+
+    tue = next(p for p in d["weekly"]["plan_vs_actual"] if p["date"] == "2026-06-09")
+    assert tue == {
+        "dow": 1,
+        "date": "2026-06-09",
+        "planned": "quality",
+        "actual": "quality",
+        "match": True,
+    }
+
+
+def test_weekly_section_is_scoped_to_digest_window(conn):
+    """A historical digest must not read weekly facts after its report horizon."""
+    _week(conn, week_start="2026-06-08", load_total=100, acwr_end=1.0, monotony=1.0)
+    _week(conn, week_start="2026-06-15", load_total=200, acwr_end=1.1, monotony=1.0)
+    _week(conn, week_start="2026-06-22", load_total=400, acwr_end=1.8, monotony=3.0)
+
+    d = build_digest(conn, from_date="2026-06-15", to_date="2026-06-21")
+
+    assert d["weekly"]["week_start"] == "2026-06-15"
+    assert "DELOAD_ADVISED" not in _codes(d)
 
 
 def test_weekly_section_flags_retrospective_deload_on_big_load_drop(conn):

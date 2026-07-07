@@ -12,12 +12,12 @@ import json
 import pathlib
 import sqlite3
 
-from . import charts, digest
+from . import charts, digest, thresholds as _thresholds
 
 
 def read_thresholds(conn: sqlite3.Connection) -> dict[str, float]:
-    """Read coach_thresholds into a dict (authoritative over code defaults)."""
-    return {key: value for key, value in conn.execute("SELECT key, value FROM coach_thresholds")}
+    """Read effective coach thresholds from defaults plus DB seed rows."""
+    return _thresholds.read(conn)
 
 
 def generate_report(
@@ -41,9 +41,10 @@ def generate_report(
     thresholds = read_thresholds(conn)
     dg = digest.build_digest(conn, from_date=from_date, to_date=to_date, thresholds=thresholds)
 
-    thr = digest.merge_thresholds(thresholds)
     rows = (
-        digest.enrich_hrv_band(digest.read_mart(conn, dg["window"]["from"], dg["window"]["to"]), thr)
+        digest.enrich_hrv_band(
+            digest.read_mart(conn, dg["window"]["from"], dg["window"]["to"]), thresholds
+        )
         if dg["window"]["from"]
         else []
     )
@@ -52,6 +53,6 @@ def generate_report(
     out.mkdir(parents=True, exist_ok=True)
 
     charts.render_hrv_band(rows, out / "hrv_band.png")
-    charts.render_acwr(rows, out / "acwr.png", thr)
+    charts.render_acwr(rows, out / "acwr.png", thresholds)
     (out / "digest.json").write_text(json.dumps(dg, indent=2))
     return out

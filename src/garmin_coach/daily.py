@@ -50,10 +50,10 @@ class DailyResult:
             return "failed"
         s = self.sync
         # Total sync outage: attempts were made, none progressed, all warned.
-        if s is not None and s.warnings and s.attempted_streams and not s.had_progress:
+        if s is not None and s.total_outage:
             return "failed"
         # A single stream failed but the run went on, or a non-fatal error occurred.
-        if (s is not None and s.warnings and s.had_progress) or self.errors:
+        if (s is not None and s.degraded) or self.errors:
             return "degraded"
         return "ok"
 

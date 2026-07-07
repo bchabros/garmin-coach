@@ -53,7 +53,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         f"progressed={','.join(sorted(result.progressed_streams)) or 'none'}; "
         f"warnings={len(result.warnings)}"
     )
-    if result.warnings and result.attempted_streams and not result.had_progress:
+    if result.total_outage:
         return 1
     return 0
 
@@ -144,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--from",
         dest="from_date",
         default=None,
-        help="First day to emit YYYY-MM-DD (default: DATA_START_DATE).",
+        help="First changed day YYYY-MM-DD (weekly rollup may expand to Monday).",
     )
     ft.add_argument(
         "--to", dest="to_date", default=None, help="Last day to emit YYYY-MM-DD (default: latest core date)."

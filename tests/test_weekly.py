@@ -133,6 +133,7 @@ def test_plan_adherence_and_intent_counts(conn):
     assert w["n_sessions"] == 4      # Tue, Wed, Sat, Sun
     assert w["n_quality"] == 2       # Tue, Sat
     assert w["n_rest_days"] == 3     # Mon, Thu, Fri
+    assert conn.execute("SELECT COUNT(*) FROM weekly_plan_actual").fetchone()[0] == 7
 
 
 def test_recovery_means_skip_nulls_and_zone_rollup(conn):
@@ -187,6 +188,43 @@ def test_features_command_also_populates_weekly_metrics(conn):
 
     assert [w["week_start"] for w in _weeks(conn)] == ["2026-06-08"]
     assert _weeks(conn)[0]["load_total"] == 350
+
+
+def test_partial_features_recompute_expands_to_affected_week(conn):
+    """A partial mart recompute refreshes the whole affected week before rollup."""
+    for i in range(7):
+        date = f"2026-06-{8 + i:02d}"
+        db.upsert_activity(conn, {
+            "activity_id": i + 1,
+            "start_local": f"{date} 12:00:00",
+            "date": date,
+            "gtype": "running",
+            "training_load": 10,
+            "aero_te": 3.0,
+        })
+    _seed_day(conn, "2026-06-08", load_day=999, load_low=999)
+    _seed_day(conn, "2026-06-09", load_day=999, load_low=999)
+
+    features.features(
+        conn,
+        data_start_date=DATA_START,
+        from_date="2026-06-10",
+        to_date="2026-06-14",
+    )
+
+    assert _weeks(conn)[0]["load_total"] == 70
+    daily_loads = conn.execute(
+        "SELECT date, load_day FROM daily_metrics ORDER BY date"
+    ).fetchall()
+    assert daily_loads == [
+        ("2026-06-08", 10),
+        ("2026-06-09", 10),
+        ("2026-06-10", 10),
+        ("2026-06-11", 10),
+        ("2026-06-12", 10),
+        ("2026-06-13", 10),
+        ("2026-06-14", 10),
+    ]
 
 
 def test_golden_regression_weekly_rollup(conn):

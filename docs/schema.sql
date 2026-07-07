@@ -407,6 +407,17 @@ CREATE TABLE IF NOT EXISTS weekly_metrics (
   plan_adherence    REAL                   -- % of planned intents matched
 );
 
+CREATE TABLE IF NOT EXISTS weekly_plan_actual (
+  week_start  TEXT NOT NULL,
+  dow         INTEGER NOT NULL,            -- 0=Mon
+  date        TEXT NOT NULL,
+  planned     TEXT,
+  actual      TEXT,
+  matched     INTEGER NOT NULL,
+  PRIMARY KEY (week_start, dow),
+  FOREIGN KEY (week_start) REFERENCES weekly_metrics(week_start) ON DELETE CASCADE
+);
+
 -- =============================================================================
 -- VIEWS  (convenience joins; DuckDB-friendly)
 -- =============================================================================

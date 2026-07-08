@@ -15,18 +15,32 @@ and what's missing.
 
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
-[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md) for the full brief.
+[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md) for the full brief
+(phases 0-5, historical record) and [docs/ROADMAP.md](docs/ROADMAP.md) for the
+forward plan (phases 6b-11 + read-MCP).
 
 ## Status
 
-| Phase | Scope | State |
-|-------|-------|-------|
-| 0 | Raw capture + idempotent backfill | ✅ Done — [docs/prd/phase-0.md](docs/prd/phase-0.md) |
-| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | ✅ Done — [docs/prd/phase-1.md](docs/prd/phase-1.md), [ADR 0001](docs/adr/0001-phase-1-incremental-sync.md) |
-| 2 | Metrics mart (`features.py` → `daily_metrics`) | ✅ Done — [docs/prd/phase-2.md](docs/prd/phase-2.md), [ADR 0002](docs/adr/0002-phase-2-metrics-semantics.md) |
-| 3 | Coach skill (digest + charts + `report.md`) | ✅ Done — [docs/prd/phase-3.md](docs/prd/phase-3.md), [ADR 0003](docs/adr/0003-phase-3-coach-signals.md) |
-| 4 | Automation (nightly orchestrator, alerts, launchd/cron) | ✅ Done — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md) |
-| **5** | Weekly rollups, plan-vs-actual, deload detection | ✅ **Done** — [docs/prd/phase-5.md](docs/prd/phase-5.md), [ADR 0005](docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md) |
+| Phase | Scope | State                                                                                                                                   |
+|-------|-------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| 0 | Raw capture + idempotent backfill | Done — [docs/prd/phase-0.md](docs/prd/phase-0.md)                                                                                       |
+| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | Done — [docs/prd/phase-1.md](docs/prd/phase-1.md), [ADR 0001](docs/adr/0001-phase-1-incremental-sync.md)                                |
+| 2 | Metrics mart (`features.py` → `daily_metrics`) | Done — [docs/prd/phase-2.md](docs/prd/phase-2.md), [ADR 0002](docs/adr/0002-phase-2-metrics-semantics.md)                               |
+| 3 | Coach skill (digest + charts + `report.md`) | Done — [docs/prd/phase-3.md](docs/prd/phase-3.md), [ADR 0003](docs/adr/0003-phase-3-coach-signals.md)                                   |
+| 4 | Automation (nightly orchestrator, alerts, launchd/cron) | Done — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md)                                      |
+| 5 | Weekly rollups, plan-vs-actual, deload detection | Done — [docs/prd/phase-5.md](docs/prd/phase-5.md), [ADR 0005](docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md), [ADR 0006](docs/adr/0006-post-phase-5-architecture-deepening.md) |
+| 6 | Personal training zones (`athlete_zones` mart, LTHR anchor) | Done — [docs/prd/phase-6.md](docs/prd/phase-6.md), [ADR 0007](docs/adr/0007-phase-6-personal-zones.md)                              |
+| 6b | Athlete snapshot (`athlete_status` mart + `snapshot` command) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 7 | Session-RPE load model for strength/Hyrox + niggle log | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 8 | Per-set capture + movement-pattern overlap (finishes D9) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 9 | Race-date periodization + race-day pacing | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 10 | Prospective session recommender (re-planning-aware) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+
+Phases 0-5 are specified in the BUILD doc; everything after Phase 5 lives in
+[docs/ROADMAP.md](docs/ROADMAP.md), which also records the industry survey and the
+dependency ordering between the planned phases.
 
 ## Layout
 
@@ -36,14 +50,18 @@ garmin-coach/
 ├── Taskfile.yml              # task shortcuts for tests, lint, checks, backfill, daily
 ├── AGENTS.md                 # Codex/agent working rules
 ├── CLAUDE.md                 # Claude Code working rules
+├── CONTEXT.md                # shared agent context: glossary + testing seams
+├── .claude/rules/            # extra working rules imported by CLAUDE.md (style, no-emoji)
 ├── .codex/                   # Codex local notes and companion files
-├── .env.example              # copy to .env (GARMIN_EMAIL, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
+├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
-│   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, metric specs)
+│   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, historical record)
+│   ├── ROADMAP.md            # forward plan: phases 6b–11 + read-MCP, industry survey
+│   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
 │   ├── glossary.md           # domain vocabulary
-│   ├── adr/                  # decision records (0001–0005, one per phase)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-5)
+│   ├── adr/                  # decision records (0001–0007; one per phase + 0006 architecture)
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-6)
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -53,10 +71,11 @@ garmin-coach/
 │   ├── client.py             # transport: login (+MFA), garminconnect method map
 │   ├── db.py                 # connect, schema bootstrap, idempotent upserts
 │   ├── models.py             # pure normalizers payload→row + discipline mapping
-│   ├── sync.py                 # backfill + incremental sync: raw-first, upsert core,
-│   │                           #   retry/backoff, per-day fallback, isolated streams
+│   ├── sync.py               # backfill + incremental sync: raw-first, upsert core,
+│   │                          #   retry/backoff, per-day fallback, isolated streams
 │   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
 │   ├── weekly.py             # mart: weekly_metrics + weekly_plan_actual (run by features)
+│   ├── zones.py              # mart: athlete_zones (LTHR anchor → %LTHR HR bands + Z2 pace ceiling)
 │   ├── thresholds.py         # coach threshold policy: defaults + DB overrides
 │   ├── digest.py             # headline + coach signals + weekly section (build_digest)
 │   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED)
@@ -69,7 +88,11 @@ garmin-coach/
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader
 │   ├── fixtures/             # anonymized real Garmin payloads + golden fixtures
 │   └── test_*.py             # one module per seam (models, db, sync, features, weekly,
-│                              #   signals, digest, daily, config, cli, schema-sync guard)
+│                              #   zones, signals, digest, daily, thresholds, config, cli,
+│                              #   schema-sync guard)
+├── memory/                   # coach long-term memory: athlete profile, goals, coaching
+│                              #   decisions (Polish, gitignored — numbers stay in the DB)
+├── plans/                    # weekly training plans written in coach sessions (gitignored)
 ├── logs/daily.log            # rotating nightly-run log (gitignored)
 ├── reports/{date}/           # digest.json + charts + report.md (gitignored)
 └── data/garmin.db            # SQLite system-of-record (gitignored)
@@ -77,7 +100,8 @@ garmin-coach/
 
 Data layout is medallion: **raw** (`raw_payloads`, append-only) → **core** (normalized,
 upserted) → **mart** (`daily_metrics`, recomputed by `features`; `weekly_metrics`
-and `weekly_plan_actual`, rolled up from it by `weekly` for every *complete* week).
+and `weekly_plan_actual`, rolled up from it by `weekly` for every *complete* week;
+`athlete_zones`, a singleton recomputed by `zones` from the watch-detected LTHR).
 `digest.py` reads the marts and produces the compact digest (headline, signals,
 weekly plan-vs-actual) the coach skill narrates; `daily.py` reruns the whole chain
 unattended and reduces the digest to log-worthy alerts.
@@ -88,13 +112,33 @@ Requires Python 3.13 and [Poetry](https://python-poetry.org/). [Task](https://ta
 
 ```bash
 poetry install
-cp .env.example .env      # then fill in GARMIN_EMAIL (password optional)
 ```
+
+No `.env` is required: credentials are prompted on the first login and every other
+setting has a sensible default. To override anything (DB path, backfill start,
+logging), `cp .env.example .env` and uncomment what you need.
+
+### Athlete-specific configuration (lives in the DB)
+
+Two tables are seeded with defaults on first schema bootstrap (`INSERT OR IGNORE`,
+so your edits survive re-runs) and are meant to be edited to fit the athlete:
+
+- **`coach_thresholds`** — every coach tunable as a `key/value/note` row: HRV
+  baseline and SD, ACWR bands, the "hard session" load cutoff, zone percentages,
+  deload rules. The seeds were derived from this athlete's first weeks of data;
+  after your own backfill, review them (each row's `note` says what it means).
+- **`plan_template`** — your intended weekly pattern, one row per day of week
+  (`dow` 0 = Monday) with a free-text label and an intent (`rest | quality |
+  easy`). Phase 5's plan-vs-actual and `plan_adherence` are measured against
+  this table, so it should reflect *your* plan, not the seeded one.
+
+Edit both with plain SQL (`sqlite3 data/garmin.db`), then re-run
+`garmin-coach features` — marts are recomputed, never authoritative.
 
 ## Usage
 
 ```bash
-# First run prompts for password + MFA once, then caches OAuth tokens to
+# First run prompts for email + password + MFA once, then caches OAuth tokens to
 # ~/.garminconnect; later runs resume from them (no login endpoint, no rate limits).
 task run FROM=2026-06-08
 
@@ -107,19 +151,56 @@ poetry run garmin-coach backfill --from 2026-06-08
 
 `backfill` pulls `[--from .. yesterday]` (today is skipped — HRV/sleep land after the
 night) across six streams: activities, sleep, HRV, wellness, training readiness,
-training status. Raw JSON is stored first, then normalized into core tables.
+training status. It also backfills the watch-detected Lactate Threshold (the detection
+history) and per-activity temperature. Raw JSON is stored first, then normalized into
+core tables.
 
 Once backfilled, the rest of the pipeline runs incrementally:
 
 ```bash
 poetry run garmin-coach sync                 # pull only what's missing since each stream's watermark
-poetry run garmin-coach features             # recompute daily_metrics, then roll up weekly_metrics
+poetry run garmin-coach features             # recompute daily_metrics, then roll up weekly_metrics + athlete_zones
 poetry run garmin-coach report               # write reports/{date}/digest.json + 2 charts
 task daily                                   # sync -> features -> alerts, no charts (nightly path)
 ```
 
+A trimmed `digest.json` looks like this (headline facts, cited signals, weekly
+plan-vs-actual, personal zones):
+
+```json
+{
+  "window": {"from": "2026-06-09", "to": "2026-07-07", "days": 29},
+  "headline": {
+    "acwr": 1.21, "acwr_reliable": false, "n_chronic": 29,
+    "hrv_latest": 88, "hrv_baseline": 68.0, "hrv_sd": 11.0,
+    "load_7d": 812.0, "load_low_share": 0.34, "load_high_share": 0.55
+  },
+  "signals": [
+    {"code": "AEROBIC_LOW_SHORTAGE", "severity": "warn",
+     "facts": {"low_share": 0.34, "target": 0.6}}
+  ],
+  "weekly": {
+    "week_start": "2026-06-29", "load_total": 705.0, "monotony": 1.4,
+    "plan_adherence": 0.86,
+    "plan_vs_actual": [
+      {"dow": 0, "date": "2026-06-29", "planned": "rest",
+       "actual": "rest", "match": true}
+    ]
+  },
+  "zones": {
+    "lthr_bpm": 168, "z2_hi_bpm": 150,
+    "z2_pace_ceiling_s_per_km": 362.0, "source": "regression+lthr", "stale": 0
+  }
+}
+```
+
 Run the coach skill (`skills/coach/SKILL.md`) in Cowork against the same DB to turn
-the latest `digest.json` + charts into a narrated `report.md`.
+the latest `digest.json` + charts into a narrated `report.md`. Coach sessions also
+keep qualitative context outside the DB: `memory/` holds the long-term athlete
+profile (goals, tendencies, coaching decisions — the DB holds the numbers, this
+folder holds the narrative) and `plans/` holds the weekly training plans that
+Phase 5 plan-vs-actual is later checked against. Both are personal data and
+gitignored.
 
 ## Automation
 
@@ -145,6 +226,26 @@ and a `PATH` that resolves `poetry` (launchd's default `PATH` is minimal), then
 
 Scheduling is documented, not auto-installed — loading the launchd job is a step you
 run yourself.
+
+## Troubleshooting
+
+- **First login asks for email, password, and MFA.** That happens once; OAuth tokens
+  are then cached in `GARMINTOKENS` (`~/.garminconnect`) and later runs never touch
+  the login endpoint.
+- **HTTP 429 on login.** Garmin rate-limits repeated login attempts at the IP level.
+  Do not retry in a loop — wait it out. Once tokens are cached this stops being
+  possible, because resume skips login entirely.
+- **"Yesterday is the last day pulled" is by design.** HRV and sleep for a date only
+  land after the night, so backfill/sync always excludes today.
+- **Early dates look empty.** Data before `DATA_START_DATE` is watch onboarding, not
+  real training; the pipeline records those days as explicit gaps
+  (`daily_wellness.has_data = 0`), not zero load.
+- **Re-running backfill grows the DB.** Expected: `raw_payloads` is append-only
+  (keyed by fetch time) so payloads can be reprocessed without re-hitting Garmin.
+  Core tables are upserted by primary key and must not change row counts on a rerun.
+- **A training day shows as `rest`.** A session done without the watch is invisible
+  to the ETL and classifies as rest in plan-vs-actual — a known limitation, by
+  decision.
 
 ## Development
 
@@ -177,6 +278,22 @@ device IDs stripped). Metric definitions and the phasing plan live in
 
 ## Privacy
 
-Health data is sensitive. `.env`, `data/*.db`, `raw/`, `reports/`, `logs/`, and Garmin
-tokens are gitignored — only code, `schema.sql`, and docs are committed. Keep the DB
-and backups local/private.
+Health data is sensitive. `.env`, `data/*.db`, `raw/`, `reports/`, `logs/`,
+`memory/`, `plans/`, and Garmin tokens are gitignored — only code, `schema.sql`,
+and docs are committed. `memory/` and `plans/` deserve the same care as the DB:
+they hold the athlete profile, goals, coaching decisions, and weekly plans in
+plain Markdown. Keep the DB, those folders, and any backups local/private.
+
+## Disclaimer
+
+This is a personal tool for one athlete. Its metrics, signals, and reports are a
+reading of wearable data, not medical advice or professional coaching — sanity-check
+anything it suggests against how you actually feel, and see a professional for
+health concerns.
+
+## Credits
+
+Built with [Claude Code](https://claude.com/claude-code) (and Codex) driving the
+phase workflow described in `CLAUDE.md` (grill the design, write a PRD, then TDD).
+The agent skills used along the way are adapted from
+[Matt Pocock's skills collection](https://github.com/mattpocock/skills).

@@ -41,13 +41,12 @@ def login(
     except Exception:
         pass  # no/expired tokens -> full login below
 
-    # First login needs a password. It's optional in config (cached tokens cover
-    # later runs), so prompt interactively when it isn't set.
-    password = settings.garmin_password or getpass.getpass(
-        f"Garmin password for {settings.garmin_email}: "
-    )
+    # First login needs credentials. Both are optional in config (cached tokens
+    # cover later runs), so prompt interactively for whatever isn't set.
+    email = settings.garmin_email or input("Garmin email: ").strip()
+    password = settings.garmin_password or getpass.getpass(f"Garmin password for {email}: ")
     api = Garmin(
-        email=settings.garmin_email,
+        email=email,
         password=password,
         prompt_mfa=prompt_mfa,
     )

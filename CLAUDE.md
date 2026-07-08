@@ -15,8 +15,8 @@ exploration and building test fixtures only**, never the pipeline.
 
 ## Workflow
 
-Build phase-by-phase (0 → 5); each phase has a Definition of Done in the BUILD doc —
-don't advance until it's met. The established loop for a new phase is:
+Build phase-by-phase (0 → 6); each phase has a Definition of Done (the BUILD doc for
+phases 0–5, the phase PRD for 6+) — don't advance until it's met. The established loop for a new phase is:
 **grill (stress-test decisions) → PRD in `docs/prd/` → TDD (red→green)**.
 
 - Work test-first. Tests live at agreed **seams**: pure normalizers (`models.py`),
@@ -48,14 +48,13 @@ only garminconnect importer) · `db.py` (connect, bootstrap, upserts) · `models
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite — reprocess
 without re-hitting Garmin) → **core** (normalized, upserted by PK) → **mart**
-`daily_metrics`/`weekly_metrics` (recomputed; phase 2+). Derived values live only in
-marts/views, never mixed into core.
+`daily_metrics`/`weekly_metrics`/`athlete_zones` (recomputed; phase 2+). Derived values
+live only in marts/views, never mixed into core.
 
 ## Conventions
 
 - **Poetry**, not `uv`/`pip`, for all dependency work (despite what the BUILD doc says).
 - Python 3.13. Code and docstrings in **English**; commit messages in English.
-- New and changed public docstrings should use **Google-style docstrings**.
 - Schema source of truth is the package copy `src/garmin_coach/schema.sql`, loaded via
   `importlib.resources`. `docs/schema.sql` is a snapshot kept identical by
   `tests/test_schema_sync.py` — edit the package copy, then re-sync docs.
@@ -63,6 +62,13 @@ marts/views, never mixed into core.
   a normalizer emits must be **scalars** (SQLite can't bind dict/list).
 - Fixtures are anonymized real payloads. Strip PII: `userProfilePK`/`ownerId`,
   `ownerFullName`, lat/lon, `deviceId`, UUIDs, image URLs. Trim per-minute time series.
+
+## Rules
+
+Additional working rules live in `.claude/rules/` and are imported here so they load:
+
+@.claude/rules/no-emoji.md
+@.claude/rules/code-style.md
 
 ## Gotchas (learned the hard way)
 
@@ -115,3 +121,15 @@ marts/views, never mixed into core.
   skill renders "Tydzień: plan vs realizacja". New `coach_thresholds`: `monotony_high`,
   `deload_load_rise_weeks`, `deload_min_history_weeks`, `deload_drop_pct`. Deferred (BUILD §12):
   multi-sport/`discipline` weighting, VO2max/threshold **trend charts**, PDF/Notion export.
+- Phase 6 (`zones.py` → `athlete_zones` mart: watch-detected LTHR anchor → five %LTHR HR bands +
+  hybrid Z2 pace ceiling) — **done**; decisions in `docs/prd/phase-6.md` +
+  `docs/adr/0007-phase-6-personal-zones.md`; golden + seam tests in `tests/test_zones.py`. Ingests
+  LTHR into `fitness_markers` (backfill uses the **ranged** form for detection history, nightly uses
+  **latest**; normalizers emit only LTHR-owned columns so upserts never clobber sibling markers) and
+  per-activity `temp_c` (Fahrenheit→Celsius) for the heat guard. `zones.rollup` runs as the tail of
+  `features` (mart-from-core, no new command). Z2 pace ceiling = pace↔HR OLS over heat-clean aerobic
+  runs, else `threshold_pace × mult`; `source` records method + `+lthr` provenance; `stale` when the
+  detection is older than `zones_stale_days`. `build_digest` gains a `zones` block (+ `lthr_age_days`)
+  and `personal_z2_minute_share`; `hr_z2_upper_bpm` retired. New `coach_thresholds`: `z{1..4}_hi_pct_lthr`,
+  `z2_pace_fallback_mult`, `zones_regression_min_runs`, `zones_regression_min_r2`, `zones_heat_temp_c`,
+  `zones_stale_days`.

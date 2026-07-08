@@ -110,7 +110,7 @@ garmin-coach/
 - **DoD:** `garmin-coach backfill --from 2026-06-08` napełnia bazę; ponowne uruchomienie nie
   tworzy duplikatów (upsert po kluczu); surowe JSON-y leżą w `raw/`.
 
-- **✅ STATUS: DONE (2026-07-04).** Zrealizowane test-first (22 testy, `ruff`+`mypy` czyste).
+- **STATUS: DONE (2026-07-04).** Zrealizowane test-first (22 testy, `ruff`+`mypy` czyste).
   DoD potwierdzone na żywej bazie: 26 dni (2026-06-08→07-03, „dziś" wykluczone), 15 aktywności,
   drugi run bez zmian w core (`raw_payloads` rośnie append-only). **Odchylenia od briefu**
   (świadome decyzje — patrz `docs/prd/phase-0.md`): surowe dane w tabeli `raw_payloads` (nie
@@ -125,7 +125,7 @@ garmin-coach/
 - **DoD:** `garmin-coach sync` odpalony dwa razy pod rząd jest idempotentny; padnięcie jednego
   streamu nie wywala całego runu; watermark się przesuwa.
 
-- **✅ STATUS: DONE.** Watermark per stream w `sync_state`, retry z backoffem, fallback
+- **STATUS: DONE.** Watermark per stream w `sync_state`, retry z backoffem, fallback
   per-dzień, izolacja streamów. Decyzje: `docs/prd/phase-1.md` +
   `docs/adr/0001-phase-1-incremental-sync.md`; testy seamowe w `tests/test_sync.py`.
 
@@ -137,7 +137,7 @@ garmin-coach/
 - **DoD:** `garmin-coach features` odtwarza wyniki z analizy referencyjnej dla 09.06–04.07
   (baseline ≈ 68 ms, SD ≈ 11 ms, próg ≈ 57 ms; ACWR na 03.07 ≈ 1.0, ref. Garmin 1.1).
 
-- **✅ STATUS: DONE.** `features.py` materializuje mart `daily_metrics`; złota regresja w
+- **STATUS: DONE.** `features.py` materializuje mart `daily_metrics`; złota regresja w
   `tests/test_features.py`. Decyzje: `docs/prd/phase-2.md` +
   `docs/adr/0002-phase-2-metrics-semantics.md`.
 
@@ -147,7 +147,7 @@ garmin-coach/
 - **DoD:** w Cowork „przejrzyj mój ostatni tydzień" produkuje raport tekstowy + 2 wykresy
   (HRV z pasmem ±1 SD, ACWR w czasie) i listę konkretnych sygnałów.
 
-- **✅ STATUS: DONE.** Deterministyczny silnik (`digest.py`/`signals.py` →
+- **STATUS: DONE.** Deterministyczny silnik (`digest.py`/`signals.py` →
   `garmin-coach report`) buduje `reports/{date}/digest.json` + 2 wykresy; skill pisze
   `report.md` wyłącznie z digestu (nigdy z surowego martu, nigdy z Garmina). Sygnały 1–5
   z sekcji 7; reguła 6 (plan vs actual) przesunięta do Fazy 5. Decyzje:
@@ -160,7 +160,7 @@ garmin-coach/
   deload"; `AEROBIC_LOW_SHORTAGE` → „dołóż Z2".
 - **DoD:** nocny run działa bez interakcji; log rotowany; błąd = niezerowy exit + wpis w logu.
 
-- **✅ STATUS: DONE.** Seam `daily.run_daily(client, conn, ...) → DailyResult`
+- **STATUS: DONE.** Seam `daily.run_daily(client, conn, ...) → DailyResult`
   (sync → features → digest, bez wykresów na nocnej ścieżce); alerty = sygnały
   warn/alert z digestu; kontrakt exit: `ok`/0, `degraded`/1, `failed`/2.
   `garmin-coach daily` + cienki `scripts/daily.sh` + przykładowy plist launchd;
@@ -172,7 +172,7 @@ garmin-coach/
   trendy VO2max/próg, multi-sport gdy wróci sezon skiturowy (`discipline` już jest w schemacie).
 - **DoD:** raport pokazuje rozjazd „plan vs realizacja" i wykrywa „dwa twarde dni z rzędu".
 
-- **✅ STATUS: DONE.** `weekly.py` → mart `weekly_metrics` (tylko pełne tygodnie
+- **STATUS: DONE.** `weekly.py` → mart `weekly_metrics` (tylko pełne tygodnie
   pon–ndz); plan-vs-actual (`plan_adherence` vs `plan_template`), Foster
   `monotony`/`strain`, `max_consec_hard`, nowy sygnał `DELOAD_ADVISED`; digest zyskał
   sekcję `weekly`, raport „Tydzień: plan vs realizacja". Decyzje: `docs/prd/phase-5.md`

@@ -10,8 +10,9 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Credentials — email required for the first login; password optional
-    # (rely on cached tokens after the first successful login).
+    # Credentials — both optional: the first login prompts interactively for
+    # whatever is unset (cached tokens cover later runs). Set them only for a
+    # non-interactive first run.
     garmin_email: str = ""
     garmin_password: str | None = None
 

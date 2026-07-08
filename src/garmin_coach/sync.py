@@ -69,6 +69,16 @@ class GarminClient(Protocol):
         """Fetch training status data for one date."""
         ...
 
+    def get_activity_weather(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch per-activity weather (air temperature) for one activity."""
+        ...
+
+    def get_lactate_threshold(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> dict[str, Any] | None:
+        """Fetch the latest LTHR anchor (no range) or the ranged detection history."""
+        ...
+
 
 @dataclass
 class SyncContext:
@@ -161,13 +171,65 @@ def _call_with_retry(action: Callable[[], Any], max_attempts: int, retry_base_se
     raise last_error or RuntimeError("retry failed without an exception")
 
 
+def _fetch_weather(client: GarminClient, activity_id: Any) -> dict[str, Any] | None:
+    """Best-effort per-activity weather; a failure leaves temp_c NULL, never aborts."""
+    if activity_id is None:
+        return None
+    try:
+        return client.get_activity_weather(activity_id)
+    except Exception:
+        return None
+
+
 def _store_activities(
-    conn: sqlite3.Connection, ref_date: str, activities: list[dict[str, Any]]
+    conn: sqlite3.Connection,
+    ref_date: str,
+    activities: list[dict[str, Any]],
+    client: GarminClient | None = None,
 ) -> None:
-    """Store activity range payload raw-first, then upsert each core activity."""
+    """Store activity range payload raw-first, then upsert each core activity.
+
+    When ``client`` is given, each activity is enriched with its weather
+    (``temp_c``); the raw weather payload is appended for reprocessing.
+    """
     db.insert_raw(conn, "get_activities_by_date", ref_date, json.dumps(activities))
     for act in activities:
-        db.upsert_activity(conn, models.normalize_activity(act))
+        weather = _fetch_weather(client, act.get("activityId")) if client else None
+        if weather is not None:
+            db.insert_raw(conn, "get_activity_weather", ref_date, json.dumps(weather))
+        db.upsert_activity(conn, models.normalize_activity(act, weather))
+
+
+def _sync_lactate(
+    client: GarminClient,
+    conn: sqlite3.Connection,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> None:
+    """Ingest the LTHR anchor into fitness_markers (best-effort, isolated).
+
+    Without a range, upserts the single current detection (nightly sync). With a
+    range, backfills the detection history via the ranged form. A missing payload
+    or empty result is a no-op; the raw payload is appended once per call.
+    """
+    try:
+        payload = client.get_lactate_threshold(start_date=start_date, end_date=end_date)
+    except Exception:
+        return
+    if payload is None:
+        return
+    if start_date is None:
+        rows = [models.normalize_lactate(payload)]
+    else:
+        rows = models.normalize_lactate_range(payload)
+    rows = [r for r in rows if r.get("date") is not None]
+    if not rows:
+        return
+    ref_date = end_date or rows[-1]["date"]
+    db.insert_raw(conn, "get_lactate_threshold", ref_date, json.dumps(payload))
+    for row in rows:
+        db.upsert_daily(conn, "fitness_markers", row)
 
 
 def backfill(
@@ -186,7 +248,11 @@ def backfill(
 
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []
-    _store_activities(conn, from_date, activities)
+    _store_activities(conn, from_date, activities, client)
+    conn.commit()
+
+    # LTHR anchor: backfill the detection history via the ranged form.
+    _sync_lactate(client, conn, start_date=from_date, end_date=end.isoformat())
     conn.commit()
 
     for d in _daterange(start, end):
@@ -227,12 +293,12 @@ def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
                 ctx.conn.commit()
                 break
 
-            _store_activities(ctx.conn, date, activities)
+            _store_activities(ctx.conn, date, activities, ctx.client)
             db.set_sync_watermark(ctx.conn, "activities", date)
             ctx.result.progressed_streams.add("activities")
             ctx.conn.commit()
     else:
-        _store_activities(ctx.conn, start_s, activities)
+        _store_activities(ctx.conn, start_s, activities, ctx.client)
         db.set_sync_watermark(ctx.conn, "activities", end_s)
         ctx.result.progressed_streams.add("activities")
         ctx.conn.commit()
@@ -292,5 +358,9 @@ def sync_incremental(
             continue
 
         _sync_daily_stream(stream, ctx, start, end)
+
+    # LTHR anchor: one best-effort fetch per run, isolated from stream status.
+    _sync_lactate(ctx.client, conn)
+    conn.commit()
 
     return ctx.result

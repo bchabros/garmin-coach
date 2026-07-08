@@ -24,12 +24,19 @@ read the raw mart** - you consume the compact digest only.
 
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
-   `signals` list already ordered alert > warn > info, and a `disclaimer`. Do not open
-   the mart or recompute anything.
+   `signals` list already ordered alert > warn > info, a `zones` block (personal
+   training zones; may be null), and a `disclaimer`. Do not open the mart or recompute
+   anything.
 
 3. **Write `reports/{today}/report.md`.** Structure:
    - **Nagłówek** - one line on the window and the headline numbers (ACWR + reliability,
-     latest HRV vs baseline, 7-day load split).
+     latest HRV vs baseline, 7-day load split). When the `zones` block is present, add
+     the Z2 pace ceiling so the read is actionable: "trzymaj easy run pod X:XX/km"
+     (convert `z2_pace_ceiling_s_per_km` to min:sec) and the Z2 HR ceiling
+     (`z2_hi_bpm`). If `zones.stale` is 1, note it briefly - the zones come from an LTHR
+     detection `lthr_age_days` days ago (on `lthr_detected_on`), past the staleness
+     cadence; suggest a harder threshold effort to refresh them. Do not invent numbers
+     when `zones` is null.
    - **Sygnały** - one short paragraph per signal, most severe first. State the actual
      numbers from `facts`. Map each code to a concrete action:
      - `HRV_LOW_MORNING` -> degrade today's quality session to easy.
@@ -37,6 +44,9 @@ read the raw mart** - you consume the compact digest only.
        call the ratio *orientacyjny* (indicative), do not over-react.
      - `AEROBIC_LOW_SHORTAGE` -> too much grey zone, add Zone 2. Note whether Garmin
        agrees (`garmin_agrees`): agreement strengthens the call, disagreement -> hedge.
+       When `facts.personal_z2_minute_share` is present, cite both reads: the load-bucket
+       share and the personal-zone share (how much of your run time was actually at avg
+       HR under your Z2 ceiling). If the two diverge, say so - it is itself informative.
      - `TWO_HARD_DAYS` -> flag the back-to-back stack; if `trailing` is true, it is an
        *upcoming* risk (the Friday-into-Saturday pattern), not just history.
      - `HRV_SLEEP_CONFOUND` -> caution: the worst HRV may be sleep-driven, not training;

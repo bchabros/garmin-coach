@@ -32,6 +32,25 @@ def test_bootstrap_is_idempotent():
     c.close()
 
 
+def test_bootstrap_adds_temp_c_to_a_preexisting_activities_table():
+    """A DB created before Phase 6 (activities without temp_c) gains the column
+    on bootstrap - CREATE IF NOT EXISTS alone cannot add a column."""
+    c = db.connect(":memory:")
+    # Minimal pre-Phase-6 activities: has the indexed columns but no temp_c.
+    c.execute(
+        "CREATE TABLE activities (activity_id INTEGER PRIMARY KEY, date TEXT, "
+        "discipline TEXT, avg_hr INTEGER, avg_speed_mps REAL)"
+    )
+    c.commit()
+
+    db.bootstrap(c)
+
+    cols = {r[1] for r in c.execute("PRAGMA table_info(activities)")}
+    assert "temp_c" in cols
+    db.bootstrap(c)  # idempotent: adding an existing column must not raise
+    c.close()
+
+
 def test_insert_raw_is_append_only(conn):
     db.insert_raw(conn, "get_sleep_data", "2026-06-10", "{}", fetched_at="2026-07-04T10:00:00")
     db.insert_raw(conn, "get_sleep_data", "2026-06-10", "{}", fetched_at="2026-07-04T11:00:00")

@@ -41,8 +41,27 @@ def _date_of(start_local: str | None) -> str | None:
     return start_local.split(" ")[0] if start_local else None
 
 
-def normalize_activity(p: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a single activity summary payload to an `activities` row."""
+def _weather_temp_c(weather: dict[str, Any] | None) -> float | None:
+    """Per-activity air temperature in Celsius.
+
+    Gotcha: Garmin's activity-weather ``temp`` is Fahrenheit even on a metric
+    account (67 -> 19.4 C). Missing weather -> None.
+    """
+    if not weather:
+        return None
+    f = weather.get("temp")
+    return (f - 32) * 5.0 / 9.0 if f is not None else None
+
+
+def normalize_activity(
+    p: dict[str, Any], weather: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Normalize a single activity summary payload to an `activities` row.
+
+    ``weather`` is the optional per-activity get_activity_weather payload, merged
+    in as ``temp_c`` (Fahrenheit -> Celsius) so the pace<->HR regression can
+    exclude heat-inflated runs.
+    """
     gtype = (p.get("activityType") or {}).get("typeKey")
     start_local = p.get("startTimeLocal")
     return {
@@ -110,7 +129,81 @@ def normalize_activity(p: dict[str, Any]) -> dict[str, Any]:
         "split_10k_s": p.get("fastestSplit_10000"),
         "location_name": p.get("locationName"),
         "is_pr": 1 if p.get("pr") else 0,
+        "temp_c": _weather_temp_c(weather),
     }
+
+
+def _lthr_pace_s_per_km(speed: Any) -> float | None:
+    """Threshold speed -> pace in seconds-per-km.
+
+    Gotcha: Garmin's ``speed`` is scaled x10 relative to true m/s (0.3888878 ->
+    3.889 m/s), so pace in seconds-per-km is ``1000 / (speed * 10)``.
+    """
+    return (1000.0 / (speed * 10.0)) if speed else None
+
+
+def normalize_lactate(p: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a get_lactate_threshold(latest=True) payload to a fitness_markers row.
+
+    The garminconnect ``latest=True`` transport already merges Garmin's raw
+    two-entry list (and its historical ``hearRate`` typo) into one
+    ``speed_and_heart_rate`` dict: HR under ``heartRate``, threshold speed under
+    ``speed``, detection day under ``calendarDate``. Onboarding returns nulls.
+
+    Emits only the columns this marker owns (LTHR HR + pace); sibling
+    ``fitness_markers`` columns are left untouched so an upsert never clobbers
+    values written by another source. Total: an unexpected shape yields nulls,
+    never raises. See :func:`normalize_lactate_range` for the backfill form.
+    """
+    shr = p.get("speed_and_heart_rate") if isinstance(p, dict) else None
+    shr = shr if isinstance(shr, dict) else {}
+    cal = shr.get("calendarDate")
+    return {
+        "date": cal[:10] if isinstance(cal, str) else None,
+        "lactate_thr_hr": shr.get("heartRate"),
+        "lactate_thr_pace": _lthr_pace_s_per_km(shr.get("speed")),
+    }
+
+
+def _range_values(series: Any) -> dict[str, Any]:
+    """Map ``detection-day -> value`` for one ranged biometric series.
+
+    Ranged entries are ``{from, until, series, value, updatedDate}``; skip any
+    with a null value or malformed date. Tolerant of a missing/short list.
+    """
+    out: dict[str, Any] = {}
+    if not isinstance(series, list):
+        return out
+    for entry in series:
+        if not isinstance(entry, dict):
+            continue
+        day = entry.get("from")
+        value = entry.get("value")
+        if isinstance(day, str) and value is not None:
+            out[day[:10]] = value
+    return out
+
+
+def normalize_lactate_range(p: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize a ranged get_lactate_threshold payload to fitness_markers rows.
+
+    The ranged (``latest=False``) transport returns parallel ``speed`` and
+    ``heart_rate`` series of ``{from, value, ...}`` entries; join them by
+    detection day into one row per date carrying a threshold HR and/or pace.
+    Backfills the detection history. Pure and total: a non-dict or empty payload
+    yields ``[]``, never raises.
+    """
+    hr_by_day = _range_values(p.get("heart_rate") if isinstance(p, dict) else None)
+    speed_by_day = _range_values(p.get("speed") if isinstance(p, dict) else None)
+    rows = []
+    for day in sorted(set(hr_by_day) | set(speed_by_day)):
+        hr = hr_by_day.get(day)
+        rows.append({
+            "date": day,
+            "lactate_thr_hr": int(hr) if isinstance(hr, (int, float)) else None,
+            "lactate_thr_pace": _lthr_pace_s_per_km(speed_by_day.get(day)),
+        })
+    return rows
 
 
 def _score_pct(scores: dict[str, Any], key: str) -> Any:

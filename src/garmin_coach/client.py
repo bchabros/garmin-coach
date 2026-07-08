@@ -87,3 +87,23 @@ class GarminTransport:
     def get_status(self, date: str) -> dict[str, Any] | None:
         """Fetch training status data for one date."""
         return self._api.get_training_status(date)
+
+    def get_activity_weather(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch per-activity weather (temperature is Fahrenheit in the payload)."""
+        return self._api.get_activity_weather(str(activity_id))
+
+    def get_lactate_threshold(
+        self, start_date: str | None = None, end_date: str | None = None
+    ) -> dict[str, Any] | None:
+        """Fetch the Lactate Threshold anchor.
+
+        Without a range, the latest detection (the library merges Garmin's raw
+        two-entry list into one ``speed_and_heart_rate`` dict). With a range, the
+        ranged form (parallel ``speed``/``heart_rate`` series) used by backfill to
+        ingest the detection history.
+        """
+        if start_date is None:
+            return self._api.get_lactate_threshold(latest=True)
+        return self._api.get_lactate_threshold(
+            latest=False, start_date=start_date, end_date=end_date
+        )

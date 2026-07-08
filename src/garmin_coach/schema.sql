@@ -107,7 +107,10 @@ CREATE TABLE IF NOT EXISTS activities (
   -- geo / flags
   location_name   TEXT,
   start_lat REAL, start_lon REAL,
-  is_pr           INTEGER DEFAULT 0        -- personal-record flag on the activity
+  is_pr           INTEGER DEFAULT 0,       -- personal-record flag on the activity
+
+  -- environment (per-activity weather; Fahrenheit payload converted to Celsius)
+  temp_c          REAL                     -- air temperature; NULL when no weather
 );
 CREATE INDEX IF NOT EXISTS ix_activities_date ON activities(date);
 CREATE INDEX IF NOT EXISTS ix_activities_disc ON activities(discipline);
@@ -281,7 +284,7 @@ CREATE TABLE IF NOT EXISTS fitness_markers (
   vo2max_running     REAL,
   vo2max_cycling     REAL,
   lactate_thr_hr     INTEGER,             -- lactate threshold heart rate
-  lactate_thr_pace   REAL,               -- pace (mps or s/km — keep consistent in loader)
+  lactate_thr_pace   REAL,               -- lactate threshold pace (seconds per km)
   endurance_score    INTEGER,
   hill_score         INTEGER,
   fitness_age        REAL
@@ -312,8 +315,17 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('acwr_risk_low',        0.8, 'detraining floor'),
  ('acwr_sweet_hi',        1.3, 'top of sweet spot'),
  ('acwr_min_chronic_days', 28, 'ACWR unreliable below this n_chronic'),
- ('hr_z2_upper_bpm',      140, 'approx Z2 ceiling; refine from user_settings zones'),
  ('hard_te_load',         150, 'session considered "hard" above this training_load'),
+ -- Phase 6 personal zones: %LTHR band ceilings (Garmin/Friel) + guards
+ ('z1_hi_pct_lthr',      0.80, 'Z1 upper = 80% LTHR'),
+ ('z2_hi_pct_lthr',      0.89, 'Z2 upper (easy ceiling) = 89% LTHR'),
+ ('z3_hi_pct_lthr',      0.94, 'Z3 upper = 94% LTHR'),
+ ('z4_hi_pct_lthr',      0.99, 'Z4 upper = 99% LTHR'),
+ ('z2_pace_fallback_mult', 1.30, 'Z2 pace ceiling = LT pace * this, when regression is thin'),
+ ('zones_regression_min_runs', 12, 'min heat-clean runs before pace<->HR regression is trusted'),
+ ('zones_regression_min_r2', 0.30, 'min regression R^2 before it beats the fallback'),
+ ('zones_heat_temp_c',     22, 'runs above this air temp (C) are excluded from the pace fit'),
+ ('zones_stale_days',      28, 'LTHR detection older than this marks zones stale'),
  ('monotony_high',        2.0, 'Foster monotony above this flags overtraining (Phase 5)'),
  ('deload_load_rise_weeks', 3, 'consecutive rising-load weeks that arm DELOAD_ADVISED'),
  ('deload_min_history_weeks', 3, 'below this many complete weeks the deload signal is silent'),
@@ -416,6 +428,23 @@ CREATE TABLE IF NOT EXISTS weekly_plan_actual (
   matched     INTEGER NOT NULL,
   PRIMARY KEY (week_start, dow),
   FOREIGN KEY (week_start) REFERENCES weekly_metrics(week_start) ON DELETE CASCADE
+);
+
+-- Personal training zones (mart): a single current standing, recomputed from the
+-- watch-detected LTHR anchor (fitness_markers) + aerobic runs. Phase 6.
+CREATE TABLE IF NOT EXISTS athlete_zones (
+  id                       INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+  lthr_bpm                 INTEGER,           -- anchor: lactate threshold HR
+  z1_hi_bpm                INTEGER,           -- contiguous %LTHR upper bounds;
+  z2_hi_bpm                INTEGER,           --   Z1 < z1_hi, Z2 = [z1_hi, z2_hi],
+  z3_hi_bpm                INTEGER,           --   ..., Z5 > z4_hi
+  z4_hi_bpm                INTEGER,
+  threshold_pace_s_per_km  REAL,             -- LT pace (seconds per km)
+  z2_pace_ceiling_s_per_km REAL,             -- keep easy runs under this pace
+  source                   TEXT,             -- <method>+lthr | no_anchor; method: regression | threshold_pace_fallback
+  lthr_detected_on         TEXT,             -- calendar day of the LTHR detection
+  computed_at              TEXT,             -- recompute cutoff (through_date)
+  stale                    INTEGER           -- 1 when detection older than zones_stale_days
 );
 
 -- =============================================================================

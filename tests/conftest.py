@@ -40,11 +40,19 @@ class FakeGarminClient:
     empty payload so per-day streams can be exercised over a range.
     """
 
-    def __init__(self, activities=None, by_day=None):
+    def __init__(
+        self, activities=None, by_day=None, weather_by_id=None,
+        lactate=None, lactate_range=None,
+    ):
         # activities: list returned for the whole range
         # by_day: {endpoint: {date: payload}}
+        # weather_by_id: {activity_id: weather payload}
+        # lactate: latest LTHR payload; lactate_range: ranged LTHR payload
         self.activities = activities or []
         self.by_day = by_day or {}
+        self.weather_by_id = weather_by_id or {}
+        self.lactate = lactate
+        self.lactate_range = lactate_range
         self.calls: list[tuple[str, str]] = []
 
     def get_activities(self, start_date: str, end_date: str):
@@ -69,6 +77,17 @@ class FakeGarminClient:
 
     def get_status(self, date: str):
         return self._day("status", date)
+
+    def get_activity_weather(self, activity_id: int):
+        self.calls.append(("weather", str(activity_id)))
+        return self.weather_by_id.get(activity_id)
+
+    def get_lactate_threshold(self, start_date=None, end_date=None):
+        if start_date is None:
+            self.calls.append(("lactate", "latest"))
+            return self.lactate
+        self.calls.append(("lactate", f"{start_date}..{end_date}"))
+        return self.lactate_range
 
 
 @pytest.fixture

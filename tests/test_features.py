@@ -243,3 +243,23 @@ def test_golden_regression_reproduces_reference_analysis(conn):
 
     # Spot-check zone minutes against a known fixture activity (2026-07-02).
     assert abs(by_date["2026-07-02"]["z3_min"] - 2930.578 / 60) < 1e-6
+
+
+def test_features_recomputes_personal_zones(conn):
+    """features writes the singleton athlete_zones row from the LTHR anchor."""
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-06-20", "lactate_thr_hr": 175, "lactate_thr_pace": 257.1})
+    db.upsert_activity(conn, {
+        "activity_id": 1, "start_local": "2026-06-22 08:00:00", "date": "2026-06-22",
+        "gtype": "running", "discipline": "Bieganie", "avg_hr": 150,
+        "avg_speed_mps": 3.0, "temp_c": 15.0,
+    })
+
+    features.features(conn, data_start_date=DATA_START)
+
+    rows = conn.execute(
+        "SELECT lthr_bpm, z2_hi_bpm, source FROM athlete_zones"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 175
+    assert rows[0][1] == 156

@@ -20,6 +20,30 @@ def _client_with_day(fake_client, fixture, date="2026-06-10"):
     )
 
 
+def test_backfill_enriches_activity_temp_and_ingests_lactate(conn, fake_client, fixture):
+    """Backfill fans out weather per activity (temp_c) and backfills LTHR history."""
+    client = fake_client(
+        activities=fixture("activities_range"),
+        weather_by_id={23176570790: {"temp": 67}},  # 67F -> 19.4C
+        lactate_range=fixture("lactate_threshold_range"),
+    )
+    sync.backfill(client, conn, "2026-06-08", "2026-06-10")
+
+    temp = conn.execute(
+        "SELECT temp_c FROM activities WHERE activity_id = 23176570790"
+    ).fetchone()[0]
+    assert temp is not None and abs(temp - 19.44) < 0.1
+    # backfill uses the ranged form: the whole detection history lands, not just latest
+    lthr = conn.execute(
+        "SELECT lactate_thr_hr FROM fitness_markers WHERE date = '2026-07-02'"
+    ).fetchone()
+    assert lthr is not None and lthr[0] == 175
+    history = conn.execute(
+        "SELECT lactate_thr_hr FROM fitness_markers WHERE date = '2026-06-08'"
+    ).fetchone()
+    assert history is not None and history[0] == 179
+
+
 def test_backfill_fills_core_tables(conn, fake_client, fixture):
     client = _client_with_day(fake_client, fixture)
     sync.backfill(client, conn, "2026-06-08", "2026-06-10")

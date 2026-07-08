@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from garmin_coach import models
 
 
@@ -42,6 +44,63 @@ def test_normalize_activity_missing_fields_become_none(fixture):
     assert row["avg_hr"] is None
     assert row["training_load"] is None
     assert row["is_pr"] == 0
+
+
+def test_normalize_activity_weather_fahrenheit_to_celsius():
+    # Garmin weather `temp` is Fahrenheit even on a metric account: 67F -> 19.4C.
+    row = models.normalize_activity(
+        {"activityId": 1, "startTimeLocal": "2026-07-04 08:00:00",
+         "activityType": {"typeKey": "running"}},
+        weather={"temp": 67},
+    )
+    assert row["temp_c"] == pytest.approx(19.44, abs=0.1)
+
+
+def test_normalize_activity_without_weather_has_null_temp():
+    row = models.normalize_activity(
+        {"activityId": 1, "startTimeLocal": "2026-07-04 08:00:00",
+         "activityType": {"typeKey": "running"}},
+    )
+    assert row["temp_c"] is None
+
+
+def test_normalize_lactate_maps_hr_and_pace(fixture):
+    row = models.normalize_lactate(fixture("lactate_threshold_latest"))
+    assert row["date"] == "2026-07-02"  # from calendarDate
+    assert row["lactate_thr_hr"] == 175
+    # speed 0.3888878 is scaled x10 vs true m/s (3.889 m/s); pace = 1000/(speed*10)
+    assert row["lactate_thr_pace"] == pytest.approx(257.1, abs=0.5)  # ~4:17/km
+
+
+def test_normalize_lactate_onboarding_is_all_none(fixture):
+    row = models.normalize_lactate(fixture("lactate_threshold_onboarding"))
+    assert row["date"] is None
+    assert row["lactate_thr_hr"] is None
+    assert row["lactate_thr_pace"] is None
+
+
+def test_normalize_lactate_owns_only_lthr_columns(fixture):
+    # Must not emit sibling fitness_markers columns (vo2max/etc): an upsert of
+    # this row would otherwise clobber values written by another marker source.
+    row = models.normalize_lactate(fixture("lactate_threshold_latest"))
+    assert set(row) == {"date", "lactate_thr_hr", "lactate_thr_pace"}
+
+
+def test_normalize_lactate_range_joins_hr_and_speed_by_date(fixture):
+    rows = models.normalize_lactate_range(fixture("lactate_threshold_range"))
+    by_date = {r["date"]: r for r in rows}
+    # history is backfilled: one row per detection day with HR and/or speed
+    assert by_date["2026-06-08"]["lactate_thr_hr"] == 179
+    assert isinstance(by_date["2026-06-08"]["lactate_thr_hr"], int)  # not 179.0
+    assert by_date["2026-07-02"]["lactate_thr_hr"] == 175
+    assert by_date["2026-07-02"]["lactate_thr_pace"] == pytest.approx(257.1, abs=0.5)
+    # a power-only date carries no threshold HR/speed -> no fitness_markers row
+    assert "2026-06-15" not in by_date
+
+
+def test_normalize_lactate_range_tolerates_empty_or_missing():
+    assert models.normalize_lactate_range({}) == []
+    assert models.normalize_lactate_range({"heart_rate": None, "speed": None}) == []
 
 
 def test_map_discipline_trail_promotion():

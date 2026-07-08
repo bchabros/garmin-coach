@@ -25,10 +25,28 @@ def _schema_sql() -> str:
     return importlib.resources.files("garmin_coach").joinpath("schema.sql").read_text()
 
 
+# Columns added to pre-existing core tables after their first release. CREATE ...
+# IF NOT EXISTS cannot add a column to a table that already exists, so bootstrap
+# backfills these with ALTER for DBs created by an earlier schema version.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "activities": {"temp_c": "REAL"},  # Phase 6: per-activity temperature
+}
+
+
 def bootstrap(conn: sqlite3.Connection) -> None:
-    """Create all tables/views idempotently (CREATE ... IF NOT EXISTS)."""
+    """Create all tables/views idempotently, then add any missing columns."""
     conn.executescript(_schema_sql())
+    _migrate_columns(conn)
     conn.commit()
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    """Add later-introduced columns to tables that predate them (idempotent)."""
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
 def insert_raw(
@@ -105,6 +123,11 @@ def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     """Upsert a one-row-per-date table (sleep, hrv_nightly, daily_wellness, ...)."""
     _upsert(conn, table, row, pk="date")
+
+
+def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert the singleton `athlete_zones` mart row (id=1)."""
+    _upsert(conn, "athlete_zones", row, pk="id")
 
 
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:

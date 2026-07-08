@@ -92,12 +92,15 @@ def aerobic_low_shortage(
     recent_rows: list[dict],
     thresholds: dict[str, float],
     balance_phrase: str | None,
+    personal_z2_minute_share: float | None = None,
 ) -> dict | None:
     """Rule 1: too much grey zone over the recent window.
 
     Our own signal: the easy-load share is below target while the hard-load share
     is above target. ``garmin_agrees`` records whether Garmin's own
     ``balance_phrase`` concurs - never a passthrough.
+    ``personal_z2_minute_share`` (Phase 6) rides alongside as a second, personal
+    read: the share of running minutes at avg HR under the personal Z2 ceiling.
     """
     low_share, high_share, total = load_shares(recent_rows)
     if low_share is None or high_share is None or not total:
@@ -107,14 +110,17 @@ def aerobic_low_shortage(
         and high_share > thresholds["aero_high_target_share"]
     ):
         return None
+    facts = {
+        "low_share": low_share,
+        "high_share": high_share,
+        "target_low_share": thresholds["aero_low_target_share"],
+    }
+    if personal_z2_minute_share is not None:
+        facts["personal_z2_minute_share"] = personal_z2_minute_share
     return {
         "code": "AEROBIC_LOW_SHORTAGE",
         "severity": "warn",
-        "facts": {
-            "low_share": low_share,
-            "high_share": high_share,
-            "target_low_share": thresholds["aero_low_target_share"],
-        },
+        "facts": facts,
         "garmin_agrees": balance_phrase == "AEROBIC_LOW_SHORTAGE",
     }
 

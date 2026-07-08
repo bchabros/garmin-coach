@@ -145,6 +145,30 @@ def test_two_hard_days_not_consecutive_does_not_fire(conn):
     )
 
 
+def test_digest_carries_zones_block_when_present(conn):
+    """The digest exposes the athlete_zones standing (ceiling, source, staleness)."""
+    _mart(conn, date="2026-06-08", load_day=100, load_low=100, load_high=0, load_anaerobic=0)
+    db.upsert_zones(conn, {
+        "id": 1, "lthr_bpm": 175, "z1_hi_bpm": 140, "z2_hi_bpm": 156,
+        "z3_hi_bpm": 164, "z4_hi_bpm": 173, "threshold_pace_s_per_km": 257.1,
+        "z2_pace_ceiling_s_per_km": 334.2, "source": "threshold_pace_fallback+lthr",
+        "lthr_detected_on": "2026-05-01", "computed_at": "2026-06-08", "stale": 1,
+    })
+
+    z = build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")["zones"]
+    assert z["lthr_bpm"] == 175
+    assert z["z2_hi_bpm"] == 156
+    assert z["z2_pace_ceiling_s_per_km"] == 334.2
+    assert z["source"] == "threshold_pace_fallback+lthr"
+    assert z["stale"] == 1
+    assert z["lthr_age_days"] == 38  # 2026-05-01 -> 2026-06-08
+
+
+def test_digest_zones_block_is_none_without_a_row(conn):
+    _mart(conn, date="2026-06-08", load_day=100, load_low=100, load_high=0, load_anaerobic=0)
+    assert build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")["zones"] is None
+
+
 def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(conn):
     """Too much grey zone: easy share below target AND hard share above target.
     garmin_agrees mirrors the latest training_status_daily.balance_phrase."""
@@ -163,6 +187,25 @@ def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(co
     _status(conn, date="2026-06-09", balance_phrase="BALANCED")
     d2 = build_digest(conn, from_date="2026-06-08", to_date="2026-06-09")
     assert _signal(d2, "AEROBIC_LOW_SHORTAGE")["garmin_agrees"] is False
+
+
+def test_aerobic_low_shortage_carries_personal_z2_minute_share(conn):
+    """When a Z2 ceiling exists, the grey-zone signal reports the personal read
+    alongside the load-bucket read: share of run minutes at avg HR <= ceiling."""
+    _mart(conn, date="2026-06-08", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
+    db.upsert_zones(conn, {"id": 1, "lthr_bpm": 175, "z2_hi_bpm": 156, "stale": 0,
+                           "source": "regression"})
+    # 30 min under the 156 ceiling (hr 150), 90 min over (hr 165) -> 0.25 share
+    db.upsert_activity(conn, {"activity_id": 1, "start_local": "2026-06-08 08:00:00",
+                              "date": "2026-06-08", "gtype": "running",
+                              "discipline": "Bieganie", "avg_hr": 150, "dur_s": 1800})
+    db.upsert_activity(conn, {"activity_id": 2, "start_local": "2026-06-08 18:00:00",
+                              "date": "2026-06-08", "gtype": "running",
+                              "discipline": "Bieganie", "avg_hr": 165, "dur_s": 5400})
+
+    s = _signal(build_digest(conn, from_date="2026-06-08", to_date="2026-06-08"),
+                "AEROBIC_LOW_SHORTAGE")
+    assert abs(s["facts"]["personal_z2_minute_share"] - 0.25) < 1e-9
 
 
 def test_aerobic_low_shortage_does_not_fire_on_balanced_load(conn):

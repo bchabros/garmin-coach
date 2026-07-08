@@ -5,6 +5,7 @@
 *.db-shm
 data/
 plans/
+memory/
 raw/
 reports/
 logs/

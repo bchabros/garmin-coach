@@ -13,6 +13,7 @@ import sqlite3
 from . import signals as _signals
 from . import thresholds as _thresholds
 from . import weekly as _weekly
+from . import zones as _zones
 
 DISCLAIMER = (
     "This is a reading of your recorded data, not medical or coaching advice."
@@ -200,6 +201,7 @@ def build_digest(
     from_date, to_date = _resolve_window(conn, from_date, to_date)
     weekly_rows = _read_weekly(conn, to_date)
     weekly_section = _weekly_section(conn, weekly_rows, thr)
+    zones_section = _zones_section(conn)
     deload = _signals.deload_advised(weekly_rows, thr)
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
@@ -208,6 +210,7 @@ def build_digest(
             "headline": _headline([], [], thr),
             "signals": [deload] if deload is not None else [],
             "weekly": weekly_section,
+            "zones": zones_section,
             "disclaimer": DISCLAIMER,
         }
     window = {
@@ -219,8 +222,10 @@ def build_digest(
     recent = _recent_rows(rows, to_date)
     balance_phrase = _latest_balance_phrase(conn, from_date, to_date)
     headline = _headline(rows, recent, thr)
+    z2_hi_bpm = zones_section["z2_hi_bpm"] if zones_section else None
+    personal_z2_share = _personal_z2_minute_share(conn, from_date, to_date, z2_hi_bpm)
     candidates = (
-        _signals.aerobic_low_shortage(recent, thr, balance_phrase),
+        _signals.aerobic_low_shortage(recent, thr, balance_phrase, personal_z2_share),
         _signals.acwr_out_of_range(rows, thr),
         _signals.hrv_low_morning(rows, thr),
         _signals.two_hard_days(rows, thr, to_date),
@@ -236,5 +241,58 @@ def build_digest(
         "headline": headline,
         "signals": signals,
         "weekly": weekly_section,
+        "zones": zones_section,
         "disclaimer": DISCLAIMER,
     }
+
+
+def _zones_section(conn: sqlite3.Connection) -> dict | None:
+    """The current personal-zones standing from the ``athlete_zones`` singleton."""
+    cur = conn.execute(
+        "SELECT lthr_bpm, z1_hi_bpm, z2_hi_bpm, z3_hi_bpm, z4_hi_bpm, "
+        "threshold_pace_s_per_km, z2_pace_ceiling_s_per_km, source, "
+        "lthr_detected_on, computed_at, stale FROM athlete_zones WHERE id = 1"
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    section = dict(zip([d[0] for d in cur.description], row))
+    section["lthr_age_days"] = _lthr_age_days(
+        section["lthr_detected_on"], section["computed_at"]
+    )
+    return section
+
+
+def _lthr_age_days(detected_on: str | None, computed_at: str | None) -> int | None:
+    """Days between the LTHR detection and the recompute cutoff, or None."""
+    if not detected_on or not computed_at:
+        return None
+    return (
+        _dt.date.fromisoformat(computed_at) - _dt.date.fromisoformat(detected_on)
+    ).days
+
+
+def _personal_z2_minute_share(
+    conn: sqlite3.Connection,
+    from_date: str,
+    to_date: str,
+    z2_hi_bpm: int | None,
+) -> float | None:
+    """Share of running minutes in the window at avg HR at/below the Z2 ceiling.
+
+    None when there is no personal ceiling yet or no running minutes to weigh.
+    """
+    if z2_hi_bpm is None:
+        return None
+    placeholders = ",".join("?" for _ in _zones.RUN_DISCIPLINES)
+    rows = conn.execute(
+        f"SELECT avg_hr, dur_s FROM activities "
+        f"WHERE date BETWEEN ? AND ? AND discipline IN ({placeholders}) "
+        f"AND avg_hr IS NOT NULL AND dur_s IS NOT NULL",
+        (from_date, to_date, *_zones.RUN_DISCIPLINES),
+    ).fetchall()
+    total = sum(dur for _, dur in rows)
+    if total <= 0:
+        return None
+    under = sum(dur for hr, dur in rows if hr <= z2_hi_bpm)
+    return under / total

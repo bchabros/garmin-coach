@@ -19,6 +19,15 @@ DEFAULTS: dict[str, float] = {
     "deload_load_rise_weeks": 3,
     "deload_min_history_weeks": 3,
     "deload_drop_pct": 0.40,
+    "z1_hi_pct_lthr": 0.80,
+    "z2_hi_pct_lthr": 0.89,
+    "z3_hi_pct_lthr": 0.94,
+    "z4_hi_pct_lthr": 0.99,
+    "z2_pace_fallback_mult": 1.30,
+    "zones_regression_min_runs": 12,
+    "zones_regression_min_r2": 0.30,
+    "zones_heat_temp_c": 22,
+    "zones_stale_days": 28,
 }
 
 

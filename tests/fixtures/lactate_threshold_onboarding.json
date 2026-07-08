@@ -1,0 +1,12 @@
+{
+  "speed_and_heart_rate": {
+    "userProfilePK": null,
+    "version": null,
+    "calendarDate": null,
+    "sequence": null,
+    "speed": null,
+    "heartRate": null,
+    "heartRateCycling": null
+  },
+  "power": {}
+}

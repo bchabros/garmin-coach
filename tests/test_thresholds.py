@@ -20,6 +20,16 @@ def test_read_merges_code_defaults_with_db_seed_rows(conn):
     assert thresholds.read(conn)["hard_te_load"] == 175
 
 
+def test_personal_zone_thresholds_present_and_placeholder_retired(conn):
+    """Phase 6 seeds the %LTHR band + guard keys and drops hr_z2_upper_bpm."""
+    values = thresholds.read(conn)
+
+    assert values["z2_hi_pct_lthr"] == 0.89
+    assert values["zones_heat_temp_c"] == 22
+    assert values["zones_stale_days"] == 28
+    assert "hr_z2_upper_bpm" not in values
+
+
 def test_merge_applies_explicit_overrides():
     """Tests and callers can still pass explicit threshold overrides."""
     values = thresholds.merge({"acwr_sweet_hi": 1.0})

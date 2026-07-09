@@ -2,7 +2,7 @@
 
 A mart-from-mart step. ``rollup`` reads the finished daily mart and materialises
 one ``weekly_metrics`` row per *complete* week (Monday-Sunday, all seven days
-at/before the cutoff). It never touches Garmin. See docs/adr/0005 and CONTEXT.md.
+at/before the cutoff). It never touches Garmin. See docs/adr/0005 and docs/glossary.md.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _plan_intents(conn: sqlite3.Connection) -> dict[int, str]:
 
 
 def _actual_intent(row: dict | None, hard: float) -> str:
-    """Classify a day to the plan vocabulary by load (see CONTEXT.md)."""
+    """Classify a day to the plan vocabulary by load (see docs/glossary.md)."""
     if row is None:
         return "rest"
     load = row.get("load_day") or 0

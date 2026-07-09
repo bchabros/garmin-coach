@@ -1,30 +1,24 @@
-# AGENTS.md
+# Agent guide (CLAUDE.md == AGENTS.md)
 
-Guidance for Codex working in this repo. Read this before making changes.
+Guidance for coding agents (Claude Code, Codex) working in this repo. Read this
+before making changes. This file is the thin shared core; `AGENTS.md` is its
+byte-for-byte mirror (the mirror rule is in `docs/DEVELOPMENT.md`).
 
 ## What this is
 
 Local ETL + coaching system for one athlete's Garmin Connect data. Pulls daily,
 stores in SQLite as system-of-record, computes training metrics, feeds a coach
 skill. Full brief: `docs/garmin-coach-BUILD.md`. Per-phase PRDs: `docs/prd/`.
+Forward plan: `docs/ROADMAP.md`.
 
-**Golden rule — separate transport from intelligence.** The deterministic ETL uses
+**Golden rule -- separate transport from intelligence.** The deterministic ETL uses
 the `garminconnect` library. The metrics/coach layer only ever reads the finished
-DB — it must never call Garmin live. The `mcp__garmin__*` tools are for **ad-hoc
+DB -- it must never call Garmin live. The `mcp__garmin__*` tools are for **ad-hoc
 exploration and building test fixtures only**, never the pipeline.
 
-## Workflow
-
-Build phase-by-phase (0 → 5); each phase has a Definition of Done in the BUILD doc —
-don't advance until it's met. The established loop for a new phase is:
-**grill (stress-test decisions) → PRD in `docs/prd/` → TDD (red→green)**.
-
-- Work test-first. Tests live at agreed **seams**: pure normalizers (`models.py`),
-  the persistence layer (`db.py`), and the backfill orchestrator (`sync.py`, with an
-  injected fake client). `client.py` (real transport) and `cli.py` are out of seam —
-  validated by a live run, not unit tests.
-- One vertical slice at a time: one test → minimal impl → repeat. No bulk test-first.
-- Before committing a change: `task check` (or `poetry run pytest && poetry run ruff check src tests && poetry run mypy src` if Task is unavailable).
+**Onboarding cutoff.** This account has real data from **2026-06-08** (`data_start`);
+earlier dates are onboarding -- explicit gaps, not zero training. Every metric is
+interpreted against that cutoff.
 
 ## Commands
 
@@ -39,68 +33,37 @@ task check               # tests + lint + docstrings + mypy
 task run FROM=2026-06-08 # local backfill; optional TO=YYYY-MM-DD
 ```
 
-## Architecture
+## Where to go next
 
-`config.py` (pydantic-settings) · `client.py` (login+MFA, endpoint→method map, the
-only garminconnect importer) · `db.py` (connect, bootstrap, upserts) · `models.py`
-(pure `payload dict → row dict` normalizers + discipline mapping) · `sync.py`
-(`backfill(client, conn, from_date, to_date)`) · `cli.py` (argparse).
+- **Changing code** -> `docs/DEVELOPMENT.md` (workflow, module map, conventions,
+  developer gotchas, testing seams, deferred backlog).
+- **Operating the system** -> `docs/OPERATIONS.md` (running the pipeline, exit-code
+  contract, logs, rate limits, generating a coach report).
+- **Domain vocabulary** -> `docs/glossary.md` (single source of truth for terms).
 
-Data is medallion: **raw** `raw_payloads` (append-only, never overwrite — reprocess
-without re-hitting Garmin) → **core** (normalized, upserted by PK) → **mart**
-`daily_metrics`/`weekly_metrics` (recomputed; phase 2+). Derived values live only in
-marts/views, never mixed into core.
+## Agent skills
 
-## Conventions
+Per-repo config for the engineering skills, written by `/setup-matt-pocock-skills`.
 
-- **Poetry**, not `uv`/`pip`, for all dependency work (despite what the BUILD doc says).
-- Python 3.13. Code and docstrings in **English**; commit messages in English.
-- New and changed public docstrings should use **Google-style docstrings**.
-- Schema source of truth is the package copy `src/garmin_coach/schema.sql`, loaded via
-  `importlib.resources`. `docs/schema.sql` is a snapshot kept identical by
-  `tests/test_schema_sync.py` — edit the package copy, then re-sync docs.
-- Normalizers must be pure and total: missing fields → `None`, never raise. All values
-  a normalizer emits must be **scalars** (SQLite can't bind dict/list).
-- Fixtures are anonymized real payloads. Strip PII: `userProfilePK`/`ownerId`,
-  `ownerFullName`, lat/lon, `deviceId`, UUIDs, image URLs. Trim per-minute time series.
+### Issue tracker
 
-## Gotchas (learned the hard way)
+Issues and per-feature specs live as local markdown under `.scratch/<feature>/`
+-- no external tracker. See `docs/agents/issue-tracker.md`.
 
-- **garminconnect 0.3.6 token API:** persist tokens by calling `api.login(tokenstore)`
-  — it auto-dumps via `api.client.dump(path)`. There is **no** `api.garth` attribute.
-- **Login rate limits:** Garmin returns 429 (IP-level) on repeated login attempts.
-  Once tokens are cached in `~/.garminconnect`, resume avoids the login endpoint —
-  don't hammer it, wait it out.
-- **Onboarding vs real data:** this account has real data from **2026-06-08**; earlier
-  is onboarding — treat as explicit gaps (`daily_wellness.has_data=0`), not zero training.
-- **Shape drift after onboarding:** fields that are `null` during onboarding can become
-  objects later (e.g. `hrvSummary.baseline` becomes a band `{balancedLow, ...}`). Test
-  normalizers against **both** onboarding and post-onboarding fixtures.
-- **Backfill excludes "today"** — HRV/sleep only land after the night; only pull through
-  yesterday.
-- **Idempotency contract:** re-running backfill must not change **core** row counts
-  (upsert by PK); `raw_payloads` is expected to grow (append-only, keyed by `fetched_at`).
-- Device-keyed maps in training-status payloads: pick the single device value, never
-  hardcode a device ID.
+### Triage labels
 
-## Deferred / TODO
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`,
+`ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
-- `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) — committed
-  in the Phase 0 PRD (D9) but not yet implemented.
-- Phase 1 (incremental sync, retry/backoff, per-day fallback, stream isolation) — **done**.
-- Phase 2 (`features.py` → `daily_metrics` mart) — **done**; decisions in `docs/prd/phase-2.md`
-  + `docs/adr/0002-phase-2-metrics-semantics.md`; golden regression in `tests/test_features.py`.
-- Phase 3 (`digest.py`/`signals.py` → `garmin-coach report` → `skills/coach/SKILL.md`) — **done**;
-  decisions in `docs/prd/phase-3.md` + `docs/adr/0003-phase-3-coach-signals.md`; golden
-  regression in `tests/test_digest.py`. Deterministic engine builds `reports/{date}/digest.json`
-  + 2 charts (HRV ±1 SD, ACWR); the skill writes `report.md` from the digest (never the raw
-  mart, never Garmin). Signals 1–5 from BUILD §7; rule 6 (plan vs actual) deferred to Phase 5.
-- Phase 4 (automation) — **done**; decisions in `docs/prd/phase-4.md` + `docs/adr/0004-phase-4-automation.md`;
-  seam tests in `tests/test_daily.py`. Seam `daily.run_daily(client, conn, ...) → DailyResult` runs
-  sync → features → `build_digest` (alerts only; **no charts** on the nightly path). Alerts = digest
-  signals with `warn`/`alert` severity (reused from Phase 3, no new thresholds), logged WARNING/ERROR.
-  Status/exit contract: `ok`/0, `degraded`/1 (isolated stream failure), `failed`/2 (stage crash or
-  total sync outage). `garmin-coach daily [--to]` + `scripts/daily.sh` (thin) + launchd plist example;
-  logging via in-process `RotatingFileHandler` (`configure_logging`, config keys `LOG_PATH`/
-  `LOG_MAX_BYTES`/`LOG_BACKUP_COUNT`). Scheduling is documented, not auto-installed.
-- Next up: **Phase 5** — see BUILD doc (weekly rollups, plan-vs-actual `plan_template`, deload/trend detection).
+### Domain docs
+
+Single-context -- vocabulary in `docs/glossary.md`, decisions in `docs/adr/`.
+See `docs/agents/domain.md`.
+
+## Rules
+
+Additional working rules live in `.claude/rules/` and are imported here so Claude Code
+loads them. Codex: these apply too -- read the files directly.
+
+@.claude/rules/no-emoji.md
+@.claude/rules/code-style.md

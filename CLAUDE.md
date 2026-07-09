@@ -47,8 +47,9 @@ Per-repo config for the engineering skills, written by `/setup-matt-pocock-skill
 
 ### Issue tracker
 
-Issues and per-feature specs live as local markdown under `.scratch/<feature>/`
--- no external tracker. See `docs/agents/issue-tracker.md`.
+Work is scoped to a PRD under `docs/prd/<feature>/` (`PRD.md` + optional
+`issues/NN-slug.md`); existing flat `phase-N.md` stay flat. No external tracker.
+See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

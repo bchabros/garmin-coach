@@ -44,7 +44,8 @@
       "Bash(sqlite3 /Users/Chabi/garmin-coach/data/garmin.db ' *)",
       "Bash(sqlite3 data/garmin.db \"SELECT payload FROM raw_payloads WHERE endpoint='get_activities_by_date' LIMIT 1\")",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); a=d[0] if isinstance\\(d,list\\) else d; print\\([k for k in a.keys\\(\\) if 'temp' in k.lower\\(\\) or 'weather' in k.lower\\(\\)]\\)\")",
-      "Bash(sqlite3 data/garmin.db \"SELECT activity_id, date, discipline FROM activities WHERE discipline IN \\('Bieganie','Trail'\\) ORDER BY date DESC LIMIT 1\")"
+      "Bash(sqlite3 data/garmin.db \"SELECT activity_id, date, discipline FROM activities WHERE discipline IN \\('Bieganie','Trail'\\) ORDER BY date DESC LIMIT 1\")",
+      "Bash(task check *)"
     ]
   }
 }

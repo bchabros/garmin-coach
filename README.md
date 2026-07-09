@@ -48,9 +48,8 @@ dependency ordering between the planned phases.
 garmin-coach/
 ├── pyproject.toml            # Poetry: deps, scripts, tool config
 ├── Taskfile.yml              # task shortcuts for tests, lint, checks, backfill, daily
-├── AGENTS.md                 # Codex/agent working rules
-├── CLAUDE.md                 # Claude Code working rules
-├── CONTEXT.md                # shared agent context: glossary + testing seams
+├── CLAUDE.md                 # thin shared agent core (what/golden rule/commands/pointers)
+├── AGENTS.md                 # byte-for-byte mirror of CLAUDE.md (guarded by a test)
 ├── .claude/rules/            # extra working rules imported by CLAUDE.md (style, no-emoji)
 ├── .codex/                   # Codex local notes and companion files
 ├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
@@ -58,10 +57,12 @@ garmin-coach/
 │   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, historical record)
 │   ├── ROADMAP.md            # forward plan: phases 6b–11 + read-MCP, industry survey
 │   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
+│   ├── DEVELOPMENT.md        # coding guide: workflow, module map, conventions, seams
+│   ├── OPERATIONS.md         # operator runbook: pipeline, exit codes, logs, reports
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
-│   ├── glossary.md           # domain vocabulary
-│   ├── adr/                  # decision records (0001–0007; one per phase + 0006 architecture)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-6)
+│   ├── glossary.md           # domain vocabulary (single source of truth)
+│   ├── adr/                  # decision records (0001–0008; one per phase + architecture/docs)
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-6) + docs-layering
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -294,6 +295,6 @@ health concerns.
 ## Credits
 
 Built with [Claude Code](https://claude.com/claude-code) (and Codex) driving the
-phase workflow described in `CLAUDE.md` (grill the design, write a PRD, then TDD).
+phase workflow described in `docs/DEVELOPMENT.md` (grill the design, write a PRD, then TDD).
 The agent skills used along the way are adapted from
 [Matt Pocock's skills collection](https://github.com/mattpocock/skills).

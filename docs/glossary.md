@@ -67,12 +67,53 @@ code, docstrings, PRDs, and ADRs.
   (`hrv_band.png`, `acwr.png`). `garmin-coach report` produces everything except the
   Markdown narrative.
 
+## Weekly terms (mart -> weekly)
+
+- **complete week** - a Monday-Sunday span whose seven days all lie at or before
+  yesterday. Only complete weeks are rolled up into `weekly_metrics`; the in-progress
+  current week is skipped so weekly figures never lie from 1-2 days of data.
+- **weekly rollup** - the derivation of one `weekly_metrics` row per complete week
+  purely from `daily_metrics` (a mart-from-mart step). Never touches Garmin;
+  recomputable and safe to rebuild.
+- **planned intent** - the training category the user's `plan_template` assigns to a
+  day of week (`rest | quality | easy | ...`).
+- **actual intent** - the same category inferred from what actually happened that day,
+  classified by load: `quality` when the day's load reaches `hard_te_load` (or has
+  anaerobic load), `easy` for any lighter activity, `rest` for no activity. A day the
+  athlete trained without wearing the watch is invisible to the system and reads as
+  `rest` (an ETL limitation, by decision, not a bug).
+- **plan adherence** - the fraction of the week's seven days whose actual intent
+  exactly matches the planned intent. The report also shows the *direction* of each
+  mismatch, since the DoD asks to surface divergence, not just a number.
+- **weekly plan-vs-actual fact** - the per-day planned intent, actual intent, and match
+  flag materialized alongside `weekly_metrics`. The digest reads these stored weekly
+  facts instead of re-deriving mismatch direction from a later `plan_template`.
+- **monotony / strain (Foster)** - `monotony` = mean daily load / SD of daily load
+  across the week (`NULL` when uncomputable, e.g. fewer than two training days);
+  `strain` = weekly load x monotony. Classic overtraining flags.
+- **deload (retrospective)** - a descriptive fact that a completed week's `load_total`
+  dropped by at least `deload_drop_pct` versus the preceding weeks; recorded from the
+  mart, not an alert.
+- **deload advised (prospective)** - the `DELOAD_ADVISED` signal: fires when there is
+  enough history (`deload_min_history_weeks`) and `load_total` rose for
+  `deload_load_rise_weeks` consecutive weeks and either `acwr_end` exceeds
+  `acwr_risk_high` or `monotony` exceeds `monotony_high`. Silent when history is too
+  short (it never guesses).
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier
   dates are explicit gaps, not zero training.
 - **watermark** - per-stream `sync_state.last_synced_date`; how incremental sync
   tracks progress.
+- **stream** - one independently synchronized Garmin data family: `activities`,
+  `sleep`, `hrv`, `wellness`, `readiness`, or `status`.
+- **daily stream** - a stream fetched one date at a time: sleep, HRV, wellness,
+  readiness, and training status.
+- **activities range** - the activities stream fetch window, first attempted as one
+  range call and then retried per day if the range call fails.
+- **partial success** - a sync run where at least one stream progresses while another
+  stream fails and leaves its watermark unchanged.
 - **seam** - the agreed boundary a test exercises: pure normalizers (`models.py`),
   the persistence layer (`db.py`), the sync orchestrator (`sync.py`), the features
   materializer (`features.py`), the weekly rollup (`weekly.py`), threshold policy

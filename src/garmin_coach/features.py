@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import db, weekly, zones
+from . import db, snapshot, weekly, zones
 
 HRV_WINDOW_NIGHTS = 60
 
@@ -202,3 +202,6 @@ def features(
 
     # Recompute personal training zones from the LTHR anchor + aerobic runs.
     zones.rollup(conn, through_date=end)
+
+    # Compose the current standing last, so it copies the fresh weekly + zones rows.
+    snapshot.rollup(conn, through_date=end)

@@ -130,6 +130,11 @@ def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     _upsert(conn, "athlete_zones", row, pk="id")
 
 
+def upsert_status(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert the singleton `athlete_status` snapshot mart row (id=1)."""
+    _upsert(conn, "athlete_status", row, pk="id")
+
+
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert a `weekly_metrics` row by week_start (the Monday)."""
     _upsert(conn, "weekly_metrics", row, pk="week_start")

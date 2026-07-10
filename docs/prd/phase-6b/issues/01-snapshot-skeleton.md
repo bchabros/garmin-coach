@@ -1,6 +1,6 @@
 # 01 - Snapshot skeleton: `athlete_status` mart, seam, command, wired into `features`
 
-Status: ready-for-agent
+Status: done
 Parent: `docs/prd/phase-6b/PRD.md`
 
 ## What to build

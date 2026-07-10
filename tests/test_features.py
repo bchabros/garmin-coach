@@ -263,3 +263,25 @@ def test_features_recomputes_personal_zones(conn):
     assert len(rows) == 1
     assert rows[0][0] == 175
     assert rows[0][1] == 156
+
+
+def test_features_writes_one_athlete_status_row(conn):
+    """features composes the singleton athlete_status snapshot after weekly + zones."""
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-06-20", "lactate_thr_hr": 175,
+                     "lactate_thr_pace": 257.1, "vo2max_running": 52.0})
+    db.upsert_activity(conn, {
+        "activity_id": 1, "start_local": "2026-06-22 08:00:00", "date": "2026-06-22",
+        "gtype": "running", "discipline": "Bieganie", "avg_hr": 150,
+        "avg_speed_mps": 3.0, "temp_c": 15.0, "training_load": 80.0, "aero_te": 3.0,
+    })
+
+    features.features(conn, data_start_date=DATA_START)
+    features.features(conn, data_start_date=DATA_START)  # idempotent
+
+    rows = conn.execute(
+        "SELECT computed_at, vo2max, z2_hi_bpm FROM athlete_status"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][1] == 52.0  # mirrored from fitness_markers
+    assert rows[0][2] == 156  # mirrored from athlete_zones (0.89 * 175)

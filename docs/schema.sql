@@ -447,6 +447,62 @@ CREATE TABLE IF NOT EXISTS athlete_zones (
   stale                    INTEGER           -- 1 when detection older than zones_stale_days
 );
 
+-- Athlete snapshot (mart): the single current standing "where do I stand right now".
+-- A same-run copy of finished marts + core, recomputed as the tail of `features`
+-- after weekly + zones. Serialized to reports/{date}/snapshot.json. Phase 6b.
+CREATE TABLE IF NOT EXISTS athlete_status (
+  id                       INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+  computed_at              TEXT,              -- as-of date; every latest read scoped to <= this
+  -- fitness markers (+ trend delta over an available window; span it was measured over)
+  vo2max                   REAL,              -- fitness_markers.vo2max_running (latest)
+  vo2max_delta             REAL,              -- signed change over the lookback (Phase 6b/02)
+  vo2max_span_days         INTEGER,           -- actual days the delta spans (may be < lookback)
+  weight_kg                REAL,              -- weight_log.weight_g / 1000 (latest)
+  weight_delta             REAL,
+  weight_span_days         INTEGER,
+  t_5k_s                   INTEGER,           -- race_predictions (latest)
+  t_10k_s                  INTEGER,
+  t_half_s                 INTEGER,
+  t_marathon_s             INTEGER,
+  -- HRV band (+ trend)
+  hrv_baseline             REAL,              -- daily_metrics (latest)
+  hrv_sd                   REAL,
+  hrv_delta                REAL,
+  hrv_span_days            INTEGER,
+  -- load / ACWR (reuses digest headline + signals.load_shares)
+  acwr                     REAL,              -- daily_metrics (latest)
+  n_chronic                INTEGER,
+  acwr_reliable            INTEGER,           -- n_chronic >= acwr_min_chronic_days
+  load_7d                  REAL,              -- trailing-7-day load total
+  low_share                REAL,              -- easy/hard/anaerobic shares of that load
+  high_share               REAL,
+  anaero_share             REAL,
+  -- recovery
+  readiness_score          INTEGER,           -- training_readiness (latest)
+  readiness_level          TEXT,
+  sleep_debt_h             REAL,              -- daily_metrics (latest)
+  heat_accl_pct            INTEGER,           -- training_status_daily (latest)
+  heat_trend               TEXT,
+  altitude_accl            INTEGER,
+  -- personal zones (full mirror of athlete_zones for a self-contained snapshot.json)
+  lthr_bpm                 INTEGER,
+  z1_hi_bpm                INTEGER,
+  z2_hi_bpm                INTEGER,
+  z3_hi_bpm                INTEGER,
+  z4_hi_bpm                INTEGER,
+  threshold_pace_s_per_km  REAL,
+  z2_pace_ceiling_s_per_km REAL,
+  zones_source             TEXT,
+  lthr_detected_on         TEXT,
+  zones_stale              INTEGER,
+  -- active plan; block/weeks_to_event/taper_active are NULL placeholders until Phase 9
+  block                    TEXT,
+  weeks_to_event           INTEGER,
+  taper_active             INTEGER,
+  planned_intent_today     TEXT,              -- plan_template[weekday(computed_at)]
+  planned_label_today      TEXT
+);
+
 -- =============================================================================
 -- VIEWS  (convenience joins; DuckDB-friendly)
 -- =============================================================================

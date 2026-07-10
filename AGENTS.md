@@ -8,8 +8,7 @@ byte-for-byte mirror (the mirror rule is in `docs/DEVELOPMENT.md`).
 
 Local ETL + coaching system for one athlete's Garmin Connect data. Pulls daily,
 stores in SQLite as system-of-record, computes training metrics, feeds a coach
-skill. Full brief: `docs/garmin-coach-BUILD.md`. Per-phase PRDs: `docs/prd/`.
-Forward plan: `docs/ROADMAP.md`.
+skill. Full brief and roadmap: `docs/PROJECT.md`. Per-phase PRDs: `docs/prd/`.
 
 **Golden rule -- separate transport from intelligence.** The deterministic ETL uses
 the `garminconnect` library. The metrics/coach layer only ever reads the finished
@@ -66,5 +65,4 @@ See `docs/agents/domain.md`.
 Additional working rules live in `.claude/rules/` and are imported here so Claude Code
 loads them. Codex: these apply too -- read the files directly.
 
-@.claude/rules/no-emoji.md
 @.claude/rules/code-style.md

@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 3: coach skill (report + signals + charts)
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-05
-> Sources: `docs/garmin-coach-BUILD.md` Phase 3 + section 7, `docs/adr/0003-phase-3-coach-signals.md`, `docs/adr/0002-phase-2-metrics-semantics.md`, `docs/glossary.md`, grilling decisions.
+> Sources: `docs/PROJECT.md` Phase 3 + section 7, `docs/adr/0003-phase-3-coach-signals.md`, `docs/adr/0002-phase-2-metrics-semantics.md`, `docs/glossary.md`, grilling decisions.
 
 ## Problem Statement
 

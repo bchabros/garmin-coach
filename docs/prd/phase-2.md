@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 2: metrics layer (mart)
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-05
-> Sources: `docs/garmin-coach-BUILD.md` Phase 2 + sections 4/6, `docs/adr/0002-phase-2-metrics-semantics.md`, `docs/glossary.md`, grilling decisions.
+> Sources: `docs/PROJECT.md` Phase 2 + sections 4/6, `docs/adr/0002-phase-2-metrics-semantics.md`, `docs/glossary.md`, grilling decisions.
 
 ## Problem Statement
 

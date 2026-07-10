@@ -1,8 +1,489 @@
-# ROADMAP — Phases 6–11 + read-MCP (AI-coach capabilities)
+# garmin-coach — build brief and roadmap
 
-**Single source of truth for everything after Phase 5.** `docs/garmin-coach-BUILD.md`
-is the historical record of what was built (Phases 0–5, all done); this document is the
-forward plan. It merges two inputs:
+Single source of truth for the whole project: what was built (Phases 0–5, the
+original executable brief) and what comes next (Phases 6+, the forward plan and
+industry survey). This file merges the former `garmin-coach-BUILD.md` and
+`ROADMAP.md`.
+
+**What it is.** A local system that pulls Garmin Connect data once a day, keeps it in
+SQLite as the *system-of-record*, computes training metrics (HRV baseline, ACWR, load
+balance), and lets a coach agent generate a weekly review: is training going well, and
+what is missing.
+
+**Golden rule — separate transport from intelligence.** The deterministic ETL fetches
+through the [`garminconnect`](https://github.com/cyberjunky/python-garminconnect)
+library. The metrics/coach/recommender layers only ever read the finished DB — they
+never call Garmin live. The `mcp__garmin__*` tools are for ad-hoc exploration and test
+fixtures only, never the pipeline.
+
+**House rules** (every phase): the skill chain in
+[DEVELOPMENT.md](DEVELOPMENT.md) (`/grill-with-docs -> /to-spec -> /to-tickets ->
+/implement -> /code-review`), medallion data (raw -> core -> mart), tests at agreed
+seams, Google-style docstrings, Poetry, Python 3.13.
+
+---
+
+## Status at a glance
+
+Click a phase to jump to its section. Phases 0–5 are the built foundation (Part I);
+6+ is the forward plan (Part II).
+
+| Phase | Delivers | Status | Details |
+|---|---|---|---|
+| 0 | Raw capture + idempotent backfill | Done | [section](#phase-0-raw-capture-and-idempotency) · [PRD](prd/phase-0.md) |
+| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | Done | [section](#phase-1-incremental-sync-and-resilience) · [PRD](prd/phase-1.md) |
+| 2 | Metrics mart (`features.py` -> `daily_metrics`) | Done | [section](#phase-2-metrics-mart) · [PRD](prd/phase-2.md) |
+| 3 | Coach skill (digest + charts + `report.md`) | Done | [section](#phase-3-coach-skill) · [PRD](prd/phase-3.md) |
+| 4 | Automation (nightly orchestrator, alerts, launchd/cron) | Done | [section](#phase-4-automation) · [PRD](prd/phase-4.md) |
+| 5 | Weekly rollups, plan-vs-actual, deload detection | Done | [section](#phase-5-closing-the-loop) · [PRD](prd/phase-5.md) |
+| 6 | Personal training zones (`athlete_zones` mart) | Done | [section](#phase-6-personal-training-zones) · [PRD](prd/phase-6.md) |
+| 6b | Athlete snapshot (`athlete_status` mart + `snapshot`) | Planned | [section](#phase-6b-athlete-snapshot) |
+| 7 | Session-RPE load model for strength/Hyrox + niggle log | Planned | [section](#phase-7-strength-and-hyrox-load-model) |
+| 8 | Per-set capture + movement-pattern overlap | Planned | [section](#phase-8-per-set-capture-and-overlap) |
+| 9 | Race-date periodization + race-day pacing | Planned | [section](#phase-9-race-date-periodization) |
+| 10 | Prospective session recommender (re-planning-aware) | Planned | [section](#phase-10-prospective-recommender) |
+| 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
+| read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
+
+Reference sections: [database schema](#brief-4-database-schema-raw-core-mart) ·
+[metric definitions](#brief-6-metric-definitions-featurespy) · [gotchas](#brief-10-gotchas) ·
+[ordering and dependencies](#ordering-and-dependencies) ·
+[industry survey](#what-the-industry-survey-established) ·
+[non-goals](#explicit-non-goals) · [source index](#source-index).
+
+---
+
+# Part I — Foundation (Phases 0–5, built)
+
+> The original executable brief. Read it whole, then build in phases (0 -> 5); each
+> phase had a Definition of Done and you did not advance until it was met. Phases 0–5
+> are complete; the per-phase `STATUS` notes below are the historical record. Ongoing
+> development lives in Part II.
+
+## Brief §0. Goal and golden rule
+
+Build a local system that pulls Garmin Connect data once a day, keeps it in a database
+as the *system-of-record*, computes training metrics (HRV baseline, ACWR, load
+distribution), and lets a coach agent generate a weekly report: *is training going well
+and what is missing*.
+
+**Golden rule — separate transport from intelligence:**
+
+- **Deterministic ETL** (fetch + normalize) goes through the
+  [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library, run on
+  a schedule. **Not** through MCP — Garmin's MCP is flaky (RHR timeouts, >1 MB payloads)
+  and is only fit for ad-hoc agent exploration, not the pipeline.
+- **Metrics + coach layer** reads the finished DB, never hits Garmin live.
+
+This is **one repo** with **two work surfaces**, not two projects:
+
+```
+                       +-----------------------------------------+
+   Garmin Connect ---> |  garmin-coach (one repo)                |
+   (garminconnect)     |                                         |
+                       |  sync.py     -> raw/ + SQLite (system-of-record)
+                       |  features.py -> daily_metrics (mart)    |
+                       |  skills/coach/SKILL.md                   |
+                       +---------------+--------------+-----------+
+                                       |              |
+                        Claude Code <--+              +--> Claude Cowork
+                     (builds/maintains repo,      (points at the same repo/DB,
+                      migrations, backfills)       runs SKILL.md -> report+charts)
+```
+
+Cowork does **not** get its own copy of the logic — it reuses `features.py` and reads
+the same DB. Two repos would duplicate and drift the metric logic.
+
+## Brief §1. Technology decisions
+
+| Area | Choice | Rationale / when to change |
+|---|---|---|
+| Fetching | `garminconnect` + `curl_cffi` | official wrapper, token auto-refresh, MFA |
+| Environment manager | `uv` (or `pdm`) | fast, lockfile; `uv run ...` for tasks |
+| System-of-record | **SQLite** | transactional, in repo/backup, Claude Code reads it natively |
+| Analytical layer | **DuckDB — only when it hurts** | window functions over the same file; do not add up front |
+| Raw data | JSON in `raw/{date}/{endpoint}.json` **and/or** a `raw_payloads` table | reprocessing without re-hitting Garmin |
+| Charts | `matplotlib` | same as the reference analysis |
+| Config/secrets | `.env` (pydantic-settings) + tokens in `~/.garminconnect` | see §8 |
+
+Starting dependencies: `garminconnect`, `curl_cffi`, `pandas`, `numpy`, `matplotlib`,
+`pydantic`, `pydantic-settings`, `python-dotenv`; dev: `pytest`, `pytest-recording`
+(VCR), `ruff`, `mypy`.
+
+> Deviations that actually shipped (see the per-phase status notes): the repo
+> standardized on **Poetry** (not `uv`) and stores raw data in the `raw_payloads` table
+> (not `raw/` files). The current, accurate command reference is the top-level
+> `README.md` and [OPERATIONS.md](OPERATIONS.md).
+
+## Brief §2. Repository layout
+
+```
+garmin-coach/
+├── pyproject.toml
+├── .env.example                 # EMAIL, PASSWORD (optional), DATA_START_DATE, DB_PATH
+├── .gitignore                   # .env, raw/, *.db, ~/.garminconnect NOT committed
+├── README.md
+├── data/
+│   └── garmin.db                # SQLite (gitignored; backed up separately)
+├── raw/                         # raw per-day/endpoint JSON (gitignored)
+├── src/garmin_coach/
+│   ├── __init__.py
+│   ├── config.py                # pydantic-settings: env + paths
+│   ├── client.py                # login, retry/backoff, garminconnect wrapper
+│   ├── db.py                    # connection, migrations, upsert helpers
+│   ├── schema.sql               # DDL (§4)
+│   ├── sync.py                  # incremental ETL (§5)
+│   ├── models.py                # dataclasses/pydantic: Activity, DailyWellness, Sleep, HrvNight
+│   ├── features.py              # metrics -> daily_metrics (§6)
+│   ├── report.py                # charts + textual weekly report
+│   └── cli.py                   # `garmin-coach sync|backfill|features|report`
+├── skills/
+│   └── coach/
+│       └── SKILL.md             # skill for Cowork (§7)
+├── tests/
+│   ├── cassettes/               # VCR
+│   ├── test_sync.py
+│   └── test_features.py
+└── scripts/
+    └── daily.sh                 # cron/launchd entrypoint: sync -> features
+```
+
+> The as-built layout has grown (weekly/zones/thresholds/digest/signals/charts/daily
+> modules, `skills/coach`, richer tests). The current tree is documented in `README.md`.
+
+## Brief §3. The build phases (0–5)
+
+Each phase works standalone. The `STATUS` note under each phase is the historical
+record of what actually shipped.
+
+### Phase 0: raw capture and idempotency
+- `client.py`: login with token persistence, `example.py`-style. Handle the MFA callback.
+- `sync.py`: for a given date range, fetch and **store raw JSON** to `raw/`, then
+  normalize and **upsert** into `activities` / `daily_wellness` / `sleep` / `hrv_nightly`.
+- One-off backfill from `DATA_START_DATE` (this user has real data from **2026-06-08**;
+  earlier is onboarding/empty — record as an explicit "gap", not a NULL fog).
+- **DoD:** `garmin-coach backfill --from 2026-06-08` fills the DB; a re-run creates no
+  duplicates (upsert by key); raw JSON sits in `raw/`.
+
+- **STATUS: DONE (2026-07-04).** Delivered test-first (22 tests, `ruff`+`mypy` clean).
+  DoD confirmed against the live DB: 26 days (2026-06-08 -> 07-03, "today" excluded), 15
+  activities, second run leaves core unchanged (`raw_payloads` grows append-only).
+  **Deviations from the brief** (deliberate — see `prd/phase-0.md`): raw data in the
+  `raw_payloads` table (not `raw/` files), **Poetry** manager (not `uv`), backfill pulls
+  **6 streams** (added `training_readiness` + `training_status_daily`). **Deferred:**
+  `activity_sets`.
+
+### Phase 1: incremental sync and resilience
+- `sync_state` table (per-stream watermark). Sync pulls only `[watermark+1 .. yesterday]`.
+- Retry with exponential backoff; **fall back from range to per-day** for endpoints that
+  time out on the whole range (exactly the problem seen with sleep and RHR in MCP).
+- An endpoint that fails after retries logs a warning and does **not** block the other
+  streams.
+- **DoD:** `garmin-coach sync` run twice in a row is idempotent; one stream failing does
+  not sink the whole run; the watermark advances.
+
+- **STATUS: DONE.** Per-stream watermark in `sync_state`, retry with backoff, per-day
+  fallback, stream isolation. Decisions: `prd/phase-1.md` +
+  `adr/0001-phase-1-incremental-sync.md`; seam tests in `tests/test_sync.py`.
+
+### Phase 2: metrics mart
+- `features.py` computes and materializes into `daily_metrics` (definitions in §6): HRV
+  baseline (rolling median) + SD + a `< baseline − 1·SD` flag; ACWR (acute7/chronic28) +
+  `n_chronic` (how many days are really in the window); load-balance buckets by TE;
+  minutes in HR zones from `hr_z1..z5`.
+- **DoD:** `garmin-coach features` reproduces the reference analysis for 06-09 -> 07-04
+  (baseline ≈ 68 ms, SD ≈ 11 ms, threshold ≈ 57 ms; ACWR on 07-03 ≈ 1.0, Garmin ref 1.1).
+
+- **STATUS: DONE.** `features.py` materializes the `daily_metrics` mart; golden
+  regression in `tests/test_features.py`. Decisions: `prd/phase-2.md` +
+  `adr/0002-phase-2-metrics-semantics.md`.
+
+### Phase 3: coach skill
+- `skills/coach/SKILL.md` (skill convention — your area): encapsulates the **rules** (§7),
+  reads `daily_metrics`, returns a report + charts. The agent does not "think from scratch".
+- **DoD:** in Cowork, "review my last week" produces a textual report + 2 charts (HRV with
+  a ±1 SD band, ACWR over time) and a list of concrete signals.
+
+- **STATUS: DONE.** A deterministic engine (`digest.py`/`signals.py` ->
+  `garmin-coach report`) builds `reports/{date}/digest.json` + 2 charts; the skill writes
+  `report.md` solely from the digest (never from the raw mart, never from Garmin). Signals
+  1–5 from §7; rule 6 (plan vs actual) moved to Phase 5. Decisions: `prd/phase-3.md` +
+  `adr/0003-phase-3-coach-signals.md`; golden regression in `tests/test_digest.py`.
+
+### Phase 4: automation
+- `scripts/daily.sh` (sync -> features) under cron/launchd. Weekly review with Cowork.
+- Alerts (rule thresholds): morning HRV < threshold -> "downgrade the quality session";
+  ACWR > 1.3 -> "consider a deload"; `AEROBIC_LOW_SHORTAGE` -> "add Z2".
+- **DoD:** the nightly run works without interaction; the log is rotated; an error means a
+  non-zero exit + a log entry.
+
+- **STATUS: DONE.** Seam `daily.run_daily(client, conn, ...) -> DailyResult` (sync ->
+  features -> digest, no charts on the nightly path); alerts = warn/alert signals from the
+  digest; exit contract: `ok`/0, `degraded`/1, `failed`/2. `garmin-coach daily` + a thin
+  `scripts/daily.sh` + an example launchd plist; logging via `RotatingFileHandler`.
+  Decisions: `prd/phase-4.md` + `adr/0004-phase-4-automation.md`; tests in
+  `tests/test_daily.py`.
+
+### Phase 5: closing the loop
+- Plan-vs-actual (the user's week template against actual logs), deload detection,
+  VO2max/threshold trends, multi-sport when the ski-touring season returns (`discipline`
+  is already in the schema).
+- **DoD:** the report shows the "plan vs actual" divergence and detects "two hard days in
+  a row".
+
+- **STATUS: DONE.** `weekly.py` -> `weekly_metrics` mart (complete Mon–Sun weeks only);
+  plan-vs-actual (`plan_adherence` vs `plan_template`), Foster `monotony`/`strain`,
+  `max_consec_hard`, a new `DELOAD_ADVISED` signal; the digest gained a `weekly` section
+  and the report a "Week: plan vs actual". Decisions: `prd/phase-5.md` +
+  `adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md`; tests in `tests/test_weekly.py`
+  + `tests/test_signals.py`. VO2max/threshold trends, multi-sport weighting and PDF/Notion
+  export deferred -> Part II.
+
+## Brief §4. Database schema (raw, core, mart)
+
+`schema.sql` — create idempotently (`CREATE TABLE IF NOT EXISTS`). Keys and upserts are
+critical for idempotency.
+
+```sql
+-- RAW (append-only, never overwrite) --------------------------------------
+CREATE TABLE IF NOT EXISTS raw_payloads (
+  fetched_at  TEXT NOT NULL,          -- ISO fetch timestamp
+  endpoint    TEXT NOT NULL,          -- e.g. 'get_sleep_data'
+  ref_date    TEXT NOT NULL,          -- the date it refers to
+  payload     TEXT NOT NULL,          -- raw JSON
+  PRIMARY KEY (endpoint, ref_date, fetched_at)
+);
+
+-- CORE (normalized, upsert) -----------------------------------------------
+CREATE TABLE IF NOT EXISTS activities (
+  activity_id   INTEGER PRIMARY KEY,  -- dedup by activityId
+  start_local   TEXT NOT NULL,
+  gtype         TEXT NOT NULL,        -- running | hiit | strength_training | ...
+  discipline    TEXT,                 -- Bieganie | Hyrox/HIIT | Siła | Skitury | Trail
+  dur_s         REAL,
+  distance_m    REAL,
+  aero_te       REAL,
+  anaero_te     REAL,
+  training_load REAL,                 -- activityTrainingLoad
+  te_label      TEXT,                 -- AEROBIC_BASE | TEMPO | LACTATE_THRESHOLD | VO2MAX
+  avg_hr        INTEGER,
+  max_hr        INTEGER,
+  hr_z1_s REAL, hr_z2_s REAL, hr_z3_s REAL, hr_z4_s REAL, hr_z5_s REAL,
+  name          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS daily_wellness (
+  date          TEXT PRIMARY KEY,
+  rhr           INTEGER,
+  acute_load    REAL,                 -- Garmin acuteLoad (latest ts/day)
+  chronic_load  REAL,                 -- from training_status, if available
+  garmin_acwr   REAL,                 -- Garmin's reference ACWR
+  bb_min INTEGER, bb_max INTEGER,     -- body battery
+  steps         INTEGER,
+  training_status TEXT,               -- PRODUCTIVE | MAINTAINING | ...
+  has_data      INTEGER DEFAULT 1     -- 0 = explicit gap (onboarding/not worn)
+);
+
+CREATE TABLE IF NOT EXISTS sleep (
+  date        TEXT PRIMARY KEY,
+  total_s     INTEGER, deep_s INTEGER, rem_s INTEGER, light_s INTEGER, awake_s INTEGER,
+  score       INTEGER,
+  resting_hr  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS hrv_nightly (
+  date        TEXT PRIMARY KEY,
+  avg_hrv     INTEGER,                -- lastNightAvg
+  weekly_avg  INTEGER,
+  status      TEXT                    -- BALANCED | LOW | NONE(onboarding) ...
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+  stream          TEXT PRIMARY KEY,   -- 'activities' | 'sleep' | 'hrv' | 'wellness'
+  last_synced_date TEXT NOT NULL
+);
+
+-- MART (computed; overwritable on each `features`) ------------------------
+CREATE TABLE IF NOT EXISTS daily_metrics (
+  date            TEXT PRIMARY KEY,
+  hrv             INTEGER,
+  hrv_baseline    REAL,               -- rolling median
+  hrv_sd          REAL,
+  hrv_low_flag    INTEGER,            -- 1 if hrv < baseline - 1*SD
+  load_day        REAL,               -- sum of the day's activity training_load
+  acwr            REAL,               -- acute7/chronic28 (own)
+  n_chronic       INTEGER,            -- days really in the chronic window (reliability!)
+  load_low        REAL,               -- load-balance buckets
+  load_high       REAL,
+  load_anaerobic  REAL,
+  z1_min REAL, z2_min REAL, z3_min REAL, z4_min REAL, z5_min REAL,
+  sleep_score     INTEGER,
+  rhr             INTEGER
+);
+```
+
+Upsert in SQLite: `INSERT ... ON CONFLICT(<pk>) DO UPDATE SET ...`. Store days with no
+data as `has_data=0`, do not skip them — otherwise gaps are indistinguishable from
+"not fetched yet".
+
+> This is the original DDL. The authoritative, current schema is the packaged
+> `src/garmin_coach/schema.sql` (mirrored to `docs/schema.sql`, guarded by a test).
+
+## Brief §5. ETL implementation rules (`sync.py`)
+
+- **Incremental:** read `sync_state`, pull `[last_synced_date+1 .. yesterday]`. Skip
+  "today" — data is incomplete (HRV/sleep land after the night).
+- **Idempotent:** upsert activities by `activity_id`; days by `date`. Two runs = the same
+  state.
+- **Retry/backoff:** wrap each API call in retry (e.g. 3 attempts, backoff 2^n s). On an
+  exception after the last attempt: log WARN, write `has_data=0`/skip the day, **continue**
+  the other streams.
+- **Per-day fallback:** endpoints with range methods (sleep, HRV) can time out on a wide
+  window — if the range fails, drop to a per-day loop. (A real problem on this account:
+  sleep >1 MB over a range, RHR timed out.)
+- **Raw first:** write raw JSON to `raw_payloads`/`raw/` first, then normalize. When
+  normalization changes, reprocess from raw without touching Garmin.
+- **Onboarding/NULL:** all-`null` records (like May–early June) -> `has_data=0`.
+- **Discipline:** map `gtype`: `running`->`Bieganie` (unless name/elevation suggest trail
+  -> `Trail`), `hiit`->`Hyrox/HIIT`, `strength_training`->`Siła`,
+  `ski_touring`/`backcountry`->`Skitury`. Keep the mapping in one place (`models.py`),
+  easy to extend.
+
+## Brief §6. Metric definitions (`features.py`)
+
+> These definitions reproduce the analysis done by hand in the reference thread. Stick to
+> them so results stay comparable.
+
+**HRV baseline / flag**
+- `hrv_baseline` = rolling median of `avg_hrv` (configurable window; default the whole
+  available window, or 60 nights once history accrues). `hrv_sd` = std dev (ddof=1) over
+  the same window.
+- `hrv_low_flag = 1` when `avg_hrv < hrv_baseline − 1·hrv_sd`.
+- Ref: 06-09 -> 07-04 -> baseline ≈ 68 ms, SD ≈ 11 ms, threshold ≈ 57 ms; flagged 06-11,
+  06-18, 06-19, 06-27, 07-04.
+
+**ACWR (own)**
+- `load_day` = sum of the day's activity `training_load` (0 if none).
+- `acute7` = daily mean of `load_day` over 7 days; `chronic28` = daily mean over 28 days.
+- `acwr = acute7 / chronic28`. Risk flag > 1.5, detraining < 0.8, OK band 0.8–1.3.
+- **`n_chronic`** = the number of days really in the chronic window. **Critical:** while
+  `n_chronic < 28`, ACWR is inflated/indicative — the report MUST mark this (a warning on
+  the chart and in the text). When available, add `garmin_acwr` from `daily_wellness` as a
+  reference point.
+
+**Load-balance buckets (Garmin's logic — by TE, not by HR zones)**
+- `load_anaerobic` += `training_load` when `anaero_te ≥ 1.0`.
+- otherwise: `load_low` when `aero_te < 2.5`, else `load_high`.
+- Take monthly targets from `get_training_status` (`monthlyLoad*Target*`) and compare —
+  that is the source of the `AEROBIC_LOW_SHORTAGE` message.
+
+**HR zones (separate from the buckets!)**
+- `z1..z5_min` = sum of `hr_z1..z5_s`/60 for the day's activities. These are minutes in
+  heart-rate zones — a different "language" than the load-balance buckets. The report
+  shows both side by side, because they answer different questions (time distribution vs
+  stimulus distribution).
+
+## Brief §7. Coach skill (`skills/coach/SKILL.md`)
+
+**Input:** `daily_metrics` (+ `activities`, `daily_wellness`) for a given range (default
+the last 7/28 days). **Output:** a concise textual report + 2 charts (HRV with a ±1 SD
+band, ACWR over time), written to `reports/{date}/`.
+
+Rules to encode (thresholds configurable, defaults from this user):
+
+1. **Intensity distribution** — if `load_low` is below target and `load_high` above ->
+   signal "too much grey zone, add Z2" (`AEROBIC_LOW_SHORTAGE`).
+2. **ACWR** — flag outside 0.8–1.3; but when `n_chronic < 28`, add "indicative value".
+3. **HRV** — nights with `hrv_low_flag=1`; if the morning is < threshold -> recommend
+   "downgrade today's quality session to easy".
+4. **Two hard days in a row** — detect consecutive days with high `load_day`/`anaero_te`
+   without a buffer (for this user the risk is a Friday->Saturday stack).
+5. **Sleep** — correlate `hrv` with `sleep_score` (in the reference data r ≈ 0.57); the
+   worst HRV is sometimes sleep-driven, not training — do not confuse causes.
+6. **Plan vs actual** (Phase 5) — the user's week template: Mon rest · Tue FBB+Hyrox ·
+   Wed easy/long run · Thu rest · Fri Crossfit+Hyrox · Sat Hyrox/tempo · Sun sometimes
+   easy/long. Show the divergence.
+
+Report tone: concrete, numbers, no fluff; a disclaimer that this is a reading of data,
+not medical/coaching advice.
+
+## Brief §8. Secrets, auth, privacy
+
+- **Auth:** `garminconnect` uses mobile SSO. The first login writes tokens to
+  `~/.garminconnect/garmin_tokens.json` (mode 0600), then auto-refreshes — a full re-login
+  only when the refresh token expires/is revoked. MFA: pass a `prompt_mfa` callback.
+- **Password:** best **not** to keep it in `.env` — rely on the stored tokens after the
+  first login. If you must, use `.env` (gitignored), never in the repo.
+- **.gitignore:** `.env`, `raw/`, `*.db`, `reports/`, any tokens. Only code, `schema.sql`,
+  `SKILL.md`, `.env.example` go into the repo.
+- **Health data is sensitive** — keep the DB and backups local/private.
+
+## Brief §9. Tests
+
+- `pytest` + VCR (`pytest-recording`): record Garmin response cassettes once, then tests
+  replay from `tests/cassettes/` without the network. **Anonymize** cassettes (strip
+  tokens, email, `userProfilePK`).
+- `test_features.py`: on the 06-09 -> 07-04 fixture assert baseline≈68, SD≈11,
+  threshold≈57, ACWR(07-03)≈1.0, correct HRV flags and load buckets. This is the golden
+  regression sample.
+- `test_sync.py`: upsert idempotency; per-day fallback after a simulated range timeout;
+  `has_data=0` for an all-null payload.
+
+## Brief §10. Gotchas
+
+- **Method names:** the library has 130+ methods. **Do not guess** — read the real
+  signatures from `demo.py` and the package sources (`python -c "import garminconnect,
+  inspect; print([m for m in dir(garminconnect.Garmin) if not m.startswith('_')])"`). Map
+  the ones you need: stats/summary, heart rates/RHR, sleep, HRV, training status, training
+  readiness, activities-by-date, body battery.
+- **RHR is flaky** — keep a per-day fallback; RHR is also in the sleep payload
+  (`restingHeartRate`), so you can pull it from there instead of a separate call.
+- **Sleep/HRV ranges** can exceed limits — see the per-day fallback.
+- **Onboarding:** this account has real data from **2026-06-08**; do not interpret earlier
+  zeros/nulls as "zero activity".
+- **ACWR without a full chronic (28 days)** is unreliable — always report `n_chronic`.
+- **Versions:** `garminconnect` v0.3.4 (May 2026) at the time of writing; if the API/methods
+  changed, trust `demo.py` from the installed version, not this document.
+
+## Brief §11. First run (command order)
+
+```bash
+# environment
+uv venv && source .venv/bin/activate
+uv pip install --upgrade garminconnect curl_cffi pandas numpy matplotlib \
+    pydantic pydantic-settings python-dotenv
+uv pip install --group dev pytest pytest-recording ruff mypy   # or in pyproject
+
+# first login (writes tokens to ~/.garminconnect) — handle MFA if enabled
+python -c "from garmin_coach.client import login; login()"
+
+# backfill + metrics + report
+garmin-coach backfill --from 2026-06-08
+garmin-coach features
+garmin-coach report --last 28
+
+# then: the nightly run
+scripts/daily.sh   # sync -> features ; hook into cron/launchd
+```
+
+> The as-built commands use Poetry — see `README.md` and [OPERATIONS.md](OPERATIONS.md)
+> for the current, accurate invocations.
+
+## Brief §12. Backlog (now folded into Part II)
+
+The original post-Phase-5 backlog, superseded by the forward plan below:
+
+- DuckDB as an analytical layer over `garmin.db` when window SQL gets heavy.
+- Long-term trends: VO2max, lactate threshold, race predictions (in the API).
+- Multi-sport and the ski-touring season (`discipline=Skitury`) — schema already ready.
+- Report export to PDF/Notion (the user already lives in Notion).
+- Versioning `daily_metrics` when metric definitions change (a `features_version` column).
+
+---
+
+# Part II — Roadmap (Phases 6+)
+
+Forward plan for everything after Phase 5. It merges two inputs:
 
 1. **Live-session evidence** — in a real coaching session the deterministic engine kept
    coming up short and advice had to be improvised; each phase cites the concrete gap
@@ -15,23 +496,18 @@ forward plan. It merges two inputs:
    formalized below (periodization, re-planning, zone staleness, niggles, run/strength
    push split).
 
-House rules hold for every phase: **grill → PRD (`docs/prd/phase-N.md`) → TDD
-(red→green)**, medallion data (raw → core → mart), tests at agreed seams, Google-style
-docstrings, Poetry, Python 3.13. The **golden rule** holds throughout — the
-metrics/coach/recommender layers read the finished DB only and never call Garmin live.
-The one new *outbound* transport path (Phase 11) is deliberately isolated and
-out-of-seam, like `client.py`.
-
----
+The **golden rule** holds throughout — the metrics/coach/recommender layers read the
+finished DB only and never call Garmin live. The one new *outbound* transport path
+(Phase 11) is deliberately isolated and out-of-seam, like `client.py`.
 
 ## What the industry survey established
 
-- **Every serious product is built around a race date.** Periodized plan → adaptation →
+- **Every serious product is built around a race date.** Periodized plan -> adaptation ->
   taper toward an event is baseline everywhere (TrainerRoad Plan Builder's
   Base/Build/Specialty with automatic tapers around A/B/C events; Stryd, Athletica,
   Runna, Garmin Coach, TrainAsONE). It was the roadmap's single biggest hole — now
   **Phase 9**.
-- **The universal adaptation loop is: session done → subjective feedback → plan
+- **The universal adaptation loop is: session done -> subjective feedback -> plan
   adjusts.** TrainerRoad's post-workout survey feeds its Progression Levels; JOIN asks
   RPE + a soreness/readiness question; Athletica and Humango rate every session. Phase
   7's sRPE plan is validated — but industry uses RPE as an **adaptation trigger**, not
@@ -46,12 +522,12 @@ out-of-seam, like `client.py`.
 - **Environment adjustment is common**: TrainAsONE adjusts paces for forecast
   temperature/terrain and discounts heat-inflated HR from its fitness model; Garmin
   natively computes heat (>22 °C) / altitude (>800 m) acclimation the ETL could ingest.
-  Matters *now*: Phase 6's pace↔HR regression would silently absorb summer HR drift.
+  Matters *now*: Phase 6's pace<->HR regression would silently absorb summer HR drift.
 - **Injury/niggle dial-back modes are standard lightweight features** (Runna "Not
   Feeling 100%" = 3–14-day reduced plan; JOIN/enduco soreness prompts). Phase 7 gains a
   niggle log; Phase 10 maps it to an avoid-list.
 - **Phase 10 (recommender) is the most industry-validated design** — readiness +
-  load-share deficits → today's suggested session is essentially Garmin Daily Suggested
+  load-share deficits -> today's suggested session is essentially Garmin Daily Suggested
   Workouts + Xert XATA. But both anchor to a training phase/goal, which is exactly why
   periodization (Phase 9) must land first.
 - **Phase 11 run-push is feasible today**: garminconnect 0.3.6 (this repo's own
@@ -85,7 +561,7 @@ INT = Intervals.icu, XRT = Xert, STR = Stryd.
 | Threshold auto-detection (cadence) | ● 28d | ● | ● CP | ◐ | ● | ◐ | — | ● | ◐ | ◐ | — | ● eFTP | ● event | ● cont. |
 | Strength / hybrid programming | — | — | ● Hyrox | ◐ | — | ● | — | ● | — | — | — | — | — | — |
 | Per-set strength tracking | — | — | ◐ log | — | — | ◐ | — | ● | — | — | — | — | — | — |
-| Structured workout push → Garmin device | ◐ | ● | ● | ● | ● | ● run-only | — | n/a | — | ● | — | ◐ | ● | ● |
+| Structured workout push -> Garmin device | ◐ | ● | ● | ● | ● | ● run-only | — | n/a | — | ● | — | ◐ | ● | ● |
 | Environment adjustment (heat/altitude/terrain) | — | ● | — | ◐ | — | ◐ wx | ◐ wx | ● | — | — | — | — | — | ◐ |
 | Injury/illness/niggle mode | ◐ RLGL | ◐ | ◐ | ● | ◐ | ● | — | — | ● soreness | ● | ◐ | ◐ custom | — | — |
 | Sleep-debt guidance | — | — | ◐ | ◐ | — | — | ● | ● | — | ◐ | ◐ | ◐ | — | — |
@@ -107,9 +583,7 @@ INT = Intervals.icu, XRT = Xert, STR = Stryd.
 | 11 — authoring & push | Runna/Athletica/Stryd/TrainAsONE push structured workouts; Garmin Training API exists for this | Run-push verified in garminconnect 0.3.6; strength-push must be spiked first |
 | read-MCP | Intervals.icu open REST API over the athlete's own data | Validated pattern: deterministic engine + thin read surface |
 
----
-
-## Ordering & dependencies
+## Ordering and dependencies
 
 ```
 6 zones ──┬──► 6b snapshot ──► 9 periodization ──► 10 recommender ──► 11 push-to-Garmin
@@ -130,9 +604,11 @@ re-planning-aware advice. **11** turns advice into a real workout on the watch. 
 **read-MCP** is tooling, not a training phase — build it last, once the marts it
 exposes have stabilized.
 
----
+## Phase 6: personal training zones
 
-## Phase 6 — Personal training zones (`athlete_zones` mart)
+> **`athlete_zones` mart.** Status: **DONE** — see [PRD](prd/phase-6.md) and
+> [ADR 0007](adr/0007-phase-6-personal-zones.md). The design record below is kept for
+> context.
 
 **Goal.** Derive the athlete's HR and pace zones from recorded data so intensity advice
 is deterministic instead of computed by hand each time — and keep them *fresh*.
@@ -146,7 +622,7 @@ annotated *"approx Z2 ceiling; refine from user_settings zones"*.
 **Data.** New mart `athlete_zones`: per-zone HR bounds + `z2_pace_ceiling_s_per_km`,
 `threshold_pace_s_per_km`, `lthr_bpm`, plus `computed_at`, `source`, `stale`. Method
 precedence: (1) Garmin `user_settings` HR zones if present, else (2) data-derived —
-LTHR estimate + a pace↔HR regression over aerobic runs. Recomputed mart, never mixed
+LTHR estimate + a pace<->HR regression over aerobic runs. Recomputed mart, never mixed
 into core.
 
 **Re-detection cadence (survey).** Recompute on a fixed cadence (~28 days —
@@ -154,7 +630,7 @@ TrainerRoad's published rationale: meaningful threshold change needs weeks) **an
 event-driven after a race/PR effort (Xert's "breakthrough" pattern). Digest warns when
 zones are `stale`.
 
-**Environment guards (survey).** Exclude hot-weather runs from the pace↔HR fit, or
+**Environment guards (survey).** Exclude hot-weather runs from the pace<->HR fit, or
 regress temperature out — per-activity temperature is already in activity weather
 payloads; TrainAsONE's rationale: heat-elevated HR is thermoregulatory drift, not
 fitness loss. Optionally ingest Garmin heat/altitude acclimation into `daily_wellness`.
@@ -166,7 +642,7 @@ fitness loss. Optionally ingest Garmin heat/altitude acclimation into `daily_wel
 the *personal* ceiling. Digest headline exposes the Z2 pace ceiling so the coach can
 say "keep easy runs under X:XX" without recomputing.
 
-**Seam & tests.** Pure `zones.compute(activities, user_settings) → zone rows`; golden
+**Seam & tests.** Pure `zones.compute(activities, user_settings) -> zone rows`; golden
 test on onboarding + post-onboarding fixtures (shape drift applies here too).
 
 **DoD.** `features` recompute uses personal zones; digest carries `zones` (+ staleness);
@@ -175,9 +651,9 @@ golden green.
 **Risk.** Device zones may be stale/auto-set — document the precedence and flag
 disagreement.
 
----
+## Phase 6b: athlete snapshot
 
-## Phase 6b — Athlete snapshot (`athlete_status` mart + `snapshot` command)
+> **`athlete_status` mart + `snapshot` command.**
 
 **Goal.** One place that answers "where do I stand right now" — current fitness
 markers, zones, load/recovery state, and the active plan — as a compact, deterministic
@@ -200,7 +676,7 @@ finished marts + core only.
 **Command.** `garmin-coach snapshot` (prints/writes `reports/{date}/snapshot.json`);
 optionally a short "Twoje aktualne staty" header in the coach report.
 
-**Seam & tests.** Pure `snapshot.build(conn) → status dict`; golden test over fixtures.
+**Seam & tests.** Pure `snapshot.build(conn) -> status dict`; golden test over fixtures.
 
 **DoD.** `snapshot` emits current markers + zones + ACWR/load + active plan in one
 object; green. Recommender (Phase 10) consumes it directly.
@@ -211,9 +687,9 @@ degrade to device values / None).
 **Risk.** Keep it a *read* — a snapshot, never a recompute; all numbers come from the
 marts.
 
----
+## Phase 7: strength and Hyrox load model
 
-## Phase 7 — Load model for strength & Hyrox (session-RPE) + niggle log
+> **Session-RPE load model + niggle log.**
 
 **Goal.** Stop under-counting non-cardio work so ACWR, monotony, and deload reflect
 real stress; capture the subjective signals (RPE, soreness, niggles) the industry
@@ -236,7 +712,7 @@ a default RPE per discipline so the pipeline stays deterministic when no RPE is 
 written by the same thin CLI writer. This is the local equivalent of Runna's
 "Not Feeling 100%" (3–14-day dial-back) and JOIN/enduco soreness prompts: severity ≥
 threshold surfaces a *reduced-mode* state in the digest; Phase 10 maps active niggles
-to an avoid-list (synergy with Phase 8's exercise→pattern map).
+to an avoid-list (synergy with Phase 8's exercise->pattern map).
 
 **Thresholds.** Reuse `hard_te_load = 150`; add `rpe_hard`, strength weighting,
 `niggle_reduced_mode_severity`. Feeds `monotony`/`strain`, `TWO_HARD_DAYS`,
@@ -247,7 +723,7 @@ to an avoid-list (synergy with Phase 8's exercise→pattern map).
 to core).
 
 **Seam & tests.** Pure `load.blend(...)`; golden regression proving a strength day now
-contributes load and shifts weekly totals; niggle → reduced-mode state test.
+contributes load and shifts weekly totals; niggle -> reduced-mode state test.
 
 **DoD.** A logged strength session raises daily/weekly load and ACWR; an active niggle
 surfaces in the digest; golden green.
@@ -255,9 +731,9 @@ surfaces in the digest; golden green.
 **Risk.** Subjective input — keep defaults so nightly automation never blocks on
 missing RPE.
 
----
+## Phase 8: per-set capture and overlap
 
-## Phase 8 — Per-set capture + modality/muscle overlap (finishes D9)
+> **Per-set capture + modality/muscle overlap (finishes D9).**
 
 **Goal.** Capture per-set exercise data and model cross-session overlap (grip,
 posterior chain, movement pattern).
@@ -270,8 +746,8 @@ HYROX strength library organizes by **push / pull / hinge / squat / carry**, a s
 starting taxonomy, and Garmin Strength Coach organizes push/pull days with deload
 weeks.
 
-**Data.** ETL pull `get_activity_exercise_sets` → normalize into `activity_sets` (pure
-normalizer, scalars only). New lookup mart mapping exercise → movement pattern / muscle
+**Data.** ETL pull `get_activity_exercise_sets` -> normalize into `activity_sets` (pure
+normalizer, scalars only). New lookup mart mapping exercise -> movement pattern / muscle
 group (start from push/pull/hinge/squat/carry + grip). Daily/weekly `pattern_overlap`
 metric: same pattern loaded on adjacent sessions.
 
@@ -286,21 +762,21 @@ golden test. ETL write stays in the pull pipeline; mart reads only.
 **DoD.** `activity_sets` populated on backfill; overlap metric in mart; signal fires on
 a constructed stack; green.
 
-**Risk.** Exercise-name drift across sessions — maintain the exercise→pattern map by
+**Risk.** Exercise-name drift across sessions — maintain the exercise->pattern map by
 hand.
 
----
+## Phase 9: race-date periodization
 
-## Phase 9 — Race-date periodization + race-day pacing (NEW, promoted by the survey)
+> **Race-date periodization + race-day pacing (new, promoted by the survey).**
 
 **Goal.** Give the system a goal: an event date, training blocks counted back from it,
 taper awareness, and a deterministic race-day pacing plan. Without this, Phase 10
 recommends sessions with no notion of "3 weeks out vs 20 weeks out".
 
 **Why (survey).** The single most universal industry capability: TrainerRoad Plan
-Builder (Base → Build → Specialty with automatic tapers and openers around A/B/C
+Builder (Base -> Build -> Specialty with automatic tapers and openers around A/B/C
 events), Stryd (plans timed to finish on race day), Athletica (race date + weekly hours
-→ adaptive HYROX plan), Runna, Garmin Coach, TrainAsONE. The repo's `plan_template` is
+-> adaptive HYROX plan), Runna, Garmin Coach, TrainAsONE. The repo's `plan_template` is
 a static weekly pattern with no concept of race date, block, or taper.
 
 **Data.** New core table `goal_event(date, type 'hyrox'|'run_race', priority A/B/C,
@@ -312,14 +788,14 @@ cadence reuses Phase 5's `DELOAD_ADVISED` thresholds). Weekly rollup gains
 **Signals.** `TAPER_ACTIVE` (suppresses intensity recommendations), `RACE_PROXIMITY`
 facts in the digest.
 
-**Race-day pacing (survey).** Deterministic `race_plan(event, athlete_status) →
+**Race-day pacing (survey).** Deterministic `race_plan(event, athlete_status) ->
 per-segment targets`: for Hyrox, 8×1 km run paces + station effort caps from current
 threshold pace/HR (Garmin PacePro / ROXFIT "PaceMe" analogue); output into
 `reports/{race_date}/`. Include a one-paragraph fueling note here — that covers ~90% of
 nutrition's value without building any nutrition feature. Optionally authored as a
 Phase-11 multisport workout later.
 
-**Seam & tests.** Pure `periodize(event, today, history) → block + week intent`; golden
+**Seam & tests.** Pure `periodize(event, today, history) -> block + week intent`; golden
 tests over fixed dates (deep in base, peak week, taper week, race week, no event).
 `race_plan` golden test from a fixture snapshot.
 
@@ -331,9 +807,9 @@ taper; `race_plan` renders per-segment targets; green.
 **Risk.** Don't over-model: blocks are labels + week intents, not a generated day-by-day
 plan — the weekly template stays the athlete's, the engine annotates it.
 
----
+## Phase 10: prospective recommender
 
-## Phase 10 — Prospective session recommender (re-planning-aware)
+> **Prospective session recommender (re-planning-aware).**
 
 **Goal.** Flip the engine from retrospective reading to forward advice: given readiness
 + plan + block + deficits, recommend today's/tomorrow's intensity and what to avoid —
@@ -342,11 +818,11 @@ and when the week falls apart, propose how to re-plan instead of pretending it d
 **Why (evidence).** Today's verdict — "two quality sessions OK because HRV 88 vs
 baseline 68, but ACWR 1.21 is top of range and 0% Z2, so run Z2 tomorrow" — was
 assembled by hand from the digest, `plan_template`, and zones. Survey: this shape is
-almost exactly Garmin Daily Suggested Workouts (readiness + load-share deficits →
+almost exactly Garmin Daily Suggested Workouts (readiness + load-share deficits ->
 today's workout) and Xert XATA (surplus/deficit + freshness + phase) — both anchored to
 a phase/goal, hence the Phase 9 dependency.
 
-**Data.** Pure `recommend(digest, plan_block, zones) → {intended_type, intensity_cap,
+**Data.** Pure `recommend(digest, plan_block, zones) -> {intended_type, intensity_cap,
 pace_target, rationale, avoid[]}`. No Garmin. New `recommendation` block in
 `digest.json` and a "Rekomendacja na dziś" section in the coach report.
 
@@ -358,9 +834,9 @@ event date* (drop lowest-priority sessions first), or *continue* — instead of 
 recommending the next template day.
 
 **Adaptation triggers (survey).** Consume Phase 7 subjective inputs: yesterday
-hard-RPE + low readiness ⇒ cap today's intensity (the TrainerRoad survey loop as one
-rule); active niggle ⇒ avoid-list gains the mapped movement patterns (Phase 8 map);
-`TAPER_ACTIVE` ⇒ suppress intensity suggestions.
+hard-RPE + low readiness => cap today's intensity (the TrainerRoad survey loop as one
+rule); active niggle => avoid-list gains the mapped movement patterns (Phase 8 map);
+`TAPER_ACTIVE` => suppress intensity suggestions.
 
 **Thresholds.** None new beyond `replan_missed_sessions` — composition rules over
 existing ACWR / HRV / aerobic-target / deload / taper thresholds. Every recommendation
@@ -369,7 +845,7 @@ unpublished black-box models; keep the advantage).
 
 **Command.** Fold into `garmin-coach report`, or a dedicated `garmin-coach recommend`.
 
-**Seam & tests.** Deterministic state→recommendation mapping; golden test over
+**Seam & tests.** Deterministic state->recommendation mapping; golden test over
 representative digest states (green day, hot ACWR, HRV low, aerobic deficit, deload
 advised, taper week, missed-week re-plan, active niggle).
 
@@ -380,9 +856,9 @@ cited options; golden green.
 
 **Risk.** Stays a "reading + suggestion", never a prescription — keep the disclaimer.
 
----
+## Phase 11: workout authoring and push
 
-## Phase 11 — Structured workout authoring & push to Garmin (run first, strength spiked)
+> **Structured workout authoring & push to Garmin (run first, strength spiked).**
 
 **Goal.** Turn a recommendation into a concrete Garmin workout — tempo run with pace
 targets, or a strength session with named exercises/sets — and schedule it to the
@@ -395,7 +871,7 @@ structured workouts).
 **Architecture (important).** This is a NEW **outbound** transport path and it *bends
 the golden rule*, so isolate it exactly like `client.py`:
 
-- `author.py` — **pure**: `recommendation → workout spec (JSON)` written to
+- `author.py` — **pure**: `recommendation -> workout spec (JSON)` written to
   `reports/{date}/`. Deterministic, unit-tested, no network.
 - `publish.py` — **transport, out-of-seam**: reads the spec and calls garminconnect
   workout-create / schedule endpoints. The coach/recommender read path still never
@@ -417,7 +893,7 @@ the golden rule*, so isolate it exactly like `client.py`:
    to Runna's model — strength stays local (spec + report, watch-free execution) —
    without blocking the run-workout deliverable.
 
-**Seam & tests.** `author` unit-tested (spec ↔ Garmin workout JSON); `push` validated
+**Seam & tests.** `author` unit-tested (spec <-> Garmin workout JSON); `push` validated
 by a live run, idempotent by workout name+date (re-push must not duplicate — this
 matches how Runna re-syncs its scheduled fortnight).
 
@@ -430,9 +906,9 @@ tests green. Strength spike outcome documented (endpoint works / fallback chosen
 **Risk.** Writing is near-irreversible (creates account-side workouts). Dry-run by
 default, explicit confirm, never auto-schedule from the nightly path.
 
----
+## Read-MCP: conversational read layer
 
-## Read-MCP — conversational read layer over the local marts (tooling, build last)
+> **Conversational read layer over the local marts (tooling, build last).**
 
 **Goal.** A thin, read-only MCP server exposing the finished marts, digest, and
 snapshot so a chat session can pull "current stats", the latest digest, or recent
@@ -462,9 +938,9 @@ readers as `report`/`snapshot`; no new computation. Ship after the marts (6, 6b,
 **Risk.** Read-only by construction — no write tools, no Garmin transport in this
 server. Keep it a window onto the deterministic engine, nothing more.
 
----
+## Explicit non-goals
 
-## Explicit non-goals (informed by the survey)
+Informed by the survey:
 
 - **No LLM chat layer inside the engine** (WHOOP Coach / Garmin "Active Intelligence"
   territory) — the coach skill + read-MCP already provide the conversational surface
@@ -481,14 +957,16 @@ server. Keep it a window onto the deterministic engine, nothing more.
 
 - Multi-sport `discipline` weighting in weekly rollups (deferred from Phase 5); ski
   touring season will force it.
-- VO2max / threshold **trend charts** and PDF/Notion export (deferred in BUILD §12).
+- VO2max / threshold **trend charts** and PDF/Notion export (deferred in Part I §12).
 - DFA-alpha-1 style in-exercise HRV readiness (AI Endurance) — needs beat-to-beat data
   the current ETL doesn't pull; revisit only if a real need shows up.
 - Weather-forecast-aware pace adjustment for *upcoming* runs (TrainAsONE) — needs a
   forecast source, i.e. a new inbound transport; keep out until Phase 6's
   historical-temperature guard proves insufficient.
 
-## Source index (primary unless noted)
+## Source index
+
+Primary unless noted.
 
 - TrainerRoad: [Adaptive Training Help Guide](https://support.trainerroad.com/hc/en-us/articles/4409099184283-Adaptive-Training-Help-Guide) · [AT recommendations](https://support.trainerroad.com/hc/en-us/articles/4404968208923-How-Does-Adaptive-Training-Recommend-Workouts) · [AI FTP](https://support.trainerroad.com/hc/en-us/articles/4415864080155-How-to-Use-AI-FTP-Detection) · [AI FTP 28-day rationale](https://support.trainerroad.com/hc/en-us/articles/8697549554587-Why-is-AI-FTP-Detection-Only-Available-Every-28-Days) · [Plan Builder](https://support.trainerroad.com/hc/en-us/articles/360037923191-Plan-Builder-Overview) · [TrainNow](https://support.trainerroad.com/hc/en-us/articles/360057075531-TrainNow-Overview) · [RLGL blog](https://www.trainerroad.com/blog/new-sport-types-supported-by-trainerroad-and-red-light-green-light/)
 - TrainAsONE: [how it works](https://trainasone.com/how-it-works) · [adaptive plan](https://www.trainasone.com/features/adaptive-training-plan) · [weather FAQ](https://trainasone.com/faqs/2026/how-does-trainasone-handle-temperature-and-weather) · [race elevation FAQ](https://trainasone.com/faqs/2024/does-trainasone-consider-the-elevation-of-my-target-race)

@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 5: weekly rollups, plan-vs-actual, deload detection
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-06
-> Sources: `docs/garmin-coach-BUILD.md` Phase 5 + section 7.6, `docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md`, `docs/adr/0003-phase-3-coach-signals.md`, `CONTEXT.md` glossary, grilling decisions.
+> Sources: `docs/PROJECT.md` Phase 5 + section 7.6, `docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md`, `docs/adr/0003-phase-3-coach-signals.md`, `CONTEXT.md` glossary, grilling decisions.
 
 ## Problem Statement
 

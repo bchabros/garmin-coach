@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 1: incremental sync + resilience
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-04
-> Sources: `docs/garmin-coach-BUILD.md` Phase 1, `docs/prd/phase-0.md`, grilling decisions.
+> Sources: `docs/PROJECT.md` Phase 1, `docs/prd/phase-0.md`, grilling decisions.
 
 ## Problem Statement
 

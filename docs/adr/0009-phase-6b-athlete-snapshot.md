@@ -52,6 +52,15 @@ new Garmin data. See `docs/prd/phase-6b/PRD.md`.
   fabricated from one point). Magnitude is kept as a number; the coach skill turns the
   sign into words. Same "compute but expose credibility" stance as `n_chronic`.
 
+- **Implementation finding (HRV trend source).** VO2max and body weight are genuine
+  time series (`fitness_markers.vo2max_running`, `weight_log.weight_g`), so their deltas
+  ride on their own values. Our own `daily_metrics.hrv_baseline` cannot: the nightly
+  `daily` run recomputes the whole mart with no `from_date`, so the stored baseline is a
+  single current value stamped onto every row - constant across history, always delta 0.
+  The HRV **value** in the snapshot stays our `hrv_baseline` / `hrv_sd`, but the HRV
+  **delta** rides on `hrv_nightly.weekly_avg` (Garmin's smoothed weekly HRV) - a real,
+  read-only trending series. No recompute.
+
 - **Load / ACWR reuse existing logic.** `load_7d` and the low/high/anaero shares reuse
   `signals.load_shares` (and the digest headline's ACWR/`n_chronic`/reliability read)
   rather than re-implementing share math, keeping one source of truth.

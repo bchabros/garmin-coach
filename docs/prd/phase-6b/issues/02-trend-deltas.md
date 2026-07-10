@@ -1,6 +1,6 @@
 # 02 - Trend deltas: value + signed delta + span for VO2max, weight, HRV
 
-Status: ready-for-agent
+Status: done
 Parent: `docs/prd/phase-6b/PRD.md`
 
 ## What to build

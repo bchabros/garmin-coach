@@ -48,8 +48,11 @@ def _seed_full_standing(conn):
                     {"date": "2026-06-20", "vo2max_running": 51.0})
     db.upsert_daily(conn, "fitness_markers",
                     {"date": "2026-07-07", "vo2max_running": 52.0})
-    db.upsert_daily(conn, "weight_log", {"date": "2026-07-01", "weight_g": 74500})
+    db.upsert_daily(conn, "weight_log", {"date": "2026-06-28", "weight_g": 74500})
     db.upsert_daily(conn, "weight_log", {"date": "2026-07-07", "weight_g": 74200})
+    # weekly-average HRV series (Garmin's smoothed series drives the HRV trend)
+    db.upsert_daily(conn, "hrv_nightly", {"date": "2026-06-25", "weekly_avg": 64})
+    db.upsert_daily(conn, "hrv_nightly", {"date": "2026-07-08", "weekly_avg": 69})
     db.upsert_daily(conn, "race_predictions", {
         "date": "2026-07-06", "t_5k_s": 1170, "t_10k_s": 2460,
         "t_half_s": 5400, "t_marathon_s": 11400})
@@ -67,16 +70,19 @@ def test_full_standing_composes_every_direct_read_field(conn):
     s = snapshot.build(conn, through_date="2026-07-08")
 
     assert s["computed_at"] == "2026-07-08"
-    # fitness markers (latest <= through); trends deferred to ticket 02 -> NULL here
+    # fitness markers (latest <= through) with a signed trend over the available window
     assert s["vo2max"] == 52.0
-    assert s["vo2max_delta"] is None and s["vo2max_span_days"] is None
+    assert s["vo2max_delta"] == pytest.approx(1.0)  # 52 - 51 (06-20 baseline)
+    assert s["vo2max_span_days"] == 17  # 06-20 .. 07-07
     assert s["weight_kg"] == pytest.approx(74.2)
-    assert s["weight_delta"] is None and s["weight_span_days"] is None
+    assert s["weight_delta"] == pytest.approx(-0.3)  # 74.2 - 74.5 (06-28 baseline)
+    assert s["weight_span_days"] == 9  # 06-28 .. 07-07
     assert (s["t_5k_s"], s["t_10k_s"], s["t_half_s"], s["t_marathon_s"]) == (
         1170, 2460, 5400, 11400)
-    # HRV band from the latest daily row
+    # HRV band (our numbers) + trend of Garmin's weekly-average HRV
     assert s["hrv_baseline"] == 68 and s["hrv_sd"] == 11
-    assert s["hrv_delta"] is None and s["hrv_span_days"] is None
+    assert s["hrv_delta"] == pytest.approx(5.0)  # 69 - 64 (06-25 weekly_avg)
+    assert s["hrv_span_days"] == 13  # 06-25 .. 07-08
     # load / ACWR
     assert s["acwr"] == pytest.approx(1.21)
     assert s["n_chronic"] == 30
@@ -119,6 +125,29 @@ def test_as_of_reproduces_the_then_current_standing(conn):
     assert s["acwr"] == pytest.approx(1.10)
     assert s["n_chronic"] == 28
     assert s["planned_intent_today"] == "rest"  # Monday
+
+
+def test_trend_delta_is_null_below_the_min_span(conn):
+    # Two VO2max readings only 4 days apart -> span 4 < min_span 7 -> no delta yet.
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-07-04", "vo2max_running": 51.0})
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-07-08", "vo2max_running": 52.0})
+    s = snapshot.build(conn, through_date="2026-07-08")
+    assert s["vo2max"] == 52.0  # value still shown
+    assert s["vo2max_delta"] is None  # span 4 < 7
+    assert s["vo2max_span_days"] is None
+
+
+def test_trend_span_is_the_available_history_not_the_lookback(conn):
+    # 24 days of VO2max history, well under the 90-day lookback -> span reflects reality.
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-06-14", "vo2max_running": 50.0})
+    db.upsert_daily(conn, "fitness_markers",
+                    {"date": "2026-07-08", "vo2max_running": 52.0})
+    s = snapshot.build(conn, through_date="2026-07-08")
+    assert s["vo2max_delta"] == pytest.approx(2.0)
+    assert s["vo2max_span_days"] == 24  # not 90
 
 
 def test_no_zones_anchor_degrades_without_raising(conn):

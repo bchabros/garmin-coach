@@ -329,7 +329,12 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('monotony_high',        2.0, 'Foster monotony above this flags overtraining (Phase 5)'),
  ('deload_load_rise_weeks', 3, 'consecutive rising-load weeks that arm DELOAD_ADVISED'),
  ('deload_min_history_weeks', 3, 'below this many complete weeks the deload signal is silent'),
- ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week');
+ ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week'),
+ -- Phase 6b snapshot: trend lookback windows (days) + minimum measurable span
+ ('snapshot_vo2max_lookback_days', 90, 'window for the VO2max trend delta (slow-moving)'),
+ ('snapshot_weight_lookback_days', 28, 'window for the body-weight trend delta'),
+ ('snapshot_hrv_lookback_days',    28, 'window for the HRV trend delta (Garmin weekly avg)'),
+ ('snapshot_trend_min_span_days',   7, 'below this available span a trend delta is NULL');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (

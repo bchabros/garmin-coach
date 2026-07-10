@@ -72,8 +72,8 @@ def build(
     thr = thresholds if thresholds is not None else _thresholds.read(conn)
     return {
         "computed_at": through_date,
-        **_markers(conn, through_date),
-        **_hrv(conn, through_date),
+        **_markers(conn, through_date, thr),
+        **_hrv(conn, through_date, thr),
         **_load_acwr(conn, through_date, thr),
         **_recovery(conn, through_date),
         **_zones_mirror(conn),
@@ -87,11 +87,11 @@ def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
 
 
 def _latest_row(
-    conn: sqlite3.Connection, table: str, cols: str, through_date: str, where: str = ""
+    conn: sqlite3.Connection, table: str, cols: str, through_date: str
 ) -> dict[str, Any] | None:
     """Latest row of ``table`` at or before ``through_date`` as a dict, or None."""
     cur = conn.execute(
-        f"SELECT {cols} FROM {table} WHERE date <= ? {where} ORDER BY date DESC LIMIT 1",
+        f"SELECT {cols} FROM {table} WHERE date <= ? ORDER BY date DESC LIMIT 1",
         (through_date,),
     )
     row = cur.fetchone()
@@ -100,24 +100,71 @@ def _latest_row(
     return dict(zip([d[0] for d in cur.description], row))
 
 
-def _markers(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
-    """VO2max, body weight, and race predictions (trend deltas filled by ticket 02)."""
-    vo2 = _latest_row(
-        conn, "fitness_markers", "vo2max_running", through_date,
-        "AND vo2max_running IS NOT NULL",
+def _series(
+    conn: sqlite3.Connection, table: str, col: str, through_date: str
+) -> list[tuple[str, float]]:
+    """Non-null ``(date, value)`` readings of ``col`` at or before ``through_date``."""
+    return [
+        (date, value)
+        for date, value in conn.execute(
+            f"SELECT date, {col} FROM {table} "
+            f"WHERE date <= ? AND {col} IS NOT NULL ORDER BY date",
+            (through_date,),
+        )
+    ]
+
+
+def _trend(
+    series: list[tuple[str, float]],
+    through_date: str,
+    lookback_days: float,
+    min_span_days: float,
+) -> tuple[float | None, int | None]:
+    """Signed change of a marker over the available window, plus the span in days.
+
+    Current value is the latest reading; the baseline is the earliest reading on or
+    after ``through_date - lookback_days`` (falling back to the earliest reading when
+    history is younger than the window). Returns ``(None, None)`` when the available
+    span is below ``min_span_days`` - honest while history is still short, never faked
+    from a single point.
+    """
+    if not series:
+        return None, None
+    cur_date, cur_val = series[-1]
+    floor = (
+        _dt.date.fromisoformat(through_date) - _dt.timedelta(days=int(lookback_days))
+    ).isoformat()
+    base_date, base_val = next(((d, v) for d, v in series if d >= floor), series[0])
+    span = (_dt.date.fromisoformat(cur_date) - _dt.date.fromisoformat(base_date)).days
+    if span < min_span_days:
+        return None, None
+    return cur_val - base_val, span
+
+
+def _markers(
+    conn: sqlite3.Connection, through_date: str, thr: dict[str, float]
+) -> dict[str, Any]:
+    """VO2max and body weight (value + trend) and the latest race predictions."""
+    vo2 = _series(conn, "fitness_markers", "vo2max_running", through_date)
+    vo2_delta, vo2_span = _trend(
+        vo2, through_date, thr["snapshot_vo2max_lookback_days"],
+        thr["snapshot_trend_min_span_days"],
     )
-    weight = _latest_row(conn, "weight_log", "weight_g", through_date)
+    weight = [(d, g / 1000) for d, g in _series(conn, "weight_log", "weight_g", through_date)]
+    weight_delta, weight_span = _trend(
+        weight, through_date, thr["snapshot_weight_lookback_days"],
+        thr["snapshot_trend_min_span_days"],
+    )
     preds = _latest_row(
         conn, "race_predictions", "t_5k_s, t_10k_s, t_half_s, t_marathon_s", through_date
     ) or {}
-    weight_g = weight["weight_g"] if weight else None
     return {
-        "vo2max": vo2["vo2max_running"] if vo2 else None,
-        "vo2max_delta": None,
-        "vo2max_span_days": None,
-        "weight_kg": weight_g / 1000 if weight_g is not None else None,
-        "weight_delta": None,
-        "weight_span_days": None,
+        "vo2max": vo2[-1][1] if vo2 else None,
+        "vo2max_delta": vo2_delta,
+        "vo2max_span_days": vo2_span,
+        "weight_kg": weight[-1][1] if weight else None,
+        "weight_delta": weight_delta,
+        "weight_span_days": weight_span,
         "t_5k_s": preds.get("t_5k_s"),
         "t_10k_s": preds.get("t_10k_s"),
         "t_half_s": preds.get("t_half_s"),
@@ -125,16 +172,29 @@ def _markers(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
     }
 
 
-def _hrv(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
-    """HRV baseline and SD from the latest daily row (trend delta filled by ticket 02)."""
+def _hrv(
+    conn: sqlite3.Connection, through_date: str, thr: dict[str, float]
+) -> dict[str, Any]:
+    """HRV baseline + SD (our numbers) and the trend of Garmin's weekly-average HRV.
+
+    The trend rides on ``hrv_nightly.weekly_avg`` rather than ``daily_metrics``'s own
+    baseline: ``features`` recomputes the whole mart nightly, so the stored baseline is
+    a constant across rows and cannot trend. The weekly average is a real, smoothed,
+    read-only series.
+    """
     latest = _latest_row(
         conn, "daily_metrics", "hrv_baseline, hrv_sd", through_date
     ) or {}
+    weekly = _series(conn, "hrv_nightly", "weekly_avg", through_date)
+    hrv_delta, hrv_span = _trend(
+        weekly, through_date, thr["snapshot_hrv_lookback_days"],
+        thr["snapshot_trend_min_span_days"],
+    )
     return {
         "hrv_baseline": latest.get("hrv_baseline"),
         "hrv_sd": latest.get("hrv_sd"),
-        "hrv_delta": None,
-        "hrv_span_days": None,
+        "hrv_delta": hrv_delta,
+        "hrv_span_days": hrv_span,
     }
 
 

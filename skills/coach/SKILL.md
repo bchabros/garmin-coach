@@ -17,10 +17,11 @@ read the raw mart** - you consume the compact digest only.
    poetry run garmin-coach report            # or: --from YYYY-MM-DD --to YYYY-MM-DD
    ```
 
-   This writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`. If it
-   fails because the mart is empty, run `poetry run garmin-coach features` first, then
-   retry. Never run `sync`/`backfill` yourself - that would call Garmin live, which the
-   golden rule forbids from the coach layer; tell the operator to run it instead.
+   This writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`, and
+   `snapshot.json` (the current standing). If it fails because the mart is empty, run
+   `poetry run garmin-coach features` first, then retry. Never run `sync`/`backfill`
+   yourself - that would call Garmin live, which the golden rule forbids from the coach
+   layer; tell the operator to run it instead.
 
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
@@ -28,7 +29,24 @@ read the raw mart** - you consume the compact digest only.
    training zones; may be null), and a `disclaimer`. Do not open the mart or recompute
    anything.
 
+   Also read `reports/{today}/snapshot.json` (may be absent if the mart was never
+   materialized). It is the current standing: `computed_at`, `vo2max` (+ `vo2max_delta`
+   / `vo2max_span_days`), `weight_kg` (+ trend), `hrv_baseline`/`hrv_sd` (+ `hrv_delta`
+   / `hrv_span_days`), race predictions (`t_5k_s`..`t_marathon_s`), `acwr` +
+   `acwr_reliable`, `load_7d` + shares, `readiness_score`/`readiness_level`,
+   `sleep_debt_h`, heat/altitude acclimation, the personal zones (mirrored), and
+   `planned_intent_today`/`planned_label_today`. Every field may be null; never invent
+   a number a null field does not provide.
+
 3. **Write `reports/{today}/report.md`.** Structure:
+   - **Twoje aktualne staty** - only when `snapshot.json` is present. One compact block
+     opening the report with where the athlete stands now: VO2max and its trend (state
+     `vo2max_delta` over `vo2max_span_days` days when non-null, e.g. "VO2max 52, +1.0 w
+     24 dni"), body weight + trend, HRV baseline + its weekly-average trend, latest race
+     predictions (format seconds as h:mm:ss / mm:ss), Training Readiness
+     (`readiness_score` + `readiness_level`), and today's plan (`planned_label_today`).
+     Skip any sub-item whose value is null. Skip the whole block when `snapshot.json`
+     is absent.
    - **Nagłówek** - one line on the window and the headline numbers (ACWR + reliability,
      latest HRV vs baseline, 7-day load split). When the `zones` block is present, add
      the Z2 pace ceiling so the read is actionable: "trzymaj easy run pod X:XX/km"

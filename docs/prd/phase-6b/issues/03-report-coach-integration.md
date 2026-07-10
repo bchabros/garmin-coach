@@ -1,6 +1,6 @@
 # 03 - Report + coach integration: emit `snapshot.json`, add "Twoje aktualne staty"
 
-Status: ready-for-agent
+Status: done
 Parent: `docs/prd/phase-6b/PRD.md`
 
 ## What to build

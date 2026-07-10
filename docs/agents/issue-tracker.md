@@ -3,7 +3,7 @@
 This repo has no external issue tracker (no GitHub Issues, Jira, etc.). Work is
 scoped to a PRD and lives beside it under `docs/prd/`, versioned in git. This
 follows the repo's house rule that the PRD -- not an external tracker -- is the
-source of work (`docs/ROADMAP.md`, `docs/prd/phase-6.md`).
+source of work (`docs/PROJECT.md`, `docs/prd/phase-6.md`).
 
 ## Layout
 

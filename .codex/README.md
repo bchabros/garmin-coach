@@ -7,7 +7,7 @@ The canonical Codex-facing instructions live in the repository root:
 
 - `AGENTS.md` - primary instructions for Codex, mirrored from `CLAUDE.md`
 - `CLAUDE.md` - Claude Code source context
-- `docs/garmin-coach-BUILD.md` - full project brief
+- `docs/PROJECT.md` - full project brief and roadmap
 - `docs/prd/` - phase-specific PRDs
 
 ## Codex operating rules

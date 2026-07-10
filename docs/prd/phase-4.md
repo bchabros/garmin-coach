@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 4: automation (nightly orchestrator + alerts)
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-06
-> Sources: `docs/garmin-coach-BUILD.md` Phase 4 + section 7, `docs/adr/0004-phase-4-automation.md`, `docs/adr/0003-phase-3-coach-signals.md`, grilling decisions.
+> Sources: `docs/PROJECT.md` Phase 4 + section 7, `docs/adr/0004-phase-4-automation.md`, `docs/adr/0003-phase-3-coach-signals.md`, grilling decisions.
 
 ## Problem Statement
 

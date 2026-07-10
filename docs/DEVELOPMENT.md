@@ -1,4 +1,4 @@
-# Development guide
+cho# Development guide
 
 For coding agents (Claude Code, Codex) and humans **changing the code**. The
 always-loaded core is `CLAUDE.md`; this guide is read on demand when you touch the
@@ -9,8 +9,21 @@ definitions live in `docs/glossary.md`.
 
 Build phase-by-phase (0 -> 6); each phase has a Definition of Done (the BUILD doc for
 phases 0-5, the phase PRD for 6+) -- don't advance until it's met. Forward plan for
-everything after Phase 5 is `docs/ROADMAP.md`. The established loop for a new phase is:
-**grill (stress-test decisions) -> PRD in `docs/prd/` -> TDD (red->green)**.
+everything after Phase 5 is `docs/PROJECT.md` (Part II). The established loop for a new feature is
+a chain of skills:
+
+**`/grill-with-docs` -> `/to-spec` -> `/to-tickets` -> `/implement` -> `/code-review`**
+
+- **`/grill-with-docs`** -- stress-test the decisions against the repo's docs before any
+  code (reaches `/domain-modeling` for vocabulary; see `docs/agents/domain.md`). For
+  very complex tasks use `/wayfinder` instead -- a heavier, map-driven alternative
+  (`docs/prd/<feature>/map.md`; see the wayfinding section in
+  `docs/agents/issue-tracker.md`).
+- **`/to-spec`** -- write the spec to `docs/prd/<feature>/PRD.md`.
+- **`/to-tickets`** -- break the spec into `docs/prd/<feature>/issues/NN-<slug>.md`
+  (see `docs/agents/issue-tracker.md`).
+- **`/implement`** -- build a ticket test-first (TDD, red -> green).
+- **`/code-review`** -- review the branch before merge.
 
 - Work test-first. Tests live at agreed **seams** (see below).
 - One vertical slice at a time: one test -> minimal impl -> repeat. No bulk test-first.
@@ -77,7 +90,7 @@ Operational gotchas (rate limits, backfill window, idempotency) live in
 
 Not-yet-done work carried forward. Completed phases are recorded in the `README.md`
 status table plus each phase's PRD (`docs/prd/`) and ADR (`docs/adr/`); the forward plan
-(Phases 6+) is in `docs/ROADMAP.md`.
+(Phases 6+) is in `docs/PROJECT.md` (Part II).
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) -- committed
   in the Phase 0 PRD (D9) but not yet implemented.

@@ -15,9 +15,8 @@ and what's missing.
 
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
-[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md) for the full brief
-(phases 0-5, historical record) and [docs/ROADMAP.md](docs/ROADMAP.md) for the
-forward plan (phases 6b-11 + read-MCP).
+[docs/PROJECT.md](docs/PROJECT.md) for the full brief and roadmap — the built
+phases 0-5 plus the forward plan for phases 6b-11 + read-MCP.
 
 ## Status
 
@@ -30,17 +29,17 @@ forward plan (phases 6b-11 + read-MCP).
 | 4 | Automation (nightly orchestrator, alerts, launchd/cron) | Done — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md)                                      |
 | 5 | Weekly rollups, plan-vs-actual, deload detection | Done — [docs/prd/phase-5.md](docs/prd/phase-5.md), [ADR 0005](docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md), [ADR 0006](docs/adr/0006-post-phase-5-architecture-deepening.md) |
 | 6 | Personal training zones (`athlete_zones` mart, LTHR anchor) | Done — [docs/prd/phase-6.md](docs/prd/phase-6.md), [ADR 0007](docs/adr/0007-phase-6-personal-zones.md)                              |
-| 6b | Athlete snapshot (`athlete_status` mart + `snapshot` command) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| 7 | Session-RPE load model for strength/Hyrox + niggle log | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| 8 | Per-set capture + movement-pattern overlap (finishes D9) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| 9 | Race-date periodization + race-day pacing | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| 10 | Prospective session recommender (re-planning-aware) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
-| read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/ROADMAP.md](docs/ROADMAP.md)                                                                                      |
+| 6b | Athlete snapshot (`athlete_status` mart + `snapshot` command) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-6b-athlete-snapshot)                                                                                      |
+| 7 | Session-RPE load model for strength/Hyrox + niggle log | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-7-strength-and-hyrox-load-model)                                                                                      |
+| 8 | Per-set capture + movement-pattern overlap (finishes D9) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-8-per-set-capture-and-overlap)                                                                                      |
+| 9 | Race-date periodization + race-day pacing | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-9-race-date-periodization)                                                                                      |
+| 10 | Prospective session recommender (re-planning-aware) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-10-prospective-recommender)                                                                                      |
+| 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-11-workout-authoring-and-push)                                                                                      |
+| read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/PROJECT.md](docs/PROJECT.md#read-mcp-conversational-read-layer)                                                                                      |
 
-Phases 0-5 are specified in the BUILD doc; everything after Phase 5 lives in
-[docs/ROADMAP.md](docs/ROADMAP.md), which also records the industry survey and the
-dependency ordering between the planned phases.
+Phases 0-5 are the built foundation and everything after Phase 5 is the forward
+plan; both live in [docs/PROJECT.md](docs/PROJECT.md), which also records the
+industry survey and the dependency ordering between the planned phases.
 
 ## Layout
 
@@ -54,8 +53,7 @@ garmin-coach/
 ├── .codex/                   # Codex local notes and companion files
 ├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
-│   ├── garmin-coach-BUILD.md # the executable brief (phases 0–5, historical record)
-│   ├── ROADMAP.md            # forward plan: phases 6b–11 + read-MCP, industry survey
+│   ├── PROJECT.md            # build brief + roadmap: phases 0–5 (built) and 6b–11 + read-MCP
 │   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
 │   ├── DEVELOPMENT.md        # coding guide: workflow, module map, conventions, seams
 │   ├── OPERATIONS.md         # operator runbook: pipeline, exit codes, logs, reports
@@ -275,7 +273,7 @@ poetry run mypy src
 commit messages in English. Tests run fully offline — the transport is injected,
 and fixtures are anonymized real payloads (no PII: user IDs, names, geolocation,
 device IDs stripped). Metric definitions and the phasing plan live in
-[docs/garmin-coach-BUILD.md](docs/garmin-coach-BUILD.md).
+[docs/PROJECT.md](docs/PROJECT.md).
 
 ## Privacy
 

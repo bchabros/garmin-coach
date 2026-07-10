@@ -18,7 +18,7 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
 - `memory/` -- long-term athlete context. **Read `memory/athlete-profile.md` at the start of
   a coaching session** (goals, physiology, tendencies, coaching decisions, open threads).
   Qualitative context that does not belong in the DB; numbers there only summarize the DB.
-- `docs/` -- system docs (this runbook, `DEVELOPMENT.md`, `ROADMAP.md`, `glossary.md`, PRDs,
+- `docs/` -- system docs (this runbook, `DEVELOPMENT.md`, `PROJECT.md`, `glossary.md`, PRDs,
   ADRs). `skills/coach/` -- the coach skill (narrative layer over the digest).
 - `data/garmin.db` -- SQLite system-of-record. `logs/` -- nightly run logs.
 

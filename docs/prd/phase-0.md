@@ -1,7 +1,7 @@
 # PRD — Garmin Coach · Faza 0: raw capture + idempotencja
 
 > Status: **Ready for implementation (TDD)** · Data: 2026-07-04
-> Źródła: `docs/garmin-coach-BUILD.md` §3/§4/§5/§8/§9/§10, `docs/schema.sql`
+> Źródła: `docs/PROJECT.md` §3/§4/§5/§8/§9/§10, `docs/schema.sql`
 > Ten PRD zamyka decyzje wypracowane w sesji grillującej. Sekcja "Decyzje" jest wiążąca.
 
 ---

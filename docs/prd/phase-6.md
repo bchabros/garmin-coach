@@ -1,7 +1,7 @@
 # PRD - Garmin Coach - Phase 6: personal training zones (`athlete_zones` mart)
 
 > Status: Ready for implementation (TDD) - Date: 2026-07-08
-> Sources: `docs/ROADMAP.md` Phase 6, `docs/adr/0006-post-phase-5-architecture-deepening.md`, `CONTEXT.md`/`docs/glossary.md`, grilling decisions 2026-07-08.
+> Sources: `docs/PROJECT.md` Phase 6, `docs/adr/0006-post-phase-5-architecture-deepening.md`, `CONTEXT.md`/`docs/glossary.md`, grilling decisions 2026-07-08.
 
 ## Problem Statement
 

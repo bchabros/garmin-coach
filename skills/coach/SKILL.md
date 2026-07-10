@@ -1,13 +1,14 @@
 ---
 name: coach
-description: Read the athlete's daily_metrics mart via the deterministic digest and write a concise, number-dense coaching report with two charts. Use when the user asks for a training report, coach read, weekly review, or "how am I doing".
+description: Read the athlete's daily_metrics mart and current-standing snapshot via the deterministic digest and write a concise, number-dense coaching report with two charts. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme").
 ---
 
 # Coach
 
 Turn the `daily_metrics` mart into a short coaching read. The heavy lifting is
 deterministic Python; your job is the narrative. **Never query Garmin live and never
-read the raw mart** - you consume the compact digest only.
+read the raw mart** - you consume the compact digest and the current-standing snapshot
+only.
 
 ## Procedure
 

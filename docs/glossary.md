@@ -100,6 +100,25 @@ code, docstrings, PRDs, and ADRs.
   `acwr_risk_high` or `monotony` exceeds `monotony_high`. Silent when history is too
   short (it never guesses).
 
+## Snapshot terms (mart -> snapshot)
+
+- **athlete snapshot** - the current-standing read: a singleton `athlete_status` mart
+  row (`id = 1`) mirroring where the athlete stands now - fitness markers, personal
+  zones, HRV/load/recovery state, and the active plan. Recomputed as the tail of
+  `features` after `weekly.rollup` and `zones.rollup`, serialized to
+  `reports/{date}/snapshot.json`. A same-run copy of finished marts + core, never a
+  system of record and never a recompute of the underlying numbers.
+- **computed_at (snapshot)** - the as-of date the row is built for; every "latest" read
+  is scoped to `date <= computed_at`, so a backfill to a past date reproduces that
+  day's standing. `planned_intent_today` uses this date's weekday, not the wall clock.
+- **trend delta** - a marker's signed change (`vo2max_delta`, `weight_delta`,
+  `hrv_delta`) against the earliest reading on or after `computed_at - lookback`.
+  Computed over whatever history exists; NULL only when the available span is below
+  `snapshot_trend_min_span_days`. Never inferred from a single point.
+- **span_days** - the actual number of days the trend delta spans, exposed alongside it
+  (`vo2max_span_days`, ...); it can be shorter than the configured lookback while
+  history is still accruing, letting the coach hedge ("over the last 24 days").
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier

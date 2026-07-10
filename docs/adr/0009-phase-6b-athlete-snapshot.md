@@ -53,7 +53,7 @@ new Garmin data. See `docs/prd/phase-6b/PRD.md`.
   sign into words. Same "compute but expose credibility" stance as `n_chronic`.
 
 - **Implementation finding (HRV trend source).** VO2max and body weight are genuine
-  time series (`fitness_markers.vo2max_running`, `weight_log.weight_g`), so their deltas
+  time series (`training_status_daily.vo2max`, `weight_log.weight_g`), so their deltas
   ride on their own values. Our own `daily_metrics.hrv_baseline` cannot: the nightly
   `daily` run recomputes the whole mart with no `from_date`, so the stored baseline is a
   single current value stamped onto every row - constant across history, always delta 0.

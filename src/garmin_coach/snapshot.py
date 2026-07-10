@@ -1,9 +1,9 @@
 """Athlete snapshot (mart): compose the current standing into one athlete_status row.
 
 Pure and total. ``build`` reads finished marts + core (``daily_metrics``,
-``athlete_zones``, ``fitness_markers``, ``weight_log``, ``race_predictions``,
-``training_readiness``, ``training_status_daily``, ``plan_template``) and returns a
-single "where do I stand right now" dict; ``rollup`` upserts the singleton row. A
+``athlete_zones``, ``weight_log``, ``race_predictions``, ``training_readiness``,
+``training_status_daily``, ``plan_template``) and returns a single "where do I stand
+right now" dict; ``rollup`` upserts the singleton row. A
 same-run copy of finished data - never calls Garmin. Runs as the tail of ``features``
 after weekly + zones. See docs/prd/phase-6b/PRD.md.
 """
@@ -154,7 +154,7 @@ def _markers(
     conn: sqlite3.Connection, through_date: str, thr: dict[str, float]
 ) -> dict[str, Any]:
     """VO2max and body weight (value + trend) and the latest race predictions."""
-    vo2 = _series(conn, "fitness_markers", "vo2max_running", through_date)
+    vo2 = _series(conn, "training_status_daily", "vo2max", through_date)
     vo2_delta, vo2_span = _trend(
         vo2, through_date, thr["snapshot_vo2max_lookback_days"],
         thr["snapshot_trend_min_span_days"],

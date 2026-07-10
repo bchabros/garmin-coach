@@ -126,7 +126,8 @@ Full rationale in `docs/adr/0009-phase-6b-athlete-snapshot.md`.
 - **New module `snapshot.py`** with the primary seam `build(conn, through_date) ->
   dict` (pure, total compose) and `rollup(conn, through_date)` (upsert + commit),
   structured like `zones.py`. Sources for each field:
-  - `vo2max` from `fitness_markers.vo2max_running` series; `weight_kg` from
+  - `vo2max` from the `training_status_daily.vo2max` series (the ETL never fills
+    `fitness_markers.vo2max_running`); `weight_kg` from
     `weight_log.weight_g / 1000`; race predictions from the latest `race_predictions`
     row; `hrv_baseline`/`hrv_sd` and `sleep_debt_h` from the latest `daily_metrics`
     row; `acwr`/`n_chronic`/`load_7d`/shares reuse the digest headline logic and

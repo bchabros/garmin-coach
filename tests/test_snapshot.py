@@ -44,10 +44,12 @@ def _seed_full_standing(conn):
         "z2_pace_ceiling_s_per_km": 334.23, "source": "regression+lthr",
         "lthr_detected_on": "2026-07-02", "computed_at": "2026-07-08", "stale": 0,
     })
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-06-20", "vo2max_running": 51.0})
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-07-07", "vo2max_running": 52.0})
+    # VO2max series lives in training_status_daily (fitness_markers.vo2max_running
+    # is never populated by the ETL); the daily vo2max drives value + trend.
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-06-20", "vo2max": 51.0})
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-07-07", "vo2max": 52.0})
     db.upsert_daily(conn, "weight_log", {"date": "2026-06-28", "weight_g": 74500})
     db.upsert_daily(conn, "weight_log", {"date": "2026-07-07", "weight_g": 74200})
     # weekly-average HRV series (Garmin's smoothed series drives the HRV trend)
@@ -129,10 +131,10 @@ def test_as_of_reproduces_the_then_current_standing(conn):
 
 def test_trend_delta_is_null_below_the_min_span(conn):
     # Two VO2max readings only 4 days apart -> span 4 < min_span 7 -> no delta yet.
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-07-04", "vo2max_running": 51.0})
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-07-08", "vo2max_running": 52.0})
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-07-04", "vo2max": 51.0})
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-07-08", "vo2max": 52.0})
     s = snapshot.build(conn, through_date="2026-07-08")
     assert s["vo2max"] == 52.0  # value still shown
     assert s["vo2max_delta"] is None  # span 4 < 7
@@ -141,10 +143,10 @@ def test_trend_delta_is_null_below_the_min_span(conn):
 
 def test_trend_span_is_the_available_history_not_the_lookback(conn):
     # 24 days of VO2max history, well under the 90-day lookback -> span reflects reality.
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-06-14", "vo2max_running": 50.0})
-    db.upsert_daily(conn, "fitness_markers",
-                    {"date": "2026-07-08", "vo2max_running": 52.0})
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-06-14", "vo2max": 50.0})
+    db.upsert_daily(conn, "training_status_daily",
+                    {"date": "2026-07-08", "vo2max": 52.0})
     s = snapshot.build(conn, through_date="2026-07-08")
     assert s["vo2max_delta"] == pytest.approx(2.0)
     assert s["vo2max_span_days"] == 24  # not 90

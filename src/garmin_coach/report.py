@@ -12,7 +12,7 @@ import json
 import pathlib
 import sqlite3
 
-from . import charts, digest, thresholds as _thresholds
+from . import charts, digest, snapshot, thresholds as _thresholds
 
 
 def read_thresholds(conn: sqlite3.Connection) -> dict[str, float]:
@@ -27,7 +27,10 @@ def generate_report(
     to_date: str | None = None,
     reports_dir: str = "./reports",
 ) -> pathlib.Path:
-    """Build the digest + charts and write them to ``reports/{today}/``.
+    """Build the digest + charts + snapshot and write them to ``reports/{today}/``.
+
+    Emits ``digest.json``, the two charts, and (when the ``athlete_status`` mart is
+    populated) ``snapshot.json`` - the current standing, read-only from the mart.
 
     Args:
         conn: Open SQLite connection with the mart populated.
@@ -55,4 +58,9 @@ def generate_report(
     charts.render_hrv_band(rows, out / "hrv_band.png")
     charts.render_acwr(rows, out / "acwr.png", thresholds)
     (out / "digest.json").write_text(json.dumps(dg, indent=2))
+
+    # Emit the current standing beside the digest (read-only; features owns the mart).
+    status = snapshot.read(conn)
+    if status is not None:
+        snapshot.write_json(status, out)
     return out

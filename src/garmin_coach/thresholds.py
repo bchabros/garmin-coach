@@ -28,6 +28,10 @@ DEFAULTS: dict[str, float] = {
     "zones_regression_min_r2": 0.30,
     "zones_heat_temp_c": 22,
     "zones_stale_days": 28,
+    "snapshot_vo2max_lookback_days": 90,
+    "snapshot_weight_lookback_days": 28,
+    "snapshot_hrv_lookback_days": 28,
+    "snapshot_trend_min_span_days": 7,
 }
 
 

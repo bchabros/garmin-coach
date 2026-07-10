@@ -329,7 +329,12 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('monotony_high',        2.0, 'Foster monotony above this flags overtraining (Phase 5)'),
  ('deload_load_rise_weeks', 3, 'consecutive rising-load weeks that arm DELOAD_ADVISED'),
  ('deload_min_history_weeks', 3, 'below this many complete weeks the deload signal is silent'),
- ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week');
+ ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week'),
+ -- Phase 6b snapshot: trend lookback windows (days) + minimum measurable span
+ ('snapshot_vo2max_lookback_days', 90, 'window for the VO2max trend delta (slow-moving)'),
+ ('snapshot_weight_lookback_days', 28, 'window for the body-weight trend delta'),
+ ('snapshot_hrv_lookback_days',    28, 'window for the HRV trend delta (Garmin weekly avg)'),
+ ('snapshot_trend_min_span_days',   7, 'below this available span a trend delta is NULL');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (
@@ -445,6 +450,62 @@ CREATE TABLE IF NOT EXISTS athlete_zones (
   lthr_detected_on         TEXT,             -- calendar day of the LTHR detection
   computed_at              TEXT,             -- recompute cutoff (through_date)
   stale                    INTEGER           -- 1 when detection older than zones_stale_days
+);
+
+-- Athlete snapshot (mart): the single current standing "where do I stand right now".
+-- A same-run copy of finished marts + core, recomputed as the tail of `features`
+-- after weekly + zones. Serialized to reports/{date}/snapshot.json. Phase 6b.
+CREATE TABLE IF NOT EXISTS athlete_status (
+  id                       INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+  computed_at              TEXT,              -- as-of date; every latest read scoped to <= this
+  -- fitness markers (+ trend delta over an available window; span it was measured over)
+  vo2max                   REAL,              -- fitness_markers.vo2max_running (latest)
+  vo2max_delta             REAL,              -- signed change over the lookback (Phase 6b/02)
+  vo2max_span_days         INTEGER,           -- actual days the delta spans (may be < lookback)
+  weight_kg                REAL,              -- weight_log.weight_g / 1000 (latest)
+  weight_delta             REAL,
+  weight_span_days         INTEGER,
+  t_5k_s                   INTEGER,           -- race_predictions (latest)
+  t_10k_s                  INTEGER,
+  t_half_s                 INTEGER,
+  t_marathon_s             INTEGER,
+  -- HRV band (+ trend)
+  hrv_baseline             REAL,              -- daily_metrics (latest)
+  hrv_sd                   REAL,
+  hrv_delta                REAL,
+  hrv_span_days            INTEGER,
+  -- load / ACWR (reuses digest headline + signals.load_shares)
+  acwr                     REAL,              -- daily_metrics (latest)
+  n_chronic                INTEGER,
+  acwr_reliable            INTEGER,           -- n_chronic >= acwr_min_chronic_days
+  load_7d                  REAL,              -- trailing-7-day load total
+  low_share                REAL,              -- easy/hard/anaerobic shares of that load
+  high_share               REAL,
+  anaero_share             REAL,
+  -- recovery
+  readiness_score          INTEGER,           -- training_readiness (latest)
+  readiness_level          TEXT,
+  sleep_debt_h             REAL,              -- daily_metrics (latest)
+  heat_accl_pct            INTEGER,           -- training_status_daily (latest)
+  heat_trend               TEXT,
+  altitude_accl            INTEGER,
+  -- personal zones (full mirror of athlete_zones for a self-contained snapshot.json)
+  lthr_bpm                 INTEGER,
+  z1_hi_bpm                INTEGER,
+  z2_hi_bpm                INTEGER,
+  z3_hi_bpm                INTEGER,
+  z4_hi_bpm                INTEGER,
+  threshold_pace_s_per_km  REAL,
+  z2_pace_ceiling_s_per_km REAL,
+  zones_source             TEXT,
+  lthr_detected_on         TEXT,
+  zones_stale              INTEGER,
+  -- active plan; block/weeks_to_event/taper_active are NULL placeholders until Phase 9
+  block                    TEXT,
+  weeks_to_event           INTEGER,
+  taper_active             INTEGER,
+  planned_intent_today     TEXT,              -- plan_template[weekday(computed_at)]
+  planned_label_today      TEXT
 );
 
 -- =============================================================================

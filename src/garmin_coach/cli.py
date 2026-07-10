@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import os
+import pathlib
 import sqlite3
 from typing import TYPE_CHECKING
 
-from . import client, daily, db, features, report, sync
+from . import client, daily, db, features, report, snapshot, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -87,6 +89,25 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_snapshot(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    status = snapshot.read(conn)
+    conn.close()
+    if status is None:
+        print("snapshot: no athlete_status row yet; run `garmin-coach features` first")
+        return 1
+
+    out = pathlib.Path(args.reports_dir) / _dt.date.today().isoformat()
+    out.mkdir(parents=True, exist_ok=True)
+    path = snapshot.write_json(status, out)
+    print(f"snapshot complete: {path} (as of {status['computed_at']})")
+    return 0
+
+
 def _cmd_daily(args: argparse.Namespace) -> int:
     settings = get_settings()
     daily.configure_logging(
@@ -161,6 +182,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Window end YYYY-MM-DD (default: latest mart day).",
     )
     rp.set_defaults(func=_cmd_report)
+
+    sp = sub.add_parser(
+        "snapshot", help="Write the current standing to reports/{date}/snapshot.json."
+    )
+    sp.add_argument(
+        "--reports-dir", dest="reports_dir", default="./reports",
+        help="Root directory for dated report folders.",
+    )
+    sp.set_defaults(func=_cmd_snapshot)
 
     dl = sub.add_parser(
         "daily", help="Nightly run: sync -> features -> alerts (for cron/launchd)."

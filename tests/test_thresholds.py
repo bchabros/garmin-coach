@@ -30,6 +30,16 @@ def test_personal_zone_thresholds_present_and_placeholder_retired(conn):
     assert "hr_z2_upper_bpm" not in values
 
 
+def test_snapshot_trend_thresholds_present(conn):
+    """Phase 6b seeds the snapshot trend lookback windows and the min-span floor."""
+    values = thresholds.read(conn)
+
+    assert values["snapshot_vo2max_lookback_days"] == 90
+    assert values["snapshot_weight_lookback_days"] == 28
+    assert values["snapshot_hrv_lookback_days"] == 28
+    assert values["snapshot_trend_min_span_days"] == 7
+
+
 def test_merge_applies_explicit_overrides():
     """Tests and callers can still pass explicit threshold overrides."""
     values = thresholds.merge({"acwr_sweet_hi": 1.0})

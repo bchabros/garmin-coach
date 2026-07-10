@@ -62,5 +62,5 @@ def generate_report(
     # Emit the current standing beside the digest (read-only; features owns the mart).
     status = snapshot.read(conn)
     if status is not None:
-        (out / "snapshot.json").write_text(json.dumps(status, indent=2))
+        snapshot.write_json(status, out)
     return out

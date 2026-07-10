@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import os
+import pathlib
 import sqlite3
 from typing import TYPE_CHECKING
 
@@ -88,10 +90,6 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
-    import datetime as _dt
-    import json
-    import pathlib
-
     settings = get_settings()
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
     conn = db.connect(settings.db_path)
@@ -105,8 +103,8 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
     out = pathlib.Path(args.reports_dir) / _dt.date.today().isoformat()
     out.mkdir(parents=True, exist_ok=True)
-    (out / "snapshot.json").write_text(json.dumps(status, indent=2))
-    print(f"snapshot complete: {out / 'snapshot.json'} (as of {status['computed_at']})")
+    path = snapshot.write_json(status, out)
+    print(f"snapshot complete: {path} (as of {status['computed_at']})")
     return 0
 
 

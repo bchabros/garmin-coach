@@ -44,9 +44,12 @@ read the raw mart** - you consume the compact digest only.
      `vo2max_delta` over `vo2max_span_days` days when non-null, e.g. "VO2max 52, +1.0 w
      24 dni"), body weight + trend, HRV baseline + its weekly-average trend, latest race
      predictions (format seconds as h:mm:ss / mm:ss), Training Readiness
-     (`readiness_score` + `readiness_level`), and today's plan (`planned_label_today`).
-     Skip any sub-item whose value is null. Skip the whole block when `snapshot.json`
-     is absent.
+     (`readiness_score` + `readiness_level`), the load/ACWR standing (`acwr` with
+     `acwr_reliable` - call it *orientacyjny* when false - plus `load_7d` and the
+     `low_share`/`high_share`/`anaero_share` split), the zones headline (`z2_hi_bpm` HR
+     ceiling and `z2_pace_ceiling_s_per_km` as min:sec - "easy pod X:XX/km"; note
+     `zones_stale` when 1), and today's plan (`planned_label_today`). Skip any sub-item
+     whose value is null. Skip the whole block when `snapshot.json` is absent.
    - **Nagłówek** - one line on the window and the headline numbers (ACWR + reliability,
      latest HRV vs baseline, 7-day load split). When the `zones` block is present, add
      the Z2 pace ceiling so the read is actionable: "trzymaj easy run pod X:XX/km"

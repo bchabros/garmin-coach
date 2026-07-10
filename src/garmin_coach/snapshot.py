@@ -11,6 +11,8 @@ after weekly + zones. See docs/prd/phase-6b/PRD.md.
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import pathlib
 import sqlite3
 from typing import Any
 
@@ -55,6 +57,13 @@ def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
     status = dict(zip([d[0] for d in cur.description], row))
     status.pop("id", None)
     return status
+
+
+def write_json(status: dict[str, Any], out_dir: pathlib.Path) -> pathlib.Path:
+    """Serialize a standing dict to ``snapshot.json`` in ``out_dir``; return the path."""
+    path = out_dir / "snapshot.json"
+    path.write_text(json.dumps(status, indent=2))
+    return path
 
 
 def build(

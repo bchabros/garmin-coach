@@ -41,8 +41,8 @@ only.
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
    `signals` list already ordered alert > warn > info, a `zones` block (personal
-   training zones; may be null), and a `disclaimer`. Do not open the mart or recompute
-   anything.
+   training zones; may be null), a `movement` block (per-set map coverage; may be null),
+   and a `disclaimer`. Do not open the mart or recompute anything.
 
    Also read `reports/{today}/snapshot.json` (may be absent if the mart was never
    materialized). It is the current standing: `computed_at`, `vo2max` (+ `vo2max_delta`
@@ -90,6 +90,15 @@ only.
      - `DELOAD_ADVISED` -> load has climbed for several weeks into a hot ACWR or high
        monotony; suggest a back-off (deload) week. State `rise_weeks`, `acwr_end`, and
        `monotony` from `facts`.
+     - `PATTERN_STACK` -> the same movement pattern(s) (`facts.keys`, e.g. hinge) were
+       loaded on back-to-back days without a rest day; name the pattern(s) and
+       `overlap_max`, suggest spacing them or inserting recovery.
+     - `MUSCLE_OVERLAP` -> the same muscle group(s) (`facts.keys`, e.g. grip + posterior
+       chain) stacked across adjacent sessions; flag the recovery risk on those tissues.
+   - **Movement coverage** - when the digest's `movement` block is present and
+     `sets_unmapped` > 0, add one brief line that the overlap read is partial: N of
+     `sets_total` sets are unmapped (`unmapped` names), so those exercises need adding to
+     the movement map. Skip entirely when `movement` is null or nothing is unmapped.
    - **Tydzień: plan vs realizacja** - only if the digest has a non-null `weekly` block
      (the latest complete week). One line on the week's numbers (`load_total`, the
      low/high/anaero shares, `monotony`/`strain`, `max_consec_hard`), then the adherence:

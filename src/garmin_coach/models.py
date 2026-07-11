@@ -137,6 +137,48 @@ def normalize_activity(
     }
 
 
+def normalize_exercise_sets(
+    activity_id: int, payload: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Normalize a get_activity_exercise_sets payload to `activity_sets` rows.
+
+    Keeps only ``ACTIVE`` (work) sets, re-indexed from 0, dropping ``REST``
+    sets. Each set's exercise carries a Garmin ``category`` (parent, e.g.
+    ``BENCH_PRESS``) and ``name`` (sub-category, e.g. ``BARBELL_BENCH_PRESS``);
+    ``name`` may be None under a known parent, in which case ``subcategory``
+    falls back to the category so the row keeps a join key for the movement map.
+
+    Args:
+        activity_id: The parent activity's ID.
+        payload: The raw exerciseSets payload, or None when unavailable.
+
+    Returns:
+        One scalar row dict per ACTIVE set (empty if there are none).
+    """
+    if not payload:
+        return []
+    rows: list[dict[str, Any]] = []
+    for entry in payload.get("exerciseSets") or []:
+        if entry.get("setType") != "ACTIVE":
+            continue
+        exercises = entry.get("exercises") or []
+        exercise = exercises[0] if exercises else {}
+        category = exercise.get("category")
+        rows.append(
+            {
+                "activity_id": activity_id,
+                "set_idx": len(rows),
+                "category": category,
+                "subcategory": exercise.get("name") or category,
+                "reps": entry.get("repetitionCount"),
+                "sets": entry.get("sets"),
+                "duration_s": entry.get("duration"),
+                "max_weight": entry.get("weight"),
+            }
+        )
+    return rows
+
+
 def _lthr_pace_s_per_km(speed: Any) -> float | None:
     """Threshold speed -> pace in seconds-per-km.
 

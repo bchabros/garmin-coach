@@ -36,6 +36,8 @@ DEFAULTS: dict[str, float] = {
     "sila_default_rpe": 7,
     "niggle_active_days": 7,
     "niggle_reduced_mode_severity": 3,
+    "pattern_load_floor": 20,
+    "pattern_overlap_high": 40,
 }
 
 

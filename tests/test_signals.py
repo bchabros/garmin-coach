@@ -53,3 +53,49 @@ def test_silent_when_load_not_strictly_rising():
         _week(700, 1.6, 1.0),
     ]
     assert deload_advised(rows, THRESHOLDS) is None
+
+
+# --- Phase 8: movement-overlap signals ---------------------------------------
+
+from garmin_coach.signals import muscle_overlap, pattern_stack  # noqa: E402
+
+OVERLAP_THR = {"pattern_overlap_high": 40}
+
+
+def _ov(date, dim, key, overlap):
+    return {"date": date, "dim": dim, "key": key, "overlap": overlap}
+
+
+def test_pattern_stack_fires_on_latest_day_and_lists_keys():
+    rows = [
+        _ov("2026-07-11", "pattern", "hinge", 63.0),
+        _ov("2026-07-11", "pattern", "pull", 45.0),
+        _ov("2026-07-11", "muscle", "posterior", 63.0),  # other axis, ignored here
+    ]
+    sig = pattern_stack(rows, OVERLAP_THR, "2026-07-11")
+    assert sig["code"] == "PATTERN_STACK"
+    assert sig["severity"] == "warn"
+    assert sig["facts"]["keys"] == "hinge,pull"
+    assert sig["facts"]["n_keys"] == 2
+    assert sig["facts"]["overlap_max"] == 63.0
+    assert sig["facts"]["date"] == "2026-07-11"
+
+
+def test_muscle_overlap_reads_the_muscle_axis():
+    rows = [
+        _ov("2026-07-11", "muscle", "grip", 63.0),
+        _ov("2026-07-11", "muscle", "posterior", 52.0),
+    ]
+    sig = muscle_overlap(rows, OVERLAP_THR, "2026-07-11")
+    assert sig["code"] == "MUSCLE_OVERLAP"
+    assert sig["facts"]["keys"] == "grip,posterior"
+
+
+def test_overlap_silent_below_threshold():
+    rows = [_ov("2026-07-11", "pattern", "hinge", 30.0)]  # below 40
+    assert pattern_stack(rows, OVERLAP_THR, "2026-07-11") is None
+
+
+def test_overlap_silent_when_stack_not_on_latest_day():
+    rows = [_ov("2026-07-10", "pattern", "hinge", 63.0)]  # cleared by a rest day
+    assert pattern_stack(rows, OVERLAP_THR, "2026-07-11") is None

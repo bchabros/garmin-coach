@@ -87,6 +87,60 @@ def test_backfill_is_idempotent_for_core(conn, fake_client, fixture):
     }
 
 
+def _strength_activity(activity_id=900001, date="2026-06-12"):
+    return {
+        "activityId": activity_id,
+        "startTimeLocal": f"{date} 17:00:00",
+        "activityType": {"typeKey": "strength_training"},
+        "activityName": "Siła",
+        "duration": 4200.0,
+    }
+
+
+def test_backfill_ingests_exercise_sets_per_activity(conn, fake_client, fixture):
+    """Backfill fans out exercise sets per activity into activity_sets (raw-first)."""
+    client = fake_client(
+        activities=[_strength_activity()],
+        sets_by_id={900001: fixture("exercise_sets_strength")},
+    )
+    sync.backfill(client, conn, "2026-06-12", "2026-06-12")
+
+    subs = [
+        r[0]
+        for r in conn.execute(
+            "SELECT subcategory FROM activity_sets WHERE activity_id=900001 ORDER BY set_idx"
+        )
+    ]
+    assert subs == ["BARBELL_BENCH_PRESS", "BARBELL_DEADLIFT", "CABLE_ROW"]
+    # raw payload captured for reprocessing
+    assert conn.execute(
+        "SELECT COUNT(*) FROM raw_payloads WHERE endpoint='get_activity_exercise_sets'"
+    ).fetchone()[0] == 1
+
+
+def test_backfill_isolates_exercise_sets_failure(conn, fake_client):
+    """A sets fetch failure leaves the activity stored without sets, never aborts."""
+    client = fake_client(
+        activities=[_strength_activity()],
+        sets_by_id={900001: RuntimeError("exerciseSets timed out")},
+    )
+    sync.backfill(client, conn, "2026-06-12", "2026-06-12")
+
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM activity_sets").fetchone()[0] == 0
+
+
+def test_backfill_exercise_sets_are_idempotent(conn, fake_client, fixture):
+    client = fake_client(
+        activities=[_strength_activity()],
+        sets_by_id={900001: fixture("exercise_sets_strength")},
+    )
+    sync.backfill(client, conn, "2026-06-12", "2026-06-12")
+    sync.backfill(client, conn, "2026-06-12", "2026-06-12")
+
+    assert conn.execute("SELECT COUNT(*) FROM activity_sets").fetchone()[0] == 3
+
+
 def test_backfill_marks_empty_wellness_day(conn, fake_client, fixture):
     client = fake_client(by_day={"wellness": {"2026-05-20": fixture("wellness_empty")}})
     sync.backfill(client, conn, "2026-05-20", "2026-05-20")

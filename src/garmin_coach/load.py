@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from .models import STRENGTH_DISCIPLINE  # HR-blind discipline replaced by session-RPE
 
-__all__ = ["STRENGTH_DISCIPLINE", "blend", "srpe_load"]
+__all__ = ["STRENGTH_DISCIPLINE", "activity_load", "blend", "srpe_load"]
 
 
 def srpe_load(
@@ -60,3 +60,23 @@ def blend(
     if discipline == STRENGTH_DISCIPLINE:
         return srpe if srpe is not None else g
     return max(g, srpe or 0.0)
+
+
+def activity_load(
+    discipline: str | None,
+    garmin_load: float | None,
+    logged_rpe: float | None,
+    duration_s: float | None,
+    *,
+    scale: float,
+    sila_default_rpe: float,
+) -> float:
+    """One activity's blended load: Foster sRPE fused with the Garmin load.
+
+    A convenience over :func:`srpe_load` + :func:`blend` for callers that hold the
+    raw inputs (discipline, Garmin load, logged RPE, duration).
+    """
+    srpe = srpe_load(
+        discipline, logged_rpe, duration_s, scale=scale, sila_default_rpe=sila_default_rpe
+    )
+    return blend(discipline, garmin_load, srpe)

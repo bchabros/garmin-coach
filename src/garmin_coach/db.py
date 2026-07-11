@@ -125,6 +125,23 @@ def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     _upsert(conn, "activities", row, pk="activity_id")
 
 
+def replace_activity_sets(conn: sqlite3.Connection, activity_id: int, rows: list[dict[str, Any]]) -> None:
+    """Replace one activity's `activity_sets` rows (idempotent re-fetch).
+
+    Replace-all semantics keyed on ``activity_id``: a re-fetch fully supersedes the
+    prior sets, so a changed set count never leaves orphan rows behind.
+    """
+    conn.execute("DELETE FROM activity_sets WHERE activity_id=?", (activity_id,))
+    if not rows:
+        return
+    cols = list(rows[0].keys())
+    placeholders = ",".join("?" for _ in cols)
+    conn.executemany(
+        f"INSERT INTO activity_sets ({','.join(cols)}) VALUES ({placeholders})",
+        [[row[c] for c in cols] for row in rows],
+    )
+
+
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     """Upsert a one-row-per-date table (sleep, hrv_nightly, daily_wellness, ...)."""
     _upsert(conn, table, row, pk="date")
@@ -158,6 +175,18 @@ def upsert_status(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert a `weekly_metrics` row by week_start (the Monday)."""
     _upsert(conn, "weekly_metrics", row, pk="week_start")
+
+
+def replace_pattern_overlap(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Rebuild the `pattern_overlap` mart wholesale from a fresh computation."""
+    conn.execute("DELETE FROM pattern_overlap")
+    if not rows:
+        return
+    conn.executemany(
+        "INSERT INTO pattern_overlap(date, dim, key, load_d, load_prev, overlap) "
+        "VALUES (:date, :dim, :key, :load_d, :load_prev, :overlap)",
+        rows,
+    )
 
 
 def replace_weekly_plan_actual(

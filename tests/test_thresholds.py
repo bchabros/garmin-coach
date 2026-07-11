@@ -50,6 +50,14 @@ def test_phase7_load_and_niggle_thresholds_present(conn):
     assert values["niggle_reduced_mode_severity"] == 3
 
 
+def test_phase8_overlap_thresholds_present(conn):
+    """Phase 8 seeds the per-set overlap floor and the stack-firing ceiling."""
+    values = thresholds.read(conn)
+
+    assert values["pattern_load_floor"] == 20
+    assert values["pattern_overlap_high"] == 40
+
+
 def test_merge_applies_explicit_overrides():
     """Tests and callers can still pass explicit threshold overrides."""
     values = thresholds.merge({"acwr_sweet_hi": 1.0})

@@ -39,7 +39,7 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 6 | Personal training zones (`athlete_zones` mart) | Done | [section](#phase-6-personal-training-zones) · [PRD](prd/phase-6.md) |
 | 6b | Athlete snapshot (`athlete_status` mart + `snapshot`) | Done | [section](#phase-6b-athlete-snapshot) · [PRD](prd/phase-6b/PRD.md) |
 | 7 | Session-RPE load model for strength/Hyrox + niggle log | Done | [section](#phase-7-strength-and-hyrox-load-model) · [PRD](prd/phase-7/PRD.md) |
-| 8 | Per-set capture + movement-pattern overlap | Planned | [section](#phase-8-per-set-capture-and-overlap) |
+| 8 | Per-set capture + movement-pattern overlap | Done | [section](#phase-8-per-set-capture-and-overlap) · [PRD](prd/phase-8-movement-overlap/PRD.md) |
 | 9 | Race-date periodization + race-day pacing | Planned | [section](#phase-9-race-date-periodization) |
 | 10 | Prospective session recommender (re-planning-aware) | Planned | [section](#phase-10-prospective-recommender) |
 | 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
@@ -770,6 +770,16 @@ a constructed stack; green.
 
 **Risk.** Exercise-name drift across sessions — maintain the exercise->pattern map by
 hand.
+
+- **STATUS: DONE.** Per-set ingest reuses the `_fetch_weather` seam
+  (`normalize_exercise_sets` -> `activity_sets`, best-effort, idempotent); a seeded
+  `exercise_pattern` map drives `overlap.py` -> the long-format `pattern_overlap` mart
+  (`pattern_load` = set-share x Phase 7 load; `overlap = min` over consecutive days).
+  New `PATTERN_STACK` / `MUSCLE_OVERLAP` warn signals + a `movement` coverage fact.
+  Deliberate deviations from this sketch: grip is a `muscle_group` (not a sixth
+  pattern), and the overlap mart is daily-only (weekly rollup deferred). Decisions:
+  `prd/phase-8-movement-overlap/PRD.md` + `adr/0011-phase-8-movement-overlap.md`; seam
+  tests in `tests/test_overlap.py` (+ `test_sync.py`, `test_signals.py`, `test_digest.py`).
 
 ## Phase 9: race-date periodization
 

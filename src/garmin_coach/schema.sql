@@ -154,6 +154,58 @@ CREATE TABLE IF NOT EXISTS niggle (
   PRIMARY KEY (date, body_part)
 );
 
+-- Movement-pattern map: Garmin exercise subcategory -> movement pattern + muscle
+-- group. Hand-curated core reference data (not Garmin-written, not a mart), seeded
+-- here and extended by hand as new exercises appear. 'grip' lives on the muscle
+-- axis (carries and pulls both tax it), not as a sixth movement pattern. Phase 8.
+CREATE TABLE IF NOT EXISTS exercise_pattern (
+  subcategory   TEXT PRIMARY KEY,           -- Garmin exercise name, e.g. BARBELL_DEADLIFT
+  pattern       TEXT,                       -- push|pull|hinge|squat|carry
+  muscle_group  TEXT                        -- chest|back|posterior|quads|shoulders|grip|core
+);
+-- seed rows (extend by hand; unmapped subcategories surface as a coverage fact)
+INSERT OR IGNORE INTO exercise_pattern(subcategory, pattern, muscle_group) VALUES
+ -- push
+ ('BARBELL_BENCH_PRESS',      'push',  'chest'),
+ ('DUMBBELL_BENCH_PRESS',     'push',  'chest'),
+ ('INCLINE_BENCH_PRESS',      'push',  'chest'),
+ ('PUSH_UP',                  'push',  'chest'),
+ ('OVERHEAD_PRESS',           'push',  'shoulders'),
+ ('BARBELL_OVERHEAD_PRESS',   'push',  'shoulders'),
+ ('DUMBBELL_SHOULDER_PRESS',  'push',  'shoulders'),
+ ('PUSH_PRESS',               'push',  'shoulders'),
+ ('DIP',                      'push',  'chest'),
+ -- pull
+ ('PULL_UP',                  'pull',  'back'),
+ ('CHIN_UP',                  'pull',  'back'),
+ ('LAT_PULLDOWN',             'pull',  'back'),
+ ('BARBELL_ROW',              'pull',  'back'),
+ ('BENT_OVER_ROW',            'pull',  'back'),
+ ('CABLE_ROW',                'pull',  'back'),
+ ('DUMBBELL_ROW',             'pull',  'back'),
+ ('FACE_PULL',                'pull',  'shoulders'),
+ -- hinge
+ ('BARBELL_DEADLIFT',         'hinge', 'posterior'),
+ ('ROMANIAN_DEADLIFT',        'hinge', 'posterior'),
+ ('SUMO_DEADLIFT',            'hinge', 'posterior'),
+ ('KETTLEBELL_SWING',         'hinge', 'posterior'),
+ ('HIP_THRUST',               'hinge', 'posterior'),
+ ('GOOD_MORNING',             'hinge', 'posterior'),
+ -- squat
+ ('BARBELL_BACK_SQUAT',       'squat', 'quads'),
+ ('BARBELL_FRONT_SQUAT',      'squat', 'quads'),
+ ('GOBLET_SQUAT',             'squat', 'quads'),
+ ('AIR_SQUAT',                'squat', 'quads'),
+ ('LUNGE',                    'squat', 'quads'),
+ ('WALL_BALL',                'squat', 'quads'),
+ ('LEG_PRESS',                'squat', 'quads'),
+ -- carry (grip-heavy)
+ ('FARMERS_WALK',             'carry', 'grip'),
+ ('FARMERS_CARRY',            'carry', 'grip'),
+ ('SANDBAG_CARRY',            'carry', 'grip'),
+ ('SLED_PUSH',                'carry', 'quads'),
+ ('SLED_PULL',                'carry', 'grip');
+
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)
 -- =============================================================================
@@ -363,7 +415,10 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('srpe_load_scale',             0.3, 'scales Foster sRPE (rpe*min) into Garmin-load units'),
  ('sila_default_rpe',              7, 'default Borg CR10 RPE for a Sila session with no logged RPE'),
  ('niggle_active_days',            7, 'days a single niggle log stays active for reduced-mode'),
- ('niggle_reduced_mode_severity',  3, 'active-niggle severity (1-5) that arms reduced-mode');
+ ('niggle_reduced_mode_severity',  3, 'active-niggle severity (1-5) that arms reduced-mode'),
+ -- Phase 8 movement-overlap (Garmin-load units; placeholders, tune as history grows)
+ ('pattern_load_floor',           20, 'min per-key session load to count a pattern as loaded'),
+ ('pattern_overlap_high',         40, 'adjacent-day overlap at/above this arms PATTERN_STACK/MUSCLE_OVERLAP');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (
@@ -538,6 +593,20 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   taper_active             INTEGER,
   planned_intent_today     TEXT,              -- plan_template[weekday(computed_at)]
   planned_label_today      TEXT
+);
+
+-- Movement-pattern overlap: the same pattern or muscle group loaded on adjacent
+-- days without a rest day. Long format - one row per (date, dim, key) whose load
+-- stacks D-1 -> D above pattern_load_floor. Recomputed by overlap.py as a tail of
+-- `features`; only overlap>0 rows are materialized. Phase 8.
+CREATE TABLE IF NOT EXISTS pattern_overlap (
+  date       TEXT NOT NULL,                  -- the second (stacked-on) day D
+  dim        TEXT NOT NULL,                  -- 'pattern' | 'muscle'
+  key        TEXT NOT NULL,                  -- e.g. 'hinge' (pattern) | 'grip' (muscle)
+  load_d     REAL,                           -- key's blended load on D
+  load_prev  REAL,                           -- key's blended load on D-1
+  overlap    REAL,                           -- min(load_d, load_prev)
+  PRIMARY KEY (date, dim, key)
 );
 
 -- =============================================================================

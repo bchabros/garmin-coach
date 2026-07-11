@@ -1,0 +1,25 @@
+{
+  "activityId": 900002,
+  "exerciseSets": [
+    {
+      "setType": "ACTIVE",
+      "duration": 60.0,
+      "repetitionCount": null,
+      "weight": null,
+      "startTime": "2026-06-13T18:00:00.0",
+      "exercises": [
+        {"category": "CARDIO", "name": null, "probability": 100.0}
+      ]
+    },
+    {
+      "setType": "ACTIVE",
+      "duration": 40.0,
+      "repetitionCount": 20,
+      "weight": 24000.0,
+      "startTime": "2026-06-13T18:02:00.0",
+      "exercises": [
+        {"category": "CARRY", "name": "FARMERS_WALK", "probability": 100.0}
+      ]
+    }
+  ]
+}

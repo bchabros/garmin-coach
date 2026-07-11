@@ -268,3 +268,47 @@ def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dic
             "monotony": monotony,
         },
     }
+
+
+def _overlap_signal(
+    overlap_rows: list[dict], thresholds: dict[str, float], to_date: str, *, dim: str, code: str
+) -> dict | None:
+    """Fire when a pattern/muscle stacks across adjacent days on ``to_date``.
+
+    Selects rows on the ``dim`` axis whose stack lands on the latest day of the
+    window (``to_date``) with ``overlap >= pattern_overlap_high``, and names the
+    offending keys. Facts are flat scalars (keys is a comma-joined string).
+    """
+    high = thresholds["pattern_overlap_high"]
+    day = [
+        r
+        for r in overlap_rows
+        if r["dim"] == dim and r["date"] == to_date and r["overlap"] >= high
+    ]
+    if not day:
+        return None
+    keys = sorted(r["key"] for r in day)
+    return {
+        "code": code,
+        "severity": "warn",
+        "facts": {
+            "keys": ",".join(keys),
+            "n_keys": len(keys),
+            "overlap_max": max(r["overlap"] for r in day),
+            "date": to_date,
+        },
+    }
+
+
+def pattern_stack(
+    overlap_rows: list[dict], thresholds: dict[str, float], to_date: str
+) -> dict | None:
+    """Movement-pattern stack on the latest day (push/pull/hinge/squat/carry)."""
+    return _overlap_signal(overlap_rows, thresholds, to_date, dim="pattern", code="PATTERN_STACK")
+
+
+def muscle_overlap(
+    overlap_rows: list[dict], thresholds: dict[str, float], to_date: str
+) -> dict | None:
+    """Muscle-group stack on the latest day (grip + posterior chain, etc.)."""
+    return _overlap_signal(overlap_rows, thresholds, to_date, dim="muscle", code="MUSCLE_OVERLAP")

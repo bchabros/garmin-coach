@@ -73,6 +73,10 @@ class GarminClient(Protocol):
         """Fetch per-activity weather (air temperature) for one activity."""
         ...
 
+    def get_activity_exercise_sets(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch per-activity exercise sets for one activity."""
+        ...
+
     def get_lactate_threshold(
         self, start_date: str | None = None, end_date: str | None = None
     ) -> dict[str, Any] | None:
@@ -181,6 +185,16 @@ def _fetch_weather(client: GarminClient, activity_id: Any) -> dict[str, Any] | N
         return None
 
 
+def _fetch_sets(client: GarminClient, activity_id: Any) -> dict[str, Any] | None:
+    """Best-effort per-activity exercise sets; a failure leaves no sets, never aborts."""
+    if activity_id is None:
+        return None
+    try:
+        return client.get_activity_exercise_sets(activity_id)
+    except Exception:
+        return None
+
+
 def _store_activities(
     conn: sqlite3.Connection,
     ref_date: str,
@@ -190,14 +204,31 @@ def _store_activities(
     """Store activity range payload raw-first, then upsert each core activity.
 
     When ``client`` is given, each activity is enriched with its weather
-    (``temp_c``); the raw weather payload is appended for reprocessing.
+    (``temp_c``) and its exercise sets; both raw payloads are appended for
+    reprocessing. Each enrichment is best-effort and never aborts the run.
     """
     db.insert_raw(conn, "get_activities_by_date", ref_date, json.dumps(activities))
     for act in activities:
-        weather = _fetch_weather(client, act.get("activityId")) if client else None
+        activity_id = act.get("activityId")
+        weather = _fetch_weather(client, activity_id) if client else None
         if weather is not None:
             db.insert_raw(conn, "get_activity_weather", ref_date, json.dumps(weather))
         db.upsert_activity(conn, models.normalize_activity(act, weather))
+        if client is not None and activity_id is not None:
+            _store_exercise_sets(conn, ref_date, activity_id, client)
+
+
+def _store_exercise_sets(
+    conn: sqlite3.Connection, ref_date: str, activity_id: int, client: GarminClient
+) -> None:
+    """Fetch one activity's exercise sets raw-first, then replace its `activity_sets`."""
+    payload = _fetch_sets(client, activity_id)
+    if payload is None:
+        return
+    db.insert_raw(conn, "get_activity_exercise_sets", ref_date, json.dumps(payload))
+    db.replace_activity_sets(
+        conn, activity_id, models.normalize_exercise_sets(activity_id, payload)
+    )
 
 
 def _sync_lactate(

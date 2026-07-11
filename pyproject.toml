@@ -19,6 +19,7 @@ matplotlib = "^3.11.0"
 pytest = "*"
 ruff = "*"
 mypy = "*"
+pre-commit = "*"
 
 [tool.poetry.scripts]
 garmin-coach = "garmin_coach.cli:main"

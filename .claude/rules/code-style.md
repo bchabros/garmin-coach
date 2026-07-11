@@ -4,6 +4,8 @@
 
 Run `task format && task lint` — non-negotiable. `task check` additionally runs
 format-check, typecheck, and the docstring gate (see [documentation.md](documentation.md)).
+A pre-commit hook enforces the `task check` gate automatically (installed by
+`task install`; see `docs/DEVELOPMENT.md`).
 
 ## Formatting
 

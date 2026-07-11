@@ -30,6 +30,17 @@ a chain of skills:
 - Before committing a change: `task check` (or `poetry run pytest && poetry run ruff
   check src tests && poetry run mypy src` if Task is unavailable).
 
+### Pre-commit hook
+
+A pre-commit hook enforces the `task check` gate on every commit. Setup is one-time:
+`task install` runs `poetry run pre-commit install`, which writes the hook to
+`.git/hooks/`. On each `git commit`, the hook runs the full gate (lint -> docstrings ->
+typecheck -> test); a failing check blocks the commit.
+
+To bypass it -- for an intentional WIP commit, or in the poetry-less Cowork/Linux
+sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
+`git commit --no-verify`, or skip a single slow hook with e.g. `SKIP=test git commit`.
+
 ## Architecture
 
 `config.py` (pydantic-settings) - `client.py` (login+MFA, endpoint->method map, the

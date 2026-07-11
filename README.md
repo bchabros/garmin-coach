@@ -110,8 +110,12 @@ unattended and reduces the digest to log-worthy alerts.
 Requires Python 3.13 and [Poetry](https://python-poetry.org/). [Task](https://taskfile.dev/) is optional but recommended; every task wraps the underlying Poetry command.
 
 ```bash
-poetry install
+poetry install                 # or: task install (also installs the pre-commit hook)
 ```
+
+`task install` additionally runs `pre-commit install`, wiring a git hook that runs
+`task check` before every commit (see [Development](#development)). After a bare
+`poetry install`, enable it once with `poetry run pre-commit install`.
 
 No `.env` is required: credentials are prompted on the first login and every other
 setting has a sensible default. To override anything (DB path, backfill start,
@@ -268,6 +272,11 @@ poetry run ruff check src tests
 poetry run ruff check src --select D --ignore D100,D104,D105,D107
 poetry run mypy src
 ```
+
+A pre-commit hook (installed by `task install`, or `poetry run pre-commit install`)
+runs the full `task check` gate before every commit and blocks it on failure. Bypass
+it with `git commit --no-verify` for an intentional WIP commit, or in the poetry-less
+Cowork sandbox where `task` is unavailable.
 
 **Conventions:** code/docstrings in English, public docstrings in Google style,
 commit messages in English. Tests run fully offline — the transport is injected,

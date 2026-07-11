@@ -1,0 +1,37 @@
+# Runs the repo's `task check` gate before every commit.
+#
+# The hooks below are the individual components of `task check` (see Taskfile.yml),
+# split into separate hooks so a single slow check can be skipped when needed
+# (e.g. `SKIP=test git commit`). Taskfile.yml is the source of truth for the
+# commands -- if you add a step to `task check`, add a matching hook here.
+# Ordered cheap-first so quick failures surface before the full test run.
+#
+# Activate once with:  poetry run pre-commit install   (task install does this for you)
+default_stages: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: lint
+        name: ruff lint (task lint)
+        entry: task lint
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: docstrings
+        name: ruff docstrings (task docstrings)
+        entry: task docstrings
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: typecheck
+        name: mypy (task typecheck)
+        entry: task typecheck
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: test
+        name: pytest (task test)
+        entry: task test
+        language: system
+        pass_filenames: false
+        always_run: true

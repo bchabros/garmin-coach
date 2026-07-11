@@ -3,7 +3,9 @@
 ## Rules
 
 - **Commit messages** keep the existing convention from `git log`
-  (`FEAT:` / `FIX:` / `DOCS:` prefixes, imperative subject).
+  (`FEAT:` / `FIX:` / `DOCS:` prefixes, imperative subject). Use `CHORE:` for
+  tooling, dependency, and repo-maintenance commits that are neither a feature,
+  a fix, nor documentation.
 - **Merging** — always squash merge when merging a branch or PR (`--squash` /
   "Squash and merge"), so each feature lands as a single commit on `main`.
 

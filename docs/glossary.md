@@ -7,7 +7,9 @@ code, docstrings, PRDs, and ADRs.
 
 - **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten.
 - **core** - normalized, upserted-by-PK tables (`activities`, `daily_wellness`,
-  `sleep`, `hrv_nightly`, `sync_state`). The system of record.
+  `sleep`, `hrv_nightly`, `sync_state`, plus the manually-logged `session_rpe` and
+  `niggle`). The system of record. Most core tables are ETL-written from Garmin;
+  `session_rpe`/`niggle` are ground truth written by `garmin-coach log-rpe` (Phase 7).
 - **mart** - recomputed, derived tables (`daily_metrics`, `weekly_metrics`,
   `weekly_plan_actual`).
   Never a system of record; safe to drop and rebuild from core.
@@ -28,7 +30,20 @@ code, docstrings, PRDs, and ADRs.
 - **hrv_low_flag** - 1 when `avg_hrv < hrv_baseline - 1 * hrv_sd`.
 - **Load buckets (load balance)** - Garmin-style attribution of `training_load` by
   Training Effect: `load_anaerobic` (`anaero_te >= 1.0`), else `load_low`
-  (`aero_te < 2.5`), else `load_high`. A different language from HR zones.
+  (`aero_te < 2.5`), else `load_high`, plus `load_strength` for blended `Siła` load
+  (Phase 7). A different language from HR zones. The three TE buckets remain
+  cardio-only (they feed `AEROBIC_LOW_SHORTAGE`); `load_day` sums all four.
+- **sRPE (session-RPE load)** - Foster load from a subjective Borg CR10 rating:
+  `sRPE = srpe_load_scale x rpe x duration_min`, scaled (`srpe_load_scale`, default
+  0.3) into Garmin-load units so it is comparable to `training_load` (Phase 7).
+- **load blend** - the per-activity rule turning Garmin load + sRPE into one
+  `load_day` contribution: `Siła` takes sRPE (Garmin is blind to lifting), every other
+  discipline takes `max(garmin_load, sRPE)` so a logged RPE can only raise an honest
+  cardio load. `Siła` falls back to `sila_default_rpe` (default 7) when no RPE is
+  logged; cardio gets no default injection.
+- **load_strength** - the blended `Siła` load bucket; part of `load_day` (so ACWR /
+  monotony / strain / hard-day logic see lifting) but excluded from the aerobic
+  balance shares.
 - **HR-zone minutes (z1..z5_min)** - time in each heart-rate zone, from
   `activities.hr_z1..z5_s` / 60. Answers "distribution of time", distinct from load
   buckets which answer "distribution of stimulus".
@@ -53,7 +68,16 @@ code, docstrings, PRDs, and ADRs.
 - **signal** - a single coach finding `{code, severity, facts, garmin_agrees?}` with
   `severity` in `info|warn|alert` and `facts` a flat dict of scalars. Codes:
   `AEROBIC_LOW_SHORTAGE`, `ACWR_OUT_OF_RANGE`, `HRV_LOW_MORNING`, `TWO_HARD_DAYS`,
-  `HRV_SLEEP_CONFOUND`, `DELOAD_ADVISED`.
+  `HRV_SLEEP_CONFOUND`, `DELOAD_ADVISED`, `NIGGLE_REDUCED_MODE`.
+- **niggle** - a logged body-part soreness/pain (`niggle` core table, PK `(date,
+  body_part)`, severity 1-5). Ground truth written by `garmin-coach log-rpe --niggle`,
+  not from Garmin (Phase 7).
+- **active niggle** - a niggle whose latest per-body-part entry falls within the
+  trailing `niggle_active_days` (default 7) window ending at the report horizon; one
+  log stays active for the window, a lower-severity re-log clears it early.
+- **reduced-mode** - the `NIGGLE_REDUCED_MODE` signal (severity `warn`): an active
+  niggle at/above `niggle_reduced_mode_severity` tells the coach to dial back. The
+  local equivalent of Runna's "Not Feeling 100%" dial-back.
 - **report horizon** - the single `to_date`/window that scopes a digest; daily facts,
   weekly facts, and weekly signals must all sit at or before this horizon.
 - **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below

@@ -130,6 +130,30 @@ CREATE TABLE IF NOT EXISTS activity_sets (
   FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
 );
 
+-- Session-RPE (Borg CR10) per activity: the subjective load for strength/Hyrox
+-- work that Garmin's HR-driven training_load under-counts. Manually logged
+-- (garmin-coach log-rpe), never from Garmin - ground truth, system of record. Phase 7.
+CREATE TABLE IF NOT EXISTS session_rpe (
+  activity_id  INTEGER PRIMARY KEY,        -- one rating per activity
+  rpe          INTEGER NOT NULL,           -- Borg CR10 (1-10)
+  soreness     INTEGER,                    -- optional (1-10)
+  mood         INTEGER,                    -- optional (1-10)
+  source       TEXT,                       -- how it was entered (e.g. 'manual')
+  notes        TEXT,
+  FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
+);
+
+-- Niggle log: a body-part soreness/pain severity, manually logged (garmin-coach
+-- log-rpe --niggle). One active entry dials the coach into reduced-mode. A later
+-- entry for the same body part supersedes it (re-log lower to clear). Phase 7.
+CREATE TABLE IF NOT EXISTS niggle (
+  date       TEXT NOT NULL,                -- day the niggle was logged
+  body_part  TEXT NOT NULL,                -- e.g. 'knee', 'shoulder' (free text)
+  severity   INTEGER NOT NULL,             -- 1-5; >= threshold arms reduced-mode
+  note       TEXT,
+  PRIMARY KEY (date, body_part)
+);
+
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)
 -- =============================================================================
@@ -334,7 +358,12 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('snapshot_vo2max_lookback_days', 90, 'window for the VO2max trend delta (slow-moving)'),
  ('snapshot_weight_lookback_days', 28, 'window for the body-weight trend delta'),
  ('snapshot_hrv_lookback_days',    28, 'window for the HRV trend delta (Garmin weekly avg)'),
- ('snapshot_trend_min_span_days',   7, 'below this available span a trend delta is NULL');
+ ('snapshot_trend_min_span_days',   7, 'below this available span a trend delta is NULL'),
+ -- Phase 7 strength/Hyrox load model + niggle log
+ ('srpe_load_scale',             0.3, 'scales Foster sRPE (rpe*min) into Garmin-load units'),
+ ('sila_default_rpe',              7, 'default Borg CR10 RPE for a Sila session with no logged RPE'),
+ ('niggle_active_days',            7, 'days a single niggle log stays active for reduced-mode'),
+ ('niggle_reduced_mode_severity',  3, 'active-niggle severity (1-5) that arms reduced-mode');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (
@@ -381,6 +410,7 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
   load_low        REAL,
   load_high       REAL,
   load_anaerobic  REAL,
+  load_strength   REAL,                    -- Phase 7: blended sRPE load for strength (Siła)
   -- HR-zone minutes (separate language from buckets)
   z1_min REAL, z2_min REAL, z3_min REAL, z4_min REAL, z5_min REAL,
   -- recovery
@@ -407,7 +437,9 @@ CREATE TABLE IF NOT EXISTS weekly_metrics (
   week_start        TEXT PRIMARY KEY,      -- Monday
   load_total        REAL,
   load_low          REAL, load_high REAL, load_anaerobic REAL,
+  load_strength     REAL,                  -- Phase 7: weekly sum of blended strength load
   low_share         REAL, high_share REAL, anaero_share REAL,
+  strength_share    REAL,                  -- Phase 7: the four shares sum to 1.0
   z2_min            REAL, threshold_min REAL, z5_min REAL,
   -- Foster monotony/strain (classic overtraining flags)
   monotony          REAL,                  -- mean daily load / SD daily load

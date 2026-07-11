@@ -91,6 +91,65 @@ def _activity(conn, aid, date, aero, anaero, load):
     )
 
 
+def _sila(conn, aid, date, load, dur_s=4200, aero=1.4, anaero=0.3):
+    """A strength session (discipline set, so the blend routes it to load_strength)."""
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": aid,
+            "start_local": f"{date} 18:00:00",
+            "date": date,
+            "gtype": "strength_training",
+            "discipline": "Siła",
+            "aero_te": aero,
+            "anaero_te": anaero,
+            "training_load": load,
+            "dur_s": dur_s,
+        },
+    )
+
+
+def test_sila_default_rpe_contributes_blended_strength_load(conn):
+    """An unrated Siła session is scored at the default RPE (~150), not Garmin's ~22,
+    and lands in load_strength - out of the TE buckets."""
+    _sila(conn, 1, "2026-06-08", load=22.0)  # 70 min, default RPE 7 -> 0.3*7*70 = 147
+
+    features.features(conn, data_start_date=DATA_START, to_date="2026-06-08")
+
+    r = _by_date(conn)["2026-06-08"]
+    assert abs(r["load_strength"] - 147.0) < 1e-6
+    assert abs(r["load_day"] - 147.0) < 1e-6
+    assert r["load_low"] == 0 and r["load_high"] == 0 and r["load_anaerobic"] == 0
+
+
+def test_logged_rpe_overrides_the_strength_default(conn):
+    """A logged RPE replaces the Siła default in the blend."""
+    _sila(conn, 1, "2026-06-08", load=22.0)
+    db.upsert_session_rpe(conn, {"activity_id": 1, "rpe": 9, "source": "manual"})
+
+    features.features(conn, data_start_date=DATA_START, to_date="2026-06-08")
+
+    r = _by_date(conn)["2026-06-08"]
+    assert abs(r["load_strength"] - 189.0) < 1e-6  # 0.3 * 9 * 70
+
+
+def test_strength_day_lifts_load_day_and_the_four_buckets_sum(conn):
+    """load_day = load_low + load_high + load_anaerobic + load_strength, and a
+    strength day leaves the cardio buckets untouched."""
+    _activity(conn, 1, "2026-06-08", aero=3.0, anaero=0.0, load=120)  # running -> high
+    _sila(conn, 2, "2026-06-08", load=22.0)                            # strength -> 147
+
+    features.features(conn, data_start_date=DATA_START, to_date="2026-06-08")
+
+    r = _by_date(conn)["2026-06-08"]
+    assert r["load_high"] == 120
+    assert abs(r["load_strength"] - 147.0) < 1e-6
+    assert abs(
+        r["load_low"] + r["load_high"] + r["load_anaerobic"] + r["load_strength"]
+        - r["load_day"]
+    ) < 1e-6
+
+
 def test_load_buckets_by_te_are_total_over_nulls(conn):
     """anaero_te>=1 -> anaerobic; else aero_te<2.5 -> low, else high. NULL TE
     counts as 0 (falls into low); NULL load contributes 0. Buckets sum to load_day."""
@@ -238,7 +297,11 @@ def test_golden_regression_reproduces_reference_analysis(conn):
     # Invariant: load buckets always sum to the day's total load.
     for r in by_date.values():
         assert (
-            abs(r["load_low"] + r["load_high"] + r["load_anaerobic"] - r["load_day"]) < 1e-6
+            abs(
+                r["load_low"] + r["load_high"] + r["load_anaerobic"]
+                + (r["load_strength"] or 0) - r["load_day"]
+            )
+            < 1e-6
         )
 
     # Spot-check zone minutes against a known fixture activity (2026-07-02).

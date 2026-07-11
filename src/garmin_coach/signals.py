@@ -187,6 +187,48 @@ def hrv_low_morning(rows: list[dict], thresholds: dict[str, float]) -> dict | No
     }
 
 
+def niggle_reduced_mode(
+    niggle_rows: list[dict], thresholds: dict[str, float], to_date: str
+) -> dict | None:
+    """Reduced-mode when an active niggle meets the severity floor.
+
+    ``niggle_rows`` are ``{date, body_part, severity}`` entries; the latest entry
+    per body part within the trailing ``niggle_active_days`` window (ending at
+    ``to_date``) is the current state, so a lower-severity re-log clears an earlier
+    one. Fires on the worst body part still at/above
+    ``niggle_reduced_mode_severity``. Facts are flat scalars.
+    """
+    if not niggle_rows:
+        return None
+    window = int(thresholds["niggle_active_days"])
+    floor = thresholds["niggle_reduced_mode_severity"]
+    end = _dt.date.fromisoformat(to_date)
+    cutoff = (end - _dt.timedelta(days=window - 1)).isoformat()
+
+    latest: dict[str, dict] = {}
+    for r in niggle_rows:
+        if r["date"] < cutoff or r["date"] > to_date:
+            continue
+        prior = latest.get(r["body_part"])
+        if prior is None or r["date"] >= prior["date"]:
+            latest[r["body_part"]] = r
+
+    active = [r for r in latest.values() if r["severity"] >= floor]
+    if not active:
+        return None
+    worst = max(active, key=lambda r: r["severity"])
+    return {
+        "code": "NIGGLE_REDUCED_MODE",
+        "severity": "warn",
+        "facts": {
+            "body_part": worst["body_part"],
+            "severity": worst["severity"],
+            "n_active": len(active),
+            "days_active": (end - _dt.date.fromisoformat(worst["date"])).days,
+        },
+    }
+
+
 def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dict | None:
     """Rule 6 (prospective): load has climbed into an overtraining flag.
 

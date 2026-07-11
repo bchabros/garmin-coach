@@ -197,6 +197,7 @@ def _week_row(
     load_low = _sum(days, "load_low")
     load_high = _sum(days, "load_high")
     load_anaerobic = _sum(days, "load_anaerobic")
+    load_strength = _sum(days, "load_strength")
     monotony = _monotony(loads)
     strain = load_total * monotony if monotony is not None else None
 
@@ -208,9 +209,11 @@ def _week_row(
         "load_low": load_low,
         "load_high": load_high,
         "load_anaerobic": load_anaerobic,
+        "load_strength": load_strength,
         "low_share": _share(load_low, load_total),
         "high_share": _share(load_high, load_total),
         "anaero_share": _share(load_anaerobic, load_total),
+        "strength_share": _share(load_strength, load_total),
         "monotony": monotony,
         "strain": strain,
         "max_consec_hard": _max_consec_hard(loads, hard),

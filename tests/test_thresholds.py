@@ -40,6 +40,16 @@ def test_snapshot_trend_thresholds_present(conn):
     assert values["snapshot_trend_min_span_days"] == 7
 
 
+def test_phase7_load_and_niggle_thresholds_present(conn):
+    """Phase 7 seeds the sRPE scale + default RPE and the niggle reduced-mode keys."""
+    values = thresholds.read(conn)
+
+    assert values["srpe_load_scale"] == 0.3
+    assert values["sila_default_rpe"] == 7
+    assert values["niggle_active_days"] == 7
+    assert values["niggle_reduced_mode_severity"] == 3
+
+
 def test_merge_applies_explicit_overrides():
     """Tests and callers can still pass explicit threshold overrides."""
     values = thresholds.merge({"acwr_sweet_hi": 1.0})

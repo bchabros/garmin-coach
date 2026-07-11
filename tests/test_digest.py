@@ -452,3 +452,48 @@ def test_golden_regression_over_real_mart_slice(conn):
     for s in d["signals"]:
         assert s["severity"] in {"info", "warn", "alert"}
         assert all(not isinstance(v, (dict, list)) for v in s["facts"].values())
+
+
+def _niggle(conn, date, body_part, severity, note=None):
+    db.upsert_niggle(conn, {"date": date, "body_part": body_part,
+                            "severity": severity, "note": note})
+
+
+def test_niggle_reduced_mode_fires_for_active_niggle(conn):
+    """An active niggle at/above the severity floor arms NIGGLE_REDUCED_MODE with
+    flat facts (worst body part, severity, counts)."""
+    _niggle(conn, "2026-06-14", "kolano", 4)
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-14")
+
+    assert "NIGGLE_REDUCED_MODE" in _codes(d)
+    s = _signal(d, "NIGGLE_REDUCED_MODE")
+    assert s["severity"] == "warn"
+    assert s["facts"] == {
+        "body_part": "kolano", "severity": 4, "n_active": 1, "days_active": 0,
+    }
+
+
+def test_niggle_below_severity_floor_is_silent(conn):
+    """A logged niggle below niggle_reduced_mode_severity does not fire."""
+    _niggle(conn, "2026-06-14", "kolano", 2)
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-14")
+    assert "NIGGLE_REDUCED_MODE" not in _codes(d)
+
+
+def test_niggle_outside_active_window_is_silent(conn):
+    """A niggle older than niggle_active_days (7) no longer arms reduced-mode."""
+    _niggle(conn, "2026-06-06", "kolano", 5)  # 8 days before to_date
+
+    d = build_digest(conn, from_date="2026-06-01", to_date="2026-06-14")
+    assert "NIGGLE_REDUCED_MODE" not in _codes(d)
+
+
+def test_niggle_cleared_by_lower_severity_relog(conn):
+    """A later, lower-severity entry for the same body part supersedes the first."""
+    _niggle(conn, "2026-06-12", "kolano", 4)
+    _niggle(conn, "2026-06-14", "kolano", 1)  # re-log lower -> latest wins
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-14")
+    assert "NIGGLE_REDUCED_MODE" not in _codes(d)

@@ -30,6 +30,11 @@ def _schema_sql() -> str:
 # backfills these with ALTER for DBs created by an earlier schema version.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "activities": {"temp_c": "REAL"},  # Phase 6: per-activity temperature
+    "daily_metrics": {"load_strength": "REAL"},  # Phase 7: blended strength load
+    "weekly_metrics": {  # Phase 7: weekly strength load + its share
+        "load_strength": "REAL",
+        "strength_share": "REAL",
+    },
 }
 
 
@@ -123,6 +128,21 @@ def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     """Upsert a one-row-per-date table (sleep, hrv_nightly, daily_wellness, ...)."""
     _upsert(conn, table, row, pk="date")
+
+
+def upsert_session_rpe(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert a `session_rpe` row by activity ID (re-logging corrects it)."""
+    _upsert(conn, "session_rpe", row, pk="activity_id")
+
+
+def upsert_niggle(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert a `niggle` row by (date, body_part); a re-log updates severity/note."""
+    conn.execute(
+        "INSERT INTO niggle(date, body_part, severity, note) VALUES (?,?,?,?) "
+        "ON CONFLICT(date, body_part) DO UPDATE SET "
+        "severity=excluded.severity, note=excluded.note",
+        (row["date"], row["body_part"], row["severity"], row.get("note")),
+    )
 
 
 def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:

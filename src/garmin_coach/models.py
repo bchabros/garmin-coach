@@ -9,12 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
+# Discipline label whose Garmin (HR-driven) load under-counts the real effort; the
+# Phase 7 load blend replaces it with session-RPE. Single source of truth for the label.
+STRENGTH_DISCIPLINE = "Siła"
+
 # gtype (activityType.typeKey) -> discipline label used across the app.
 _DISCIPLINE = {
     "running": "Bieganie",
     "trail_running": "Trail",
     "hiit": "Hyrox/HIIT",
-    "strength_training": "Siła",
+    "strength_training": STRENGTH_DISCIPLINE,
     "ski_touring": "Skitury",
     "backcountry_skiing": "Skitury",
 }

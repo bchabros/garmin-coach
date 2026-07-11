@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (tests + lint + docstrings + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: poetry
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      # Mirrors `task check` (Taskfile.yml). Kept as separate steps so a
+      # failing gate is labelled in the PR checks.
+      - name: Tests
+        run: poetry run pytest -p no:cacheprovider
+
+      - name: Lint
+        run: poetry run ruff check src tests --no-cache
+
+      - name: Docstrings
+        run: poetry run ruff check src --select D --ignore D100,D104,D105,D107 --no-cache
+
+      - name: Typecheck
+        run: poetry run mypy src

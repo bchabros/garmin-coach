@@ -70,6 +70,27 @@ def test_load_totals_and_shares(conn):
     assert w["anaero_share"] == 0.25
 
 
+def test_strength_load_totals_and_four_shares_sum_to_one(conn):
+    """load_strength sums the blended strength days; strength_share joins the three
+    cardio shares to sum to 1.0; load_total (and thus monotony/strain) includes it."""
+    _seed_span(conn, "2026-06-08", "2026-06-14",
+               load_day=0, load_low=0, load_high=0, load_anaerobic=0, load_strength=0)
+    _seed_day(conn, "2026-06-08", load_day=150, load_strength=150)
+    _seed_day(conn, "2026-06-10", load_day=50, load_low=50)
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    w = _weeks(conn)[0]
+    assert w["load_total"] == 200
+    assert w["load_strength"] == 150
+    assert w["strength_share"] == 0.75
+    assert w["low_share"] == 0.25
+    assert (
+        abs(w["low_share"] + w["high_share"] + w["anaero_share"] + w["strength_share"] - 1.0)
+        < 1e-6
+    )
+
+
 def test_monotony_and_strain_finite_for_varied_week(conn):
     """Foster monotony = mean daily load / sample SD over the 7 calendar days;
     strain = load_total * monotony. Worked example: loads [100,0,100,0,100,0,0]

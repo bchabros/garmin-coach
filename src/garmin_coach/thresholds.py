@@ -32,6 +32,10 @@ DEFAULTS: dict[str, float] = {
     "snapshot_weight_lookback_days": 28,
     "snapshot_hrv_lookback_days": 28,
     "snapshot_trend_min_span_days": 7,
+    "srpe_load_scale": 0.3,
+    "sila_default_rpe": 7,
+    "niggle_active_days": 7,
+    "niggle_reduced_mode_severity": 3,
 }
 
 

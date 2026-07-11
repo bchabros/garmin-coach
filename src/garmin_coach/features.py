@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import db, snapshot, weekly, zones
+from . import db, load, snapshot, thresholds, weekly, zones
 
 HRV_WINDOW_NIGHTS = 60
 
@@ -44,28 +44,48 @@ def _latest_core_date(conn: sqlite3.Connection) -> str | None:
     return max(dates) if dates else None
 
 
-def _load_by_day(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
-    """Aggregate per-day total load and the three TE-based load balance buckets.
+_EMPTY_LOAD = {
+    "load_day": 0.0,
+    "load_low": 0.0,
+    "load_high": 0.0,
+    "load_anaerobic": 0.0,
+    "load_strength": 0.0,
+}
 
-    Bucketing (Garmin logic): anaerobic when anaero_te >= 1.0; otherwise low when
-    aero_te < 2.5, else high. NULL TE is treated as 0; NULL training_load
-    contributes 0. Buckets always sum to load_day.
+
+def _load_by_day(
+    conn: sqlite3.Connection, *, scale: float, sila_default_rpe: float
+) -> dict[str, dict[str, float]]:
+    """Aggregate per-day blended load and its four buckets.
+
+    Each activity's load is the session-RPE blend (see :mod:`load`): strength work
+    is scored from RPE and lands in ``load_strength``; cardio keeps its Garmin load,
+    raised by a logged RPE, and buckets by Training Effect (anaerobic when
+    anaero_te >= 1.0; else low when aero_te < 2.5, else high). The four buckets
+    always sum to ``load_day``; strength stays out of the aerobic (low/high/anaero)
+    shares that feed ``AEROBIC_LOW_SHORTAGE``.
     """
+    rpe_by_activity = dict(conn.execute("SELECT activity_id, rpe FROM session_rpe"))
     days: dict[str, dict[str, float]] = {}
-    for date, aero_te, anaero_te, load in conn.execute(
-        "SELECT date(start_local), aero_te, anaero_te, training_load FROM activities"
+    for aid, date, discipline, aero_te, anaero_te, dur_s, garmin_load in conn.execute(
+        "SELECT activity_id, date(start_local), discipline, aero_te, anaero_te, "
+        "dur_s, training_load FROM activities"
     ):
-        agg = days.setdefault(
-            date, {"load_day": 0.0, "load_low": 0.0, "load_high": 0.0, "load_anaerobic": 0.0}
+        agg = days.setdefault(date, dict(_EMPTY_LOAD))
+        srpe = load.srpe_load(
+            discipline, rpe_by_activity.get(aid), dur_s,
+            scale=scale, sila_default_rpe=sila_default_rpe,
         )
-        load = load or 0.0
-        agg["load_day"] += load
-        if (anaero_te or 0.0) >= 1.0:
-            agg["load_anaerobic"] += load
+        blended = load.blend(discipline, garmin_load, srpe)
+        agg["load_day"] += blended
+        if discipline == load.STRENGTH_DISCIPLINE:
+            agg["load_strength"] += blended
+        elif (anaero_te or 0.0) >= 1.0:
+            agg["load_anaerobic"] += blended
         elif (aero_te or 0.0) < 2.5:
-            agg["load_low"] += load
+            agg["load_low"] += blended
         else:
-            agg["load_high"] += load
+            agg["load_high"] += blended
     return days
 
 
@@ -146,11 +166,13 @@ def features(
         return
     start = _mart_start(data_start_date, from_date)
 
-    load_by_day = _load_by_day(conn)
-    empty_load = {"load_day": 0.0, "load_low": 0.0, "load_high": 0.0, "load_anaerobic": 0.0}
+    thr = thresholds.read(conn)
+    load_by_day = _load_by_day(
+        conn, scale=thr["srpe_load_scale"], sila_default_rpe=thr["sila_default_rpe"]
+    )
 
     def _load_day(d: _dt.date) -> float:
-        return load_by_day.get(d.isoformat(), empty_load)["load_day"]
+        return load_by_day.get(d.isoformat(), _EMPTY_LOAD)["load_day"]
 
     start_d = _dt.date.fromisoformat(data_start_date)
 
@@ -179,13 +201,14 @@ def features(
         low_flag: int | None = None
         if hrv is not None and threshold is not None:
             low_flag = 1 if hrv < threshold else 0
-        load = load_by_day.get(date, empty_load)
+        day_load = load_by_day.get(date, _EMPTY_LOAD)
         row = {
             "date": date,
-            "load_day": load["load_day"],
-            "load_low": load["load_low"],
-            "load_high": load["load_high"],
-            "load_anaerobic": load["load_anaerobic"],
+            "load_day": day_load["load_day"],
+            "load_low": day_load["load_low"],
+            "load_high": day_load["load_high"],
+            "load_anaerobic": day_load["load_anaerobic"],
+            "load_strength": day_load["load_strength"],
             "hrv": hrv,
             "hrv_baseline": hrv_baseline,
             "hrv_sd": hrv_sd,

@@ -1,6 +1,6 @@
 # 02 - Niggle log + reduced-mode: `niggle` table, `NIGGLE_REDUCED_MODE` signal, `log-rpe --niggle`
 
-Status: ready-for-agent
+Status: done
 Parent: `docs/prd/phase-7/PRD.md`
 
 ## What to build

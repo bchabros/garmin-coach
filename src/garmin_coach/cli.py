@@ -87,6 +87,40 @@ def log_session_rpe(
     return activity_date
 
 
+def log_niggle(
+    conn: sqlite3.Connection,
+    *,
+    body_part: str,
+    severity: int,
+    date: str | None = None,
+    note: str | None = None,
+) -> str:
+    """Write a niggle entry to core (transport-free); no recompute needed.
+
+    Reduced-mode is a digest-layer read, so it surfaces on the next report rather
+    than requiring a mart recompute here. A re-log for the same body part on the
+    same day updates it.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        body_part: The affected body part (free text, e.g. ``kolano``).
+        severity: Niggle severity (1-5).
+        date: The niggle date (default: today).
+        note: Optional free-text note.
+
+    Returns:
+        The date the niggle was recorded against.
+
+    Raises:
+        ValueError: If severity is out of range.
+    """
+    _check_range("severity", severity, 1, 5)
+    day = date or _dt.date.today().isoformat()
+    db.upsert_niggle(conn, {"date": day, "body_part": body_part, "severity": severity, "note": note})
+    conn.commit()
+    return day
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env()
     from_date = args.from_date or settings.data_start_date
@@ -172,27 +206,43 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
     db.bootstrap(conn)
 
     try:
-        if args.rpe is None:
-            raise ValueError("--rpe is required with --activity")
-        activity_date = log_session_rpe(
-            conn,
-            activity_id=args.activity_id,
-            rpe=args.rpe,
-            soreness=args.soreness,
-            mood=args.mood,
-            note=args.note,
-            data_start_date=settings.data_start_date,
-        )
+        if args.activity_id is not None:
+            if args.rpe is None:
+                raise ValueError("--rpe is required with --activity")
+            activity_date = log_session_rpe(
+                conn,
+                activity_id=args.activity_id,
+                rpe=args.rpe,
+                soreness=args.soreness,
+                mood=args.mood,
+                note=args.note,
+                data_start_date=settings.data_start_date,
+            )
+            message = (
+                f"log-rpe complete: activity {args.activity_id} rpe={args.rpe}; "
+                f"load recomputed from {activity_date}"
+            )
+        else:
+            if args.severity is None:
+                raise ValueError("--severity is required with --niggle")
+            day = log_niggle(
+                conn,
+                body_part=args.body_part,
+                severity=args.severity,
+                date=args.date,
+                note=args.note,
+            )
+            message = (
+                f"log-rpe complete: niggle {args.body_part} "
+                f"severity={args.severity} on {day}"
+            )
     except ValueError as exc:
         conn.close()
         print(f"log-rpe failed: {exc}")
         return 2
 
     conn.close()
-    print(
-        f"log-rpe complete: activity {args.activity_id} rpe={args.rpe}; "
-        f"load recomputed from {activity_date}"
-    )
+    print(message)
     return 0
 
 
@@ -281,15 +331,29 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=_cmd_snapshot)
 
     lr = sub.add_parser(
-        "log-rpe", help="Log a session RPE to core (transport-free) and refresh load."
+        "log-rpe", help="Log a session RPE or a niggle to core (transport-free)."
+    )
+    mode = lr.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--activity", dest="activity_id", type=int, default=None,
+        help="Activity ID to rate (RPE mode); recomputes load.",
+    )
+    mode.add_argument(
+        "--niggle", dest="body_part", default=None,
+        help="Body part for a niggle entry (niggle mode).",
     )
     lr.add_argument(
-        "--activity", dest="activity_id", type=int, required=True,
-        help="Activity ID to rate.",
+        "--rpe", type=int, default=None, help="Borg CR10 session RPE (1-10), with --activity."
     )
-    lr.add_argument("--rpe", type=int, default=None, help="Borg CR10 session RPE (1-10).")
     lr.add_argument("--soreness", type=int, default=None, help="Optional soreness (1-10).")
     lr.add_argument("--mood", type=int, default=None, help="Optional mood (1-10).")
+    lr.add_argument(
+        "--severity", type=int, default=None, help="Niggle severity (1-5), with --niggle."
+    )
+    lr.add_argument(
+        "--date", dest="date", default=None,
+        help="Niggle date YYYY-MM-DD (default: today).",
+    )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
     lr.set_defaults(func=_cmd_log_rpe)
 

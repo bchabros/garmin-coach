@@ -143,6 +143,17 @@ CREATE TABLE IF NOT EXISTS session_rpe (
   FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
 );
 
+-- Niggle log: a body-part soreness/pain severity, manually logged (garmin-coach
+-- log-rpe --niggle). One active entry dials the coach into reduced-mode. A later
+-- entry for the same body part supersedes it (re-log lower to clear). Phase 7.
+CREATE TABLE IF NOT EXISTS niggle (
+  date       TEXT NOT NULL,                -- day the niggle was logged
+  body_part  TEXT NOT NULL,                -- e.g. 'kolano', 'bark'
+  severity   INTEGER NOT NULL,             -- 1-5; >= threshold arms reduced-mode
+  note       TEXT,
+  PRIMARY KEY (date, body_part)
+);
+
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)
 -- =============================================================================

@@ -38,7 +38,7 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 5 | Weekly rollups, plan-vs-actual, deload detection | Done | [section](#phase-5-closing-the-loop) · [PRD](prd/phase-5.md) |
 | 6 | Personal training zones (`athlete_zones` mart) | Done | [section](#phase-6-personal-training-zones) · [PRD](prd/phase-6.md) |
 | 6b | Athlete snapshot (`athlete_status` mart + `snapshot`) | Done | [section](#phase-6b-athlete-snapshot) · [PRD](prd/phase-6b/PRD.md) |
-| 7 | Session-RPE load model for strength/Hyrox + niggle log | Spec'd | [section](#phase-7-strength-and-hyrox-load-model) · [PRD](prd/phase-7/PRD.md) |
+| 7 | Session-RPE load model for strength/Hyrox + niggle log | Done | [section](#phase-7-strength-and-hyrox-load-model) · [PRD](prd/phase-7/PRD.md) |
 | 8 | Per-set capture + movement-pattern overlap | Planned | [section](#phase-8-per-set-capture-and-overlap) |
 | 9 | Race-date periodization + race-day pacing | Planned | [section](#phase-9-race-date-periodization) |
 | 10 | Prospective session recommender (re-planning-aware) | Planned | [section](#phase-10-prospective-recommender) |
@@ -692,7 +692,10 @@ marts.
 
 ## Phase 7: strength and Hyrox load model
 
-> **Session-RPE load model + niggle log.**
+> **Session-RPE load model + niggle log.** Status: **DONE** — see
+> [PRD](prd/phase-7/PRD.md) and
+> [ADR 0010](adr/0010-phase-7-strength-load-and-niggle.md). The design record below is
+> kept for context.
 
 **Goal.** Stop under-counting non-cardio work so ACWR, monotony, and deload reflect
 real stress; capture the subjective signals (RPE, soreness, niggles) the industry

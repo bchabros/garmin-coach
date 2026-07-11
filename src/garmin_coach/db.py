@@ -135,6 +135,16 @@ def upsert_session_rpe(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     _upsert(conn, "session_rpe", row, pk="activity_id")
 
 
+def upsert_niggle(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert a `niggle` row by (date, body_part); a re-log updates severity/note."""
+    conn.execute(
+        "INSERT INTO niggle(date, body_part, severity, note) VALUES (?,?,?,?) "
+        "ON CONFLICT(date, body_part) DO UPDATE SET "
+        "severity=excluded.severity, note=excluded.note",
+        (row["date"], row["body_part"], row["severity"], row.get("note")),
+    )
+
+
 def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert the singleton `athlete_zones` mart row (id=1)."""
     _upsert(conn, "athlete_zones", row, pk="id")

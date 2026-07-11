@@ -1,6 +1,6 @@
 # 01 - Session-RPE load model: `session_rpe`, `load.blend`, `load_strength` bucket, `log-rpe --activity`
 
-Status: ready-for-agent
+Status: done
 Parent: `docs/prd/phase-7/PRD.md`
 
 ## What to build

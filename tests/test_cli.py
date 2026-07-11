@@ -55,3 +55,32 @@ def test_log_session_rpe_validates_rpe_range(conn):
     _sila(conn)
     with pytest.raises(ValueError, match="rpe"):
         cli.log_session_rpe(conn, activity_id=1, rpe=11, data_start_date=DATA_START)
+
+
+def test_parser_accepts_log_rpe_niggle_mode():
+    args = build_parser().parse_args(["log-rpe", "--niggle", "kolano", "--severity", "4"])
+
+    assert args.body_part == "kolano"
+    assert args.severity == 4
+
+
+def test_parser_rejects_both_activity_and_niggle():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["log-rpe", "--activity", "1", "--niggle", "kolano", "--severity", "3"]
+        )
+
+
+def test_log_niggle_writes_row(conn):
+    day = cli.log_niggle(conn, body_part="kolano", severity=4, date="2026-06-14")
+
+    assert day == "2026-06-14"
+    row = conn.execute(
+        "SELECT severity FROM niggle WHERE date='2026-06-14' AND body_part='kolano'"
+    ).fetchone()
+    assert row[0] == 4
+
+
+def test_log_niggle_validates_severity_range(conn):
+    with pytest.raises(ValueError, match="severity"):
+        cli.log_niggle(conn, body_part="kolano", severity=6, date="2026-06-14")

@@ -135,6 +135,16 @@ def _headline(rows: list[dict], recent: list[dict], thresholds: dict[str, float]
     }
 
 
+def _read_niggles(conn: sqlite3.Connection, to_date: str) -> list[dict]:
+    """Read niggle entries on/before ``to_date``; the signal windows them itself."""
+    cur = conn.execute(
+        "SELECT date, body_part, severity FROM niggle WHERE date <= ? ORDER BY date",
+        (to_date,),
+    )
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def _read_weekly(conn: sqlite3.Connection, through_date: str | None = None) -> list[dict]:
     """Read weekly rows in week order, optionally scoped to a report horizon."""
     if through_date is None:
@@ -203,12 +213,17 @@ def build_digest(
     weekly_section = _weekly_section(conn, weekly_rows, thr)
     zones_section = _zones_section(conn)
     deload = _signals.deload_advised(weekly_rows, thr)
+    niggle = (
+        _signals.niggle_reduced_mode(_read_niggles(conn, to_date), thr, to_date)
+        if to_date is not None
+        else None
+    )
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
         return {
             "window": {"from": from_date, "to": to_date, "days": 0},
             "headline": _headline([], [], thr),
-            "signals": [deload] if deload is not None else [],
+            "signals": [s for s in (deload, niggle) if s is not None],
             "weekly": weekly_section,
             "zones": zones_section,
             "disclaimer": DISCLAIMER,
@@ -231,6 +246,7 @@ def build_digest(
         _signals.two_hard_days(rows, thr, to_date),
         _signals.hrv_sleep_confound(rows, thr),
         deload,
+        niggle,
     )
     signals = sorted(
         (s for s in candidates if s is not None),

@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS session_rpe (
 -- entry for the same body part supersedes it (re-log lower to clear). Phase 7.
 CREATE TABLE IF NOT EXISTS niggle (
   date       TEXT NOT NULL,                -- day the niggle was logged
-  body_part  TEXT NOT NULL,                -- e.g. 'kolano', 'bark'
+  body_part  TEXT NOT NULL,                -- e.g. 'knee', 'shoulder' (free text)
   severity   INTEGER NOT NULL,             -- 1-5; >= threshold arms reduced-mode
   note       TEXT,
   PRIMARY KEY (date, body_part)

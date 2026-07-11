@@ -132,9 +132,11 @@ Full rationale in `docs/adr/0010-phase-7-strength-load-and-niggle.md`.
   `--activity <id> --rpe N [--soreness N] [--mood N] [--notes ...]` validates the
   activity exists (clear error otherwise), upserts `session_rpe`, then calls
   `features(from_date=<activity date>)` so the blended load is refreshed. `--niggle
-  <body_part> --severity N [--note ...]` upserts `niggle` and returns (reduced-mode
-  appears on the next `report`). Validation: RPE 1-10, soreness/mood 1-10 (optional),
-  severity 1-5. The command is transport-free (never calls Garmin).
+  <body_part> --severity N [--date YYYY-MM-DD] [--note ...]` upserts `niggle` and
+  returns (reduced-mode appears on the next `report`); `--date` defaults to today so a
+  niggle can be logged against the day it was noticed. Validation: RPE 1-10,
+  soreness/mood 1-10 (optional), severity 1-5. The command is transport-free (never
+  calls Garmin).
 - **New `db.upsert_session_rpe` and `db.upsert_niggle` helpers**, following the
   existing `_upsert` pattern (PK `activity_id`, and composite `(date, body_part)`).
 - **Four new `coach_thresholds` keys** (seeded in `schema.sql` and mirrored to

@@ -9,9 +9,9 @@ the two are comparable. See docs/adr/0010-phase-7-strength-load-and-niggle.md.
 
 from __future__ import annotations
 
-# Discipline label (from models._DISCIPLINE) whose Garmin load is HR-blind and so
-# is replaced by session-RPE rather than blended with max().
-STRENGTH_DISCIPLINE = "Siła"
+from .models import STRENGTH_DISCIPLINE  # HR-blind discipline replaced by session-RPE
+
+__all__ = ["STRENGTH_DISCIPLINE", "blend", "srpe_load"]
 
 
 def srpe_load(

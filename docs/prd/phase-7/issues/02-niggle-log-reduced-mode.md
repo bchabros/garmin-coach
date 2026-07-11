@@ -30,9 +30,11 @@ is Phase 10.
       `severity`, `n_active`, `days_active`.
 - [ ] The signal is silent when the newest per-body-part entry is below the threshold
       or older than the window; a re-log at lower severity clears it.
-- [ ] `garmin-coach log-rpe --niggle <body_part> --severity N [--note ...]` upserts
-      `niggle` and returns without recomputing `features` (reduced-mode is a
-      digest-layer read). Range validation: severity 1-5. Transport-free.
+- [ ] `garmin-coach log-rpe --niggle <body_part> --severity N [--date YYYY-MM-DD]
+      [--note ...]` upserts `niggle` and returns without recomputing `features`
+      (reduced-mode is a digest-layer read). `--date` defaults to today, so a niggle
+      noticed on a past day can still be logged against it (the active-window math is
+      date-based). Range validation: severity 1-5. Transport-free.
 - [ ] Two new `coach_thresholds` keys seeded in `schema.sql` and `DEFAULTS`:
       `niggle_active_days=7`, `niggle_reduced_mode_severity=3`.
 - [ ] `test_digest.py`: `NIGGLE_REDUCED_MODE` fires for an active niggle at/above the

@@ -24,6 +24,20 @@ only.
    yourself - that would call Garmin live, which the golden rule forbids from the coach
    layer; tell the operator to run it instead.
 
+   **If `poetry` is missing or fails** (the Cowork sandbox ships Python 3.10, not the
+   3.13 that poetry needs), do NOT build a venv or install a new Python - the code runs
+   fine on 3.10. Use the read-side fallback: install the runtime deps once and invoke
+   the CLI module directly.
+
+   ```bash
+   pip install matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
+   PYTHONPATH=src python3 -m garmin_coach.cli report     # or: features, if the mart is empty
+   ```
+
+   Only ever run **read-side** commands (`report`, `features`) this way - the same
+   golden-rule limit applies. See `docs/OPERATIONS.md` ("For Claude running in Cowork")
+   for the full note.
+
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
    `signals` list already ordered alert > warn > info, a `zones` block (personal

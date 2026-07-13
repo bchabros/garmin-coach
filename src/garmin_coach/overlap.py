@@ -15,12 +15,21 @@ import datetime as _dt
 import logging
 import sqlite3
 from collections import Counter
+from typing import Any
 
 from . import db, load, thresholds
 
 logger = logging.getLogger(__name__)
 
 DIMS = ("pattern", "muscle")
+
+# Shared FROM/JOIN for reading captured sets against the movement map. A set's
+# ``subcategory`` (real exercise name, or the category fallback) joins to
+# ``exercise_pattern``; an unmatched row means an exercise not yet in the map.
+_SETS_JOIN_MAP = (
+    "FROM activity_sets s "
+    "LEFT JOIN exercise_pattern p ON s.subcategory = p.subcategory"
+)
 
 
 def _session_load(
@@ -52,13 +61,17 @@ def _session_load(
 def _daily_key_load(
     conn: sqlite3.Connection, session_load: dict[int, tuple[str, float]]
 ) -> dict[tuple[str, str, str], float]:
-    """Sum blended load per (date, dim, key), split by set-share of mapped sets."""
+    """Sum blended load per (date, dim, key), split by set-share of mapped sets.
+
+    The denominator is movement sets only: a set mapped to neither a pattern nor a
+    muscle group (e.g. a ``CARDIO`` pseudo-set inside a Hyrox session) is excluded,
+    so it never dilutes the load attributed to the real strength movements.
+    """
     mapped: dict[int, list[tuple[str | None, str | None]]] = {}
-    for aid, _sub, pattern, muscle in conn.execute(
-        "SELECT s.activity_id, s.subcategory, p.pattern, p.muscle_group "
-        "FROM activity_sets s "
-        "LEFT JOIN exercise_pattern p ON s.subcategory = p.subcategory "
-        "WHERE p.subcategory IS NOT NULL"
+    for aid, pattern, muscle in conn.execute(
+        "SELECT s.activity_id, p.pattern, p.muscle_group "
+        f"{_SETS_JOIN_MAP} "
+        "WHERE p.pattern IS NOT NULL OR p.muscle_group IS NOT NULL"
     ):
         mapped.setdefault(aid, []).append((pattern, muscle))
 
@@ -81,13 +94,13 @@ def _daily_key_load(
 
 def _overlap_rows(
     daily: dict[tuple[str, str, str], float], floor: float
-) -> list[dict[str, object]]:
+) -> list[dict[str, Any]]:
     """Adjacent-day stacks: a key loaded above the floor on both D-1 and D."""
     series: dict[tuple[str, str], dict[str, float]] = {}
     for (date, dim, key), value in daily.items():
         series.setdefault((dim, key), {})[date] = value
 
-    rows: list[dict[str, object]] = []
+    rows: list[dict[str, Any]] = []
     for (dim, key), by_date in series.items():
         for date, load_d in by_date.items():
             prev = (_dt.date.fromisoformat(date) - _dt.timedelta(days=1)).isoformat()
@@ -106,15 +119,13 @@ def _overlap_rows(
     return rows
 
 
-def coverage(conn: sqlite3.Connection) -> dict[str, object]:
+def coverage(conn: sqlite3.Connection) -> dict[str, Any]:
     """Movement-map coverage over all captured sets (for the digest + drift warning)."""
     total = 0
     unmapped_count = 0
     unmapped: set[str] = set()
     for sub, mapped_sub in conn.execute(
-        "SELECT s.subcategory, p.subcategory "
-        "FROM activity_sets s "
-        "LEFT JOIN exercise_pattern p ON s.subcategory = p.subcategory"
+        f"SELECT s.subcategory, p.subcategory {_SETS_JOIN_MAP}"
     ):
         total += 1
         if mapped_sub is None:
@@ -150,7 +161,7 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
     cov = coverage(conn)
     if cov["sets_unmapped"]:
         logger.warning(
-            "[Phase8] %d unmapped exercise subcategories (excluded from overlap): %s",
+            "overlap: %d unmapped exercise subcategories (excluded from overlap): %s",
             cov["sets_unmapped"],
             cov["unmapped"],
         )

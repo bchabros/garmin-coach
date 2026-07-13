@@ -293,7 +293,6 @@ def _overlap_signal(
         "severity": "warn",
         "facts": {
             "keys": ",".join(keys),
-            "n_keys": len(keys),
             "overlap_max": max(r["overlap"] for r in day),
             "date": to_date,
         },

@@ -204,7 +204,11 @@ INSERT OR IGNORE INTO exercise_pattern(subcategory, pattern, muscle_group) VALUE
  ('FARMERS_CARRY',            'carry', 'grip'),
  ('SANDBAG_CARRY',            'carry', 'grip'),
  ('SLED_PUSH',                'carry', 'quads'),
- ('SLED_PULL',                'carry', 'grip');
+ ('SLED_PULL',                'carry', 'grip'),
+ -- known non-movement: a Garmin CARDIO pseudo-set (e.g. a Hyrox run leg) is a
+ -- real ACTIVE set with no exercise name. Mapped to no pattern/muscle so it is
+ -- excluded from the overlap load-split, yet stays out of the unmapped drift fact.
+ ('CARDIO',                   NULL,    NULL);
 
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)

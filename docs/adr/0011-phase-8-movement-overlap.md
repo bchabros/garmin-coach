@@ -22,7 +22,16 @@ and a deterministic overlap metric. See `docs/prd/phase-8-movement-overlap/PRD.m
   `backfill`. A failure leaves the activity without sets and never aborts the run.
   `normalize_exercise_sets` keeps only `ACTIVE` sets and reads Garmin's
   `exercises[].category` (parent) and `exercises[].name` (sub-category); `name=None`
-  under a known parent falls back to the category so the row keeps a join key.
+  under a known parent falls back to the category so the row keeps a join key. The DB
+  helper is `db.replace_activity_sets(conn, activity_id, rows)` (delete-then-insert per
+  activity), not the per-row `upsert_activity_sets` the issue-01 draft named: replace-all
+  keyed on `activity_id` means a re-fetch with fewer sets leaves no orphan rows behind.
+
+- **A `CARDIO` pseudo-set is seeded as a known non-movement.** Garmin emits a nameless
+  `category=CARDIO` ACTIVE set for a run leg inside a Hyrox session. It is seeded in
+  `exercise_pattern` with `NULL` pattern and muscle, so it is excluded from the overlap
+  load-split denominator yet does not surface in the unmapped-drift coverage fact (which
+  is reserved for real, addable strength exercises).
 
 - **The exercise->pattern map is core reference seed data.** A hand-curated
   `exercise_pattern(subcategory, pattern, muscle_group)` table is seeded in `schema.sql`

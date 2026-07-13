@@ -76,7 +76,6 @@ def test_pattern_stack_fires_on_latest_day_and_lists_keys():
     assert sig["code"] == "PATTERN_STACK"
     assert sig["severity"] == "warn"
     assert sig["facts"]["keys"] == "hinge,pull"
-    assert sig["facts"]["n_keys"] == 2
     assert sig["facts"]["overlap_max"] == 63.0
     assert sig["facts"]["date"] == "2026-07-11"
 

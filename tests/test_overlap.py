@@ -104,6 +104,23 @@ def test_unmapped_excluded_and_counted(conn):
     assert cov["unmapped"] == ["MYSTERY_LIFT"]
 
 
+def test_cardio_pseudo_set_excluded_not_unmapped(conn):
+    # A Hyrox-style session: one nameless CARDIO leg + real carry sets. The CARDIO
+    # set is a known non-movement, so it neither dilutes the carry share nor shows
+    # up as unmapped drift.
+    _add_session(conn, 1, "2026-06-12", ["CARDIO"] + ["FARMERS_WALK"] * 3)
+    _add_session(conn, 2, "2026-06-13", ["CARDIO"] + ["FARMERS_WALK"] * 3)
+    overlap.rollup(conn)
+
+    # carry share is 3/3 (CARDIO excluded from the denominator) -> full session load
+    load_d, _, _ = _overlap(conn, "pattern", "carry", "2026-06-13")
+    assert abs(load_d - FULL) < 0.5
+    cov = overlap.coverage(conn)
+    assert cov["sets_total"] == 8  # every ACTIVE set is still captured
+    assert cov["sets_unmapped"] == 0  # CARDIO is known, not drift
+    assert cov["unmapped"] == []
+
+
 def test_rollup_is_idempotent(conn):
     _add_session(conn, 1, "2026-06-12", ["BARBELL_DEADLIFT"] * 4)
     _add_session(conn, 2, "2026-06-13", ["BARBELL_DEADLIFT"] * 4)
@@ -113,3 +130,20 @@ def test_rollup_is_idempotent(conn):
     n = conn.execute("SELECT COUNT(*) FROM pattern_overlap").fetchone()[0]
     # one pattern row (hinge) + one muscle row (posterior) on 06-13
     assert n == 2
+
+
+def test_rollup_as_of_reproduces_past_day(conn):
+    # A later stacking session on 06-14 must not leak into a 06-13 recompute.
+    _add_session(conn, 1, "2026-06-12", ["BARBELL_DEADLIFT"] * 4)
+    _add_session(conn, 2, "2026-06-13", ["BARBELL_DEADLIFT"] * 4)
+    _add_session(conn, 3, "2026-06-14", ["BARBELL_DEADLIFT"] * 4)
+
+    # Full recompute, then capture the 06-13 hinge stack.
+    overlap.rollup(conn)
+    full = _overlap(conn, "pattern", "hinge", "2026-06-13")
+    assert full is not None
+
+    # Recompute as-of 06-13: reproduces that day and excludes 06-14 entirely.
+    overlap.rollup(conn, through_date="2026-06-13")
+    assert _overlap(conn, "pattern", "hinge", "2026-06-13") == full
+    assert _overlap(conn, "pattern", "hinge", "2026-06-14") is None

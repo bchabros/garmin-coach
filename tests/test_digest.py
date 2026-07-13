@@ -497,3 +497,64 @@ def test_niggle_cleared_by_lower_severity_relog(conn):
 
     d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-14")
     assert "NIGGLE_REDUCED_MODE" not in _codes(d)
+
+
+# --- Phase 8: movement-overlap signals + coverage ----------------------------
+
+
+def _overlap(conn, date, dim, key, overlap):
+    conn.execute(
+        "INSERT INTO pattern_overlap(date, dim, key, load_d, load_prev, overlap) "
+        "VALUES (?,?,?,?,?,?)",
+        (date, dim, key, overlap, overlap, overlap),
+    )
+
+
+def _set(conn, activity_id, subcategory, set_idx=0):
+    conn.execute(
+        "INSERT OR IGNORE INTO activities(activity_id, start_local, date, gtype) "
+        "VALUES (?,?,?,?)",
+        (activity_id, "2026-06-12 17:00:00", "2026-06-12", "strength_training"),
+    )
+    conn.execute(
+        "INSERT INTO activity_sets(activity_id, set_idx, subcategory) VALUES (?,?,?)",
+        (activity_id, set_idx, subcategory),
+    )
+
+
+def test_overlap_signals_fire_on_a_constructed_stack(conn):
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    _overlap(conn, "2026-07-11", "pattern", "hinge", 63.0)
+    _overlap(conn, "2026-07-11", "muscle", "grip", 55.0)
+    _overlap(conn, "2026-07-11", "muscle", "posterior", 48.0)
+
+    d = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")
+
+    assert "PATTERN_STACK" in _codes(d)
+    muscle = _signal(d, "MUSCLE_OVERLAP")
+    assert muscle["facts"]["keys"] == "grip,posterior"
+    assert muscle["severity"] == "warn"
+
+
+def test_overlap_signals_silent_below_threshold(conn):
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    _overlap(conn, "2026-07-11", "pattern", "hinge", 30.0)  # below pattern_overlap_high
+
+    d = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")
+    assert "PATTERN_STACK" not in _codes(d)
+
+
+def test_digest_reports_movement_coverage(conn):
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    _set(conn, 1, "BARBELL_DEADLIFT", set_idx=0)
+    _set(conn, 1, "MYSTERY_LIFT", set_idx=1)
+
+    cov = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["movement"]
+    assert cov["sets_total"] == 2
+    assert cov["sets_unmapped"] == 1
+    assert cov["unmapped"] == ["MYSTERY_LIFT"]
+
+
+def test_digest_movement_none_without_sets(conn):
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    assert build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["movement"] is None

@@ -31,6 +31,38 @@ def test_normalize_activity_maps_core_fields(fixture):
     assert row["is_pr"] == 1
 
 
+def test_normalize_exercise_sets_maps_active_sets(fixture):
+    rows = models.normalize_exercise_sets(900001, fixture("exercise_sets_strength"))
+
+    # REST sets are dropped; only the three ACTIVE work sets survive, re-indexed 0..2
+    assert [r["set_idx"] for r in rows] == [0, 1, 2]
+    assert all(r["activity_id"] == 900001 for r in rows)
+    bench = rows[0]
+    assert bench["category"] == "BENCH_PRESS"
+    assert bench["subcategory"] == "BARBELL_BENCH_PRESS"
+    assert bench["reps"] == 10
+    assert bench["duration_s"] == 48.0
+    assert bench["max_weight"] == 60000.0
+    assert [r["subcategory"] for r in rows] == [
+        "BARBELL_BENCH_PRESS",
+        "BARBELL_DEADLIFT",
+        "CABLE_ROW",
+    ]
+
+
+def test_normalize_exercise_sets_falls_back_to_category_when_name_missing(fixture):
+    rows = models.normalize_exercise_sets(900002, fixture("exercise_sets_hyrox"))
+
+    # name=None under a known parent -> subcategory falls back to the category
+    assert rows[0]["subcategory"] == "CARDIO"
+    assert rows[1]["subcategory"] == "FARMERS_WALK"
+
+
+def test_normalize_exercise_sets_empty_payload_is_empty():
+    assert models.normalize_exercise_sets(1, None) == []
+    assert models.normalize_exercise_sets(1, {"exerciseSets": []}) == []
+
+
 def test_normalize_activity_missing_fields_become_none(fixture):
     row = models.normalize_activity(
         {

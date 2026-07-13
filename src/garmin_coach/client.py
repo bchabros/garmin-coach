@@ -91,6 +91,10 @@ class GarminTransport:
         """Fetch per-activity weather (temperature is Fahrenheit in the payload)."""
         return self._api.get_activity_weather(str(activity_id))
 
+    def get_activity_exercise_sets(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch per-activity exercise sets (strength/Hyrox work only)."""
+        return self._api.get_activity_exercise_sets(str(activity_id))
+
     def get_lactate_threshold(
         self, start_date: str | None = None, end_date: str | None = None
     ) -> dict[str, Any] | None:

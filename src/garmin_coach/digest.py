@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as _dt
 import sqlite3
 
+from . import overlap as _overlap
 from . import signals as _signals
 from . import thresholds as _thresholds
 from . import weekly as _weekly
@@ -145,6 +146,26 @@ def _read_niggles(conn: sqlite3.Connection, to_date: str) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def _movement_coverage(conn: sqlite3.Connection) -> dict | None:
+    """Per-set movement-map coverage, so unmapped-exercise drift stays visible.
+
+    Returns None when no sets are captured yet, so the digest carries the fact only
+    once there is per-set data to report on.
+    """
+    cov = _overlap.coverage(conn)
+    return cov if cov["sets_total"] else None
+
+
+def _read_overlap(conn: sqlite3.Connection, to_date: str) -> list[dict]:
+    """Read pattern_overlap rows on/before ``to_date``; the signal picks the latest day."""
+    cur = conn.execute(
+        "SELECT date, dim, key, overlap FROM pattern_overlap WHERE date <= ? ORDER BY date",
+        (to_date,),
+    )
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def _read_weekly(conn: sqlite3.Connection, through_date: str | None = None) -> list[dict]:
     """Read weekly rows in week order, optionally scoped to a report horizon."""
     if through_date is None:
@@ -213,19 +234,22 @@ def build_digest(
     weekly_section = _weekly_section(conn, weekly_rows, thr)
     zones_section = _zones_section(conn)
     deload = _signals.deload_advised(weekly_rows, thr)
-    niggle = (
-        _signals.niggle_reduced_mode(_read_niggles(conn, to_date), thr, to_date)
-        if to_date is not None
-        else None
-    )
+    overlap_rows = _read_overlap(conn, to_date) if to_date is not None else []
+    niggle = pattern = muscle = None
+    if to_date is not None:
+        niggle = _signals.niggle_reduced_mode(_read_niggles(conn, to_date), thr, to_date)
+        pattern = _signals.pattern_stack(overlap_rows, thr, to_date)
+        muscle = _signals.muscle_overlap(overlap_rows, thr, to_date)
+    movement = _movement_coverage(conn)
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
         return {
             "window": {"from": from_date, "to": to_date, "days": 0},
             "headline": _headline([], [], thr),
-            "signals": [s for s in (deload, niggle) if s is not None],
+            "signals": [s for s in (deload, niggle, pattern, muscle) if s is not None],
             "weekly": weekly_section,
             "zones": zones_section,
+            "movement": movement,
             "disclaimer": DISCLAIMER,
         }
     window = {
@@ -247,6 +271,8 @@ def build_digest(
         _signals.hrv_sleep_confound(rows, thr),
         deload,
         niggle,
+        pattern,
+        muscle,
     )
     signals = sorted(
         (s for s in candidates if s is not None),
@@ -258,6 +284,7 @@ def build_digest(
         "signals": signals,
         "weekly": weekly_section,
         "zones": zones_section,
+        "movement": movement,
         "disclaimer": DISCLAIMER,
     }
 

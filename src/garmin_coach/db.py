@@ -108,6 +108,18 @@ def bootstrap_sync_watermark(
     return watermark
 
 
+def _insert_rows(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -> None:
+    """Bulk-insert row dicts into a table (columns taken from the first row's keys)."""
+    if not rows:
+        return
+    cols = list(rows[0].keys())
+    placeholders = ",".join("?" for _ in cols)
+    conn.executemany(
+        f"INSERT INTO {table} ({','.join(cols)}) VALUES ({placeholders})",
+        [[row[c] for c in cols] for row in rows],
+    )
+
+
 def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) -> None:
     cols = list(row.keys())
     placeholders = ",".join("?" for _ in cols)
@@ -123,6 +135,18 @@ def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) 
 def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert an `activities` row by activity ID."""
     _upsert(conn, "activities", row, pk="activity_id")
+
+
+def replace_activity_sets(
+    conn: sqlite3.Connection, activity_id: int, rows: list[dict[str, Any]]
+) -> None:
+    """Replace one activity's `activity_sets` rows (idempotent re-fetch).
+
+    Replace-all semantics keyed on ``activity_id``: a re-fetch fully supersedes the
+    prior sets, so a changed set count never leaves orphan rows behind.
+    """
+    conn.execute("DELETE FROM activity_sets WHERE activity_id=?", (activity_id,))
+    _insert_rows(conn, "activity_sets", rows)
 
 
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
@@ -158,6 +182,12 @@ def upsert_status(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert a `weekly_metrics` row by week_start (the Monday)."""
     _upsert(conn, "weekly_metrics", row, pk="week_start")
+
+
+def replace_pattern_overlap(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Rebuild the `pattern_overlap` mart wholesale from a fresh computation."""
+    conn.execute("DELETE FROM pattern_overlap")
+    _insert_rows(conn, "pattern_overlap", rows)
 
 
 def replace_weekly_plan_actual(

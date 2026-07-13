@@ -1,0 +1,43 @@
+{
+  "activityId": 900001,
+  "exerciseSets": [
+    {
+      "setType": "ACTIVE",
+      "duration": 48.0,
+      "repetitionCount": 10,
+      "weight": 60000.0,
+      "startTime": "2026-06-12T17:00:00.0",
+      "exercises": [
+        {"category": "BENCH_PRESS", "name": "BARBELL_BENCH_PRESS", "probability": 100.0}
+      ]
+    },
+    {
+      "setType": "REST",
+      "duration": 90.0,
+      "repetitionCount": null,
+      "weight": null,
+      "startTime": "2026-06-12T17:00:48.0",
+      "exercises": []
+    },
+    {
+      "setType": "ACTIVE",
+      "duration": 52.0,
+      "repetitionCount": 8,
+      "weight": 100000.0,
+      "startTime": "2026-06-12T17:02:18.0",
+      "exercises": [
+        {"category": "DEADLIFT", "name": "BARBELL_DEADLIFT", "probability": 100.0}
+      ]
+    },
+    {
+      "setType": "ACTIVE",
+      "duration": 45.0,
+      "repetitionCount": 12,
+      "weight": 24000.0,
+      "startTime": "2026-06-12T17:05:00.0",
+      "exercises": [
+        {"category": "ROW", "name": "CABLE_ROW", "probability": 95.0}
+      ]
+    }
+  ]
+}

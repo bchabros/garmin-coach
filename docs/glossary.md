@@ -91,6 +91,30 @@ code, docstrings, PRDs, and ADRs.
   (`hrv_band.png`, `acwr.png`). `garmin-coach report` produces everything except the
   Markdown narrative.
 
+## Movement terms (mart -> overlap)
+
+- **exercise set** - one logged work set of a strength/Hyrox activity, captured from
+  Garmin's `exerciseSets` into the `activity_sets` core table (Phase 8). Only `ACTIVE`
+  sets are kept; `REST` sets are dropped.
+- **movement pattern** - a coarse classification of an exercise's movement:
+  `push`, `pull`, `hinge`, `squat`, or `carry`. Mapped from Garmin's exercise
+  `subcategory` via the hand-curated `exercise_pattern` core table.
+- **muscle group** - the tissue an exercise loads (`chest`, `back`, `posterior`,
+  `quads`, `shoulders`, `grip`, `core`, ...). The second axis of `exercise_pattern`;
+  `grip` lives here (carries and pulls both tax it), not as a sixth movement pattern.
+- **pattern_load** - a session's Phase 7 blended load split across its movement
+  patterns / muscle groups by set-share: `(sets of that key / mapped sets) x
+  session load`. Robust to a missing `max_weight` (Hyrox / bodyweight).
+- **pattern overlap** - the same pattern or muscle group loaded above
+  `pattern_load_floor` on two consecutive days: `overlap = min(load_D, load_D-1)`.
+  Materialized in the long-format `pattern_overlap` mart; a single rest day clears it.
+- **PATTERN_STACK / MUSCLE_OVERLAP** - the two `warn` signals (Phase 8) that fire when a
+  movement pattern (respectively muscle group) overlaps at/above `pattern_overlap_high`
+  on the report's latest day; `facts.keys` names the offending keys.
+- **movement coverage** - the digest's `movement` fact: `sets_total`, `sets_unmapped`,
+  and the `unmapped` subcategory names, so exercises missing from `exercise_pattern`
+  stay visible (the overlap read is partial until they are mapped).
+
 ## Weekly terms (mart -> weekly)
 
 - **complete week** - a Monday-Sunday span whose seven days all lie at or before

@@ -191,7 +191,7 @@ def add_goal_event(
     target: str | None = None,
     note: str | None = None,
 ) -> None:
-    """Record a goal race in core (transport-free); re-adding the same race converges.
+    """Record a goal race in core (transport-free).
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
@@ -204,17 +204,29 @@ def add_goal_event(
         note: Optional free-text note.
 
     Raises:
-        ValueError: If the date is malformed, an enum value is unknown, or the target
-            time is unparseable.
+        ValueError: If the date is malformed, an enum value is unknown, the target time
+            is unparseable, or the race is already recorded (correct it with `update`
+            rather than re-adding it, which would erase the fields left unset here).
     """
     fields = {"type": type, "priority": priority, "status": status,
               "date_precision": date_precision}
     _check_choices(fields)
-    db.upsert_goal_event(conn, {
+    row = {
         "date": _check_date(date), **fields,
         "target_s": parse_target_s(target) if target else None,
         "note": note,
-    })
+    }
+    try:
+        db.insert_goal_event(conn, row)
+    except sqlite3.IntegrityError:
+        existing = next(
+            e for e in db.list_goal_events(conn)
+            if e["date"] == row["date"] and e["type"] == row["type"]
+        )
+        raise ValueError(
+            f"{type} on {row['date']} is already recorded (id {existing['id']}); "
+            f"use `garmin-coach event update {existing['id']}` to change it"
+        ) from None
     conn.commit()
 
 

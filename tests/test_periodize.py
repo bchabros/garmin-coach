@@ -208,7 +208,7 @@ def test_a_race_closer_than_the_block_structure_truncates_at_data_start():
 def _record(conn, date="2026-10-17", type="hyrox", priority="A", status="confirmed"):
     from garmin_coach import db
 
-    db.upsert_goal_event(conn, {
+    db.insert_goal_event(conn, {
         "date": date, "type": type, "priority": priority, "status": status,
         "date_precision": "approx", "target_s": 3600, "note": None,
     })

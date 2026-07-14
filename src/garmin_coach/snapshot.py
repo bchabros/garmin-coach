@@ -293,7 +293,7 @@ def _plan(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
     return {
         "block": block["block"] if block else None,
         "weeks_to_event": block["weeks_to_event"] if block else None,
-        "taper_active": (1 if block["block"] == "taper" else 0) if block else None,
+        "taper_active": block["taper_active"] if block else None,
         "planned_label_today": row[0] if row else None,
         "planned_intent_today": row[1] if row else None,
     }

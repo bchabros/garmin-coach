@@ -566,7 +566,7 @@ def test_digest_movement_none_without_sets(conn):
 def _goal(conn, date="2026-10-17", status="confirmed", priority="A", type="hyrox"):
     from garmin_coach import db
 
-    db.upsert_goal_event(conn, {
+    db.insert_goal_event(conn, {
         "date": date, "type": type, "priority": priority, "status": status,
         "date_precision": "approx", "target_s": 3600, "note": None,
     })

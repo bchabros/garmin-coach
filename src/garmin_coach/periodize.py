@@ -1,8 +1,8 @@
 """Periodization: the block calendar counted back from the athlete's goal race.
 
-Pure functions over goal events and a date - no DB, no wall clock, no training
-history. Phase 9 ticket 01 lands the anchor selection; the block calendar itself
-(`periodize`) and the `plan_block` mart follow in ticket 02.
+The pure block calendar (`periodize`) plus the thin `plan_block` rollup at the DB
+boundary - the same shape as `zones` / `snapshot` / `overlap`. Blocks are a countdown
+from the race date: no wall clock, no training history.
 
 The anchor is the single event everything counts back from: the nearest *upcoming*
 `confirmed` event of priority A. A `tentative` event never anchors - the system does
@@ -17,15 +17,13 @@ import sqlite3
 from typing import Any
 
 from . import db, thresholds as _thresholds
+from .weeks import monday as _monday, weeks_between as _weeks_between
+
+TAPER = "taper"
 
 # Blocks that carry a planned deload. `peak` is short and `taper` is a downshift
 # already, so neither gets one.
 DELOAD_BLOCKS = ("base", "build")
-
-
-def _monday(day: str) -> _dt.date:
-    date = _dt.date.fromisoformat(day)
-    return date - _dt.timedelta(days=date.weekday())
 
 
 def anchor_event(events: list[dict[str, Any]], today: str) -> dict[str, Any] | None:
@@ -55,13 +53,13 @@ def weeks_to_event(day: str, event_date: str) -> int:
     Both dates are snapped to their Monday first, so the count is a whole number of
     calendar weeks and is 0 anywhere inside the race week itself.
     """
-    return (_monday(event_date) - _monday(day)).days // 7
+    return _weeks_between(day, event_date)
 
 
 def _block(weeks_out: int, taper: int, peak: int, build: int) -> str:
     """Label a week by its distance from the race: a countdown, not a calendar."""
     if weeks_out < taper:
-        return "taper"
+        return TAPER
     if weeks_out < taper + peak:
         return "peak"
     if weeks_out < taper + peak + build:
@@ -161,8 +159,9 @@ def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
         day: Any calendar day; the week containing it is looked up.
 
     Returns:
-        The week's block, countdown, and planned-deload flag alongside the anchor
-        race's date/type/status, or None when there is no plan (no anchor race).
+        The week's block, countdown, planned-deload flag and derived ``taper_active``
+        alongside the anchor race's date/type/status, or None when there is no plan.
+        ``taper_active`` is derived here so no consumer re-tests the block string.
     """
     row = conn.execute(
         """
@@ -174,7 +173,11 @@ def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
         """,
         (_monday(day).isoformat(),),
     ).fetchone()
-    return dict(zip(_CURRENT_PLAN_COLUMNS, row, strict=True)) if row else None
+    if row is None:
+        return None
+    plan = dict(zip(_CURRENT_PLAN_COLUMNS, row, strict=True))
+    plan["taper_active"] = 1 if plan["block"] == TAPER else 0
+    return plan
 
 
 def blocks_by_week(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:

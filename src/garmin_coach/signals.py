@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import statistics
 
-from . import periodize as _periodize
+from . import weeks as _weeks
 
 
 def hrv_sleep_confound(rows: list[dict], thresholds: dict[str, float]) -> dict | None:
@@ -284,7 +284,7 @@ def taper_active(plan: dict | None) -> dict | None:
     Returns:
         The signal, or None outside a taper week / with no plan at all.
     """
-    if plan is None or plan["block"] != "taper":
+    if plan is None or not plan["taper_active"]:
         return None
     return {
         "code": "TAPER_ACTIVE",
@@ -321,7 +321,7 @@ def race_proximity(
     if not upcoming:
         return None
     nearest = min(upcoming, key=lambda event: event["date"])
-    weeks_out = _periodize.weeks_to_event(to_date, nearest["date"])
+    weeks_out = _weeks.weeks_between(to_date, nearest["date"])
     if weeks_out > int(thresholds["race_proximity_weeks"]):
         return None
     return {

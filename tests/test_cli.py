@@ -200,3 +200,21 @@ def test_add_goal_event_rejects_an_unknown_type(conn):
             conn, date="2026-10-17", type="triathlon", priority="A",
             status="confirmed", date_precision="approx",
         )
+
+
+def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
+    """Re-adding without --target/--note would silently erase them; it must fail instead."""
+    cli.add_goal_event(
+        conn, date="2026-10-17", type="hyrox", priority="A",
+        status="confirmed", date_precision="approx", target="1:00:00", note="PB 1:01:46",
+    )
+
+    with pytest.raises(ValueError, match="already recorded"):
+        cli.add_goal_event(
+            conn, date="2026-10-17", type="hyrox", priority="A",
+            status="confirmed", date_precision="approx",
+        )
+
+    stored = db.list_goal_events(conn)[0]
+    assert stored["target_s"] == 3600
+    assert stored["note"] == "PB 1:01:46"

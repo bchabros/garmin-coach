@@ -107,9 +107,11 @@ TH9 = thresholds.merge()
 
 
 def _plan_row(block="taper", weeks_to_event=1, is_deload=0):
+    """Mirrors periodize.current_plan, which derives taper_active for its consumers."""
     return {
         "week_start": "2026-10-05", "block": block,
         "weeks_to_event": weeks_to_event, "is_deload": is_deload,
+        "taper_active": 1 if block == "taper" else 0,
         "race_date": "2026-10-17", "race_type": "hyrox",
         "race_status": "confirmed", "race_date_precision": "approx",
     }

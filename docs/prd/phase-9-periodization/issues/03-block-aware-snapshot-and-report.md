@@ -45,8 +45,9 @@ All of this rides **existing seams** - no new module.
 
 ### Digest + report
 
-- The digest carries the current `block`, `weeks_to_event`, and `is_deload` as headline
-  facts, plus the two new signals, all scoped to the report horizon.
+- The digest carries the current `block`, `weeks_to_event`, and `is_deload` in a `plan`
+  section (alongside `zones` / `weekly` / `movement`), plus the two new signals, scoped to
+  the report horizon.
 - The coach report renders the block and countdown. No new chart this phase.
 
 ## Tests (`test_snapshot.py`, `test_weekly.py`, `test_signals.py`, `test_digest.py`)

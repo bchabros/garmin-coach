@@ -266,8 +266,8 @@ tests over frozen dates. Prior art: `zones.compute` and `snapshot.build` are the
 - `weekly.py` / `snapshot.py` (`tests/test_weekly.py`, `tests/test_snapshot.py`) - the
   copied `block` / `weeks_to_event` / `taper_active` values, and that they are NULL when
   there is no anchor.
-- `features.py` (`tests/test_features.py`) - `periodize.rollup` runs in the tail in the
-  right order (after `weekly`, before `snapshot`).
+- `features.py` (`tests/test_features.py`) - `periodize.rollup` runs **first** in the tail,
+  ahead of `weekly.rollup`, so the block each week copies is fresh.
 - `tests/test_schema_sync.py` already guards the `src/garmin_coach/schema.sql` <->
   `docs/schema.sql` mirror; both must gain `goal_event` and `plan_block`.
 

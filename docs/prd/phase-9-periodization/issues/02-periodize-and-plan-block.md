@@ -47,9 +47,12 @@ logic lives in one pure function; the mart is a thin materialization of it.
   happened; the row sets are disjoint). Add to `src/garmin_coach/schema.sql` and the
   `docs/schema.sql` mirror.
 
-- **`periodize.rollup(conn, *, through_date)`** wired into the `features` tail, **after
-  `weekly.rollup` and before `snapshot.rollup`** (ticket 03 has snapshot copy fresh rows).
-  Safe to drop and rebuild, like every other mart.
+- **`periodize.rollup(conn, *, data_start_date, through_date)`** wired in **first** in the
+  `features` tail, **ahead of `weekly.rollup`** - which copies each week's block from
+  `plan_block`, so the plan must already be fresh. (Corrects an earlier draft of this
+  ticket that said "after `weekly`": the plan depends only on the goal events, so nothing
+  gates it, and every mirror of a block must run after it.) Safe to drop and rebuild, like
+  every other mart.
 
 - **No anchor -> empty plan.** `plan_block` is empty; nothing is invented.
 

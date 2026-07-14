@@ -179,15 +179,20 @@ _GOAL_EVENT_COLUMNS = (
 _GOAL_EVENT_UPDATABLE = frozenset(_GOAL_EVENT_COLUMNS) - {"id"}
 
 
-def upsert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
-    """Upsert a `goal_event` row by (date, type); re-adding the same race converges."""
+def insert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Insert a `goal_event` row.
+
+    Deliberately not an upsert: adding a race that already exists must fail rather
+    than overwrite it, because `add` omits the flags the athlete did not retype and
+    would otherwise silently erase the stored `target_s` / `note`. Corrections go
+    through `update_goal_event`, which touches only the fields it is given.
+
+    Raises:
+        sqlite3.IntegrityError: If a race with the same (date, type) is recorded.
+    """
     conn.execute(
         "INSERT INTO goal_event(date, type, priority, status, date_precision, target_s, note) "
-        "VALUES (?,?,?,?,?,?,?) "
-        "ON CONFLICT(date, type) DO UPDATE SET "
-        "priority=excluded.priority, status=excluded.status, "
-        "date_precision=excluded.date_precision, target_s=excluded.target_s, "
-        "note=excluded.note",
+        "VALUES (?,?,?,?,?,?,?)",
         (
             row["date"], row["type"], row["priority"], row["status"],
             row["date_precision"], row.get("target_s"), row.get("note"),

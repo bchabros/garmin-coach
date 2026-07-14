@@ -283,7 +283,7 @@ def test_golden_regression_weekly_rollup(conn):
 def test_week_row_carries_its_block_and_countdown(conn):
     from garmin_coach import db, periodize
 
-    db.upsert_goal_event(conn, {
+    db.insert_goal_event(conn, {
         "date": "2026-10-17", "type": "hyrox", "priority": "A", "status": "confirmed",
         "date_precision": "approx", "target_s": 3600, "note": None,
     })

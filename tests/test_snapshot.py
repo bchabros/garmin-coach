@@ -207,7 +207,7 @@ def test_rollup_is_idempotent(conn):
 def _anchor(conn, status="confirmed"):
     from garmin_coach import db
 
-    db.upsert_goal_event(conn, {
+    db.insert_goal_event(conn, {
         "date": "2026-10-17", "type": "hyrox", "priority": "A", "status": status,
         "date_precision": "approx", "target_s": 3600, "note": None,
     })

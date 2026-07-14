@@ -350,3 +350,31 @@ def test_features_writes_one_athlete_status_row(conn):
     assert len(rows) == 1
     assert rows[0][1] == 52.0  # from training_status_daily.vo2max
     assert rows[0][2] == 156  # mirrored from athlete_zones (0.89 * 175)
+
+
+# --- Phase 9: the block calendar is rebuilt in the features tail ---
+
+
+def test_features_rebuilds_plan_block_before_the_weekly_rollup(conn):
+    """weekly_metrics copies each week's block, so plan_block must already be fresh."""
+    db.insert_goal_event(conn, {
+        "date": "2026-10-17", "type": "hyrox", "priority": "A", "status": "confirmed",
+        "date_precision": "approx", "target_s": 3600, "note": None,
+    })
+    _activity(conn, 1, "2026-06-08", aero=2.0, anaero=0.0, load=50)
+    _activity(conn, 2, "2026-06-21", aero=2.0, anaero=0.0, load=50)
+
+    features.features(conn, data_start_date="2026-06-08", to_date="2026-06-21")
+
+    assert conn.execute("SELECT COUNT(*) FROM plan_block").fetchone()[0] == 19
+    assert conn.execute(
+        "SELECT block FROM weekly_metrics WHERE week_start='2026-06-08'"
+    ).fetchone()[0] == "base"
+
+
+def test_features_leaves_plan_block_empty_without_an_anchor(conn):
+    _activity(conn, 1, "2026-06-08", aero=2.0, anaero=0.0, load=50)
+
+    features.features(conn, data_start_date="2026-06-08", to_date="2026-06-21")
+
+    assert conn.execute("SELECT COUNT(*) FROM plan_block").fetchone()[0] == 0

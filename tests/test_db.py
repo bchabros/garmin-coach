@@ -7,6 +7,8 @@ is the interface, not a side channel.
 from __future__ import annotations
 
 
+import pytest
+
 from garmin_coach import db, models
 
 
@@ -121,8 +123,8 @@ def _goal_event(**over):
     return {**row, **over}
 
 
-def test_upsert_goal_event_round_trips_both_uncertainty_axes(conn):
-    db.upsert_goal_event(conn, _goal_event())
+def test_insert_goal_event_round_trips_both_uncertainty_axes(conn):
+    db.insert_goal_event(conn, _goal_event())
 
     events = db.list_goal_events(conn)
     assert len(events) == 1
@@ -131,22 +133,25 @@ def test_upsert_goal_event_round_trips_both_uncertainty_axes(conn):
 
 
 def test_goal_event_target_is_stored_as_seconds(conn):
-    db.upsert_goal_event(conn, _goal_event(target_s=3600))
+    db.insert_goal_event(conn, _goal_event(target_s=3600))
 
     assert db.list_goal_events(conn)[0]["target_s"] == 3600
 
 
-def test_upsert_goal_event_is_idempotent_on_date_and_type(conn):
-    db.upsert_goal_event(conn, _goal_event())
-    db.upsert_goal_event(conn, _goal_event(target_s=3550))
+def test_insert_goal_event_refuses_a_duplicate_race(conn):
+    """`add` must never overwrite: it would erase the fields the athlete did not retype."""
+    import sqlite3
 
-    events = db.list_goal_events(conn)
-    assert len(events) == 1
-    assert events[0]["target_s"] == 3550
+    db.insert_goal_event(conn, _goal_event())
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.insert_goal_event(conn, _goal_event(target_s=None, note=None))
+
+    assert db.list_goal_events(conn)[0]["target_s"] == 3600
 
 
 def test_update_goal_event_flips_status_and_date_precision(conn):
-    db.upsert_goal_event(conn, _goal_event(
+    db.insert_goal_event(conn, _goal_event(
         date="2026-09-05", type="run_race", priority="B",
         status="tentative", date_precision="exact", target_s=5400,
     ))
@@ -161,7 +166,7 @@ def test_update_goal_event_flips_status_and_date_precision(conn):
 
 
 def test_update_goal_event_pins_an_approx_date(conn):
-    db.upsert_goal_event(conn, _goal_event())
+    db.insert_goal_event(conn, _goal_event())
     event_id = db.list_goal_events(conn)[0]["id"]
 
     db.update_goal_event(conn, event_id, date="2026-10-24", date_precision="exact")
@@ -172,7 +177,7 @@ def test_update_goal_event_pins_an_approx_date(conn):
 
 
 def test_list_goal_events_is_ordered_by_date(conn):
-    db.upsert_goal_event(conn, _goal_event())
-    db.upsert_goal_event(conn, _goal_event(date="2026-09-05", type="run_race"))
+    db.insert_goal_event(conn, _goal_event())
+    db.insert_goal_event(conn, _goal_event(date="2026-09-05", type="run_race"))
 
     assert [e["date"] for e in db.list_goal_events(conn)] == ["2026-09-05", "2026-10-17"]

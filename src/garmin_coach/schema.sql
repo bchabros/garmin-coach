@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS goal_event (
   date_precision  TEXT NOT NULL CHECK (date_precision IN ('exact','approx')),
   target_s        INTEGER,                   -- goal time in seconds (not free text)
   note            TEXT,
-  UNIQUE (date, type)                        -- re-adding the same race converges
+  UNIQUE (date, type)                        -- `event add` must not clobber a race
 );
 
 -- Movement-pattern map: Garmin exercise subcategory -> movement pattern + muscle
@@ -621,7 +621,8 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   zones_source             TEXT,
   lthr_detected_on         TEXT,
   zones_stale              INTEGER,
-  -- active plan; block/weeks_to_event/taper_active are NULL placeholders until Phase 9
+  -- active plan; block/weeks_to_event/taper_active mirror this week's plan_block row
+  -- (Phase 9). All three are NULL when no confirmed priority-A race is upcoming.
   block                    TEXT,
   weeks_to_event           INTEGER,
   taper_active             INTEGER,

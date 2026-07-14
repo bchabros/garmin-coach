@@ -222,7 +222,7 @@ def features(
 
     # Rebuild the block calendar first: it depends only on the goal events, and the
     # weekly rollup copies each week's block from it.
-    periodize.rollup(conn, data_start_date=data_start_date, through_date=end)
+    periodize.rollup(conn, data_start_date=data_start_date)
 
     # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
     weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)

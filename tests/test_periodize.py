@@ -224,7 +224,7 @@ def _blocks(conn) -> dict[str, str]:
 def test_rollup_materializes_the_plan_including_future_weeks(conn):
     _record(conn)
 
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     blocks = _blocks(conn)
     assert blocks["2026-10-12"] == "taper"  # a week that has not happened yet
@@ -234,38 +234,59 @@ def test_rollup_materializes_the_plan_including_future_weeks(conn):
 def test_rollup_writes_nothing_without_an_anchor(conn):
     _record(conn, status="tentative")
 
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     assert _blocks(conn) == {}
 
 
 def test_rollup_is_idempotent_and_rebuilds_from_scratch(conn):
     _record(conn)
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
     before = _blocks(conn)
 
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     assert _blocks(conn) == before
 
 
 def test_rollup_clears_the_plan_when_the_anchor_is_withdrawn(conn):
     _record(conn)
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
     conn.execute("DELETE FROM goal_event")
 
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     assert _blocks(conn) == {}
 
 
-def test_rollup_anchors_as_of_through_date_not_the_wall_clock(conn):
-    """A backfill to a past date must reproduce that day's plan, not today's."""
+def test_a_past_race_keeps_labelling_the_weeks_that_led_up_to_it(conn):
+    """The day after the race the history must NOT lose its blocks.
+
+    "What am I training for now" and "what block was that week in" are different
+    questions. The second is a historical fact and does not stop being true when the
+    race happens.
+    """
     _record(conn)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
-    periodize.rollup(conn, data_start_date=DATA_START, through_date="2026-10-20")
+    blocks = _blocks(conn)
+    assert blocks["2026-08-10"] == "build"
+    assert blocks["2026-10-12"] == "taper"
+    assert "2026-10-19" not in blocks  # after the race: no plan, correctly
 
-    assert _blocks(conn) == {}  # the race is behind through_date: no anchor
+
+def test_weeks_between_two_races_anchor_to_the_later_one(conn):
+    _record(conn)
+    _record(conn, date="2027-03-06")
+
+    periodize.rollup(conn, data_start_date=DATA_START)
+
+    blocks = _blocks(conn)
+    assert blocks["2026-10-12"] == "taper"  # still the Hyrox race week
+    assert blocks["2026-10-19"] == "base"   # now building toward the March race
+    assert blocks["2027-03-01"] == "taper"  # the March race week
+    assert "2027-03-08" not in blocks       # nothing beyond the last race
+
 
 
 # --- current_plan(): the plan row for the week a given day falls in ---
@@ -273,7 +294,7 @@ def test_rollup_anchors_as_of_through_date_not_the_wall_clock(conn):
 
 def test_current_plan_reads_the_week_the_day_falls_in(conn):
     _record(conn)
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     plan = periodize.current_plan(conn, TODAY)  # Tue 2026-07-14 -> week of 07-13
 
@@ -286,10 +307,23 @@ def test_current_plan_reads_the_week_the_day_falls_in(conn):
 
 def test_current_plan_carries_the_taper_week(conn):
     _record(conn)
-    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+    periodize.rollup(conn, data_start_date=DATA_START)
 
     assert periodize.current_plan(conn, "2026-10-07")["block"] == "taper"
 
 
 def test_current_plan_is_none_without_a_plan(conn):
     assert periodize.current_plan(conn, TODAY) is None
+
+
+def test_taper_is_not_active_once_the_race_has_been_run(conn):
+    """Race week still labels the week `taper`, but the taper itself ends at the gun."""
+    _record(conn)  # Sat 2026-10-17
+    periodize.rollup(conn, data_start_date=DATA_START)
+
+    race_day = periodize.current_plan(conn, "2026-10-17")
+    day_after = periodize.current_plan(conn, "2026-10-18")  # Sunday, same week
+
+    assert race_day["taper_active"] == 1
+    assert day_after["block"] == "taper"      # the week was the taper week: a fact
+    assert day_after["taper_active"] == 0     # but the taper is over

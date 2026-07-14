@@ -577,7 +577,7 @@ def test_digest_carries_the_current_block_and_countdown(conn):
 
     _mart(conn, date="2026-07-14", load_day=50)
     _goal(conn)
-    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-07-14")
+    periodize.rollup(conn, data_start_date="2026-06-08")
 
     digest = build_digest(conn, from_date="2026-07-14", to_date="2026-07-14")
 
@@ -591,7 +591,7 @@ def test_digest_fires_taper_active_and_race_proximity_in_the_taper(conn):
 
     _mart(conn, date="2026-10-07", load_day=50)
     _goal(conn)
-    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-10-07")
+    periodize.rollup(conn, data_start_date="2026-06-08")
 
     digest = build_digest(conn, from_date="2026-10-07", to_date="2026-10-07")
 

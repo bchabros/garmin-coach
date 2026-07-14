@@ -179,10 +179,16 @@ code, docstrings, PRDs, and ADRs.
   Orthogonal to `status`: a race can be certain with a fuzzy date, or dated but
   uncommitted. An `approx` date still drives every block; it only makes the report ask
   for the date to be pinned as the taper window approaches.
-- **anchor event** - the single goal event the periodization counts back from: the
-  nearest *upcoming* `confirmed` event of priority A. When there is none, `block` and
-  `weeks_to_event` are NULL - the system says it does not know what the athlete is
-  training for rather than counting down to a race that already happened.
+- **anchor event** - the goal event a *week* counts back from: the nearest `confirmed`
+  priority-A race **on or after that week**. A function of the week, not of today, so a
+  race keeps labelling the weeks that led up to it after it has been run - "what am I
+  training for now" and "what block was that week in" are different questions, and only
+  the first goes blank once the race is over. Weeks with no race ahead of them get no
+  `plan_block` row, and `block` / `weeks_to_event` read NULL: the system says it does not
+  know what is being trained for rather than inventing a phase.
+- **current anchor** - the nearest *upcoming* confirmed priority-A race, i.e. what the
+  athlete is training for **right now**. What `event list` marks and what goes blank the
+  day after the goal race. Distinct from a past week's anchor.
 - **block** - the phase of the training cycle a week sits in: `base | build | peak |
   taper`. A pure countdown from the anchor event's date. `taper`, `peak`, and `build`
   have fixed lengths; `base` absorbs everything earlier (bounded left by `data_start`),
@@ -202,8 +208,10 @@ code, docstrings, PRDs, and ADRs.
   spanning the whole plan horizon *including future weeks* (unlike `weekly_metrics`,
   which only holds weeks that already happened). The single source of truth for `block`,
   `weeks_to_event`, and `is_deload`.
-- **TAPER_ACTIVE** - the signal that the current week's `block` is `taper`. In the
-  coaching layer it is the cue to suppress intensity; Phase 9 only states the fact.
+- **TAPER_ACTIVE** - the signal that the current week's `block` is `taper` *and the race
+  has not yet been run*. The race week keeps its `taper` label afterwards (a fact about
+  the week), but the taper itself ends at the gun. In the coaching layer it is the cue to
+  suppress intensity; Phase 9 only states the fact.
 - **RACE_PROXIMITY** - the signal that the nearest upcoming goal event (any priority,
   any status) falls inside `race_proximity_weeks`. Carries the event's type, priority,
   status, and `weeks_to_event`; asks for a `tentative` event to be decided and an

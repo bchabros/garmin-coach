@@ -4,10 +4,14 @@ The pure block calendar (`periodize`) plus the thin `plan_block` rollup at the D
 boundary - the same shape as `zones` / `snapshot` / `overlap`. Blocks are a countdown
 from the race date: no wall clock, no training history.
 
-The anchor is the single event everything counts back from: the nearest *upcoming*
-`confirmed` event of priority A. A `tentative` event never anchors - the system does
-not taper for a race the athlete may skip - and neither does a B/C event, however
-near. With no anchor there is no plan, stated as None rather than guessed at.
+A week's anchor is the nearest `confirmed` priority-A race **on or after that week**.
+A `tentative` race never anchors - the system does not taper for a race the athlete may
+skip - and neither does a B/C race, however near. Weeks with no race ahead of them get
+no plan at all, stated as None rather than guessed at.
+
+Note the anchor is a function of the *week*, not of today: once a race is run it keeps
+labelling the weeks that led up to it. "What am I training for now" and "what block was
+that week in" are different questions, and the second stays true after the gun.
 """
 
 from __future__ import annotations
@@ -125,22 +129,55 @@ def periodize(
     return weeks
 
 
-def rollup(
-    conn: sqlite3.Connection, *, data_start_date: str, through_date: str | None = None
-) -> None:
+def build_plan(
+    events: list[dict[str, Any]], data_start: str, thresholds: dict[str, float]
+) -> list[dict[str, Any]]:
+    """Build the block calendar across *every* confirmed priority-A race.
+
+    A week's anchor is the nearest confirmed A race **on or after that week** - not the
+    nearest race upcoming *today*. That distinction is the whole point: "what am I
+    training for now" and "what block was that week in" are different questions, and the
+    second is a historical fact that does not stop being true once the race is run. Each
+    race therefore owns the weeks running up to it, from the previous race (exclusive) or
+    from ``data_start``.
+
+    Weeks after the last confirmed A race get no row: there the system genuinely does not
+    know what is being trained for, and says so.
+
+    Args:
+        events: All recorded goal events.
+        data_start: First date with real data; the left bound of the plan.
+        thresholds: Effective coach thresholds (block lengths, deload cadence).
+
+    Returns:
+        One row per planned week, chronologically.
+    """
+    races = sorted(
+        (e for e in events if e["priority"] == "A" and e["status"] == "confirmed"),
+        key=lambda event: event["date"],
+    )
+    weeks: list[dict[str, Any]] = []
+    segment_start = data_start
+    for race in races:
+        if _monday(race["date"]) < _monday(segment_start):
+            continue  # a race already behind the segment: it labels nothing
+        weeks.extend(periodize(race, segment_start, thresholds))
+        segment_start = (_monday(race["date"]) + _dt.timedelta(weeks=1)).isoformat()
+    return weeks
+
+
+def rollup(conn: sqlite3.Connection, *, data_start_date: str) -> None:
     """Rebuild the `plan_block` mart from the goal events (safe to drop and rebuild).
 
-    The anchor is resolved as of ``through_date``, not the wall clock, so recomputing
-    a past date reproduces that day's plan. With no anchor the mart is left empty.
+    Takes no as-of date: the plan is a fact about the athlete's race calendar, not about
+    when it is asked for, so any recompute reproduces the same rows. With no confirmed
+    priority-A race the mart is left empty.
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         data_start_date: First date with real data; the left bound of the plan.
-        through_date: The as-of date for anchor selection (default: today).
     """
-    as_of = through_date or _dt.date.today().isoformat()
-    anchor = anchor_event(db.list_goal_events(conn), as_of)
-    weeks = periodize(anchor, data_start_date, _thresholds.read(conn)) if anchor else []
+    weeks = build_plan(db.list_goal_events(conn), data_start_date, _thresholds.read(conn))
     db.replace_plan_block(conn, weeks)
     conn.commit()
 
@@ -161,7 +198,9 @@ def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     Returns:
         The week's block, countdown, planned-deload flag and derived ``taper_active``
         alongside the anchor race's date/type/status, or None when there is no plan.
-        ``taper_active`` is derived here so no consumer re-tests the block string.
+        ``taper_active`` is derived here so no consumer re-tests the block string, and
+        it goes false once the race has been run - the race week keeps its `taper`
+        label (that is a fact about the week) but the taper itself ends at the gun.
     """
     row = conn.execute(
         """
@@ -176,7 +215,8 @@ def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     if row is None:
         return None
     plan = dict(zip(_CURRENT_PLAN_COLUMNS, row, strict=True))
-    plan["taper_active"] = 1 if plan["block"] == TAPER else 0
+    tapering = plan["block"] == TAPER and day <= plan["race_date"]
+    plan["taper_active"] = 1 if tapering else 0
     return plan
 
 

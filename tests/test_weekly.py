@@ -288,7 +288,7 @@ def test_week_row_carries_its_block_and_countdown(conn):
         "date_precision": "approx", "target_s": 3600, "note": None,
     })
     _seed_span(conn, "2026-06-08", "2026-06-21", load_day=50)
-    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-21")
+    periodize.rollup(conn, data_start_date="2026-06-08")
 
     weekly.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-21")
 

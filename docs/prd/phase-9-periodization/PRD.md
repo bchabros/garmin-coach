@@ -138,13 +138,18 @@ data, not repo content.
 
 ### Anchoring rules
 
-- The **anchor event** is the nearest *upcoming* event with `priority = 'A'` and
-  `status = 'confirmed'`. Nothing else anchors, regardless of proximity.
-- With no anchor event (including the evening after the goal race), `block` and
-  `weeks_to_event` are `NULL`, `plan_block` is empty, and `TAPER_ACTIVE` never fires. The
-  system states that it does not know what is being trained for rather than counting down
-  to a race in the past.
-- Past events remain in `goal_event` as history; they never anchor.
+- A week's **anchor event** is the nearest event with `priority = 'A'` and
+  `status = 'confirmed'` **on or after that week**. Nothing else anchors, regardless of
+  proximity. The anchor is a function of the *week*, not of today, so a race keeps
+  labelling the weeks that led up to it after it has been run.
+- Weeks with **no confirmed A race ahead of them** get no `plan_block` row; `block` and
+  `weeks_to_event` read `NULL` and `TAPER_ACTIVE` never fires. The system states that it
+  does not know what is being trained for rather than counting down to a race in the past.
+- Two questions, not one: *"what am I training for now"* goes blank the day after the goal
+  race; *"what block was that week in"* stays true forever. Conflating them erases the
+  athlete's whole cycle at the post-race review (see ADR 0012).
+- `TAPER_ACTIVE` ends **at the gun**: the race week keeps its `taper` label, but the taper
+  is not active once the race date has passed.
 
 ### Block model
 

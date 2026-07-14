@@ -217,7 +217,7 @@ def test_snapshot_carries_the_block_countdown_and_taper_flag(conn):
     from garmin_coach import periodize
 
     _anchor(conn)
-    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-07-14")
+    periodize.rollup(conn, data_start_date="2026-06-08")
 
     status = snapshot.build(conn, through_date="2026-07-14")
 
@@ -230,7 +230,7 @@ def test_snapshot_taper_active_is_one_inside_the_taper(conn):
     from garmin_coach import periodize
 
     _anchor(conn)
-    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-10-07")
+    periodize.rollup(conn, data_start_date="2026-06-08")
 
     status = snapshot.build(conn, through_date="2026-10-07")
 

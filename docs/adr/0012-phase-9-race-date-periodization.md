@@ -94,10 +94,36 @@ See `docs/prd/phase-9-periodization/PRD.md`.
 - **`base` absorbs the remainder; a missing anchor is an explicit NULL.** `taper` (2),
   `peak` (3), and `build` (5) have fixed lengths from thresholds; everything earlier is
   `base`, so the athlete is never in a no-block limbo regardless of how distant the race
-  is. With no upcoming confirmed A event - the athlete's state the evening after the race
-  - `block` and `weeks_to_event` are NULL and `plan_block` is empty. The system states
-  that it does not know what is being trained for instead of quietly counting down to a
-  race in the past.
+  is. Weeks with no confirmed A race ahead of them get no `plan_block` row, and `block` /
+  `weeks_to_event` read NULL. The system states that it does not know what is being
+  trained for instead of quietly counting down to a race in the past.
+
+- **The anchor is a function of the WEEK, not of today.** A week's anchor is the nearest
+  confirmed priority-A race **on or after that week**. This corrects a genuine bug in the
+  first implementation, which resolved a single anchor as of *today* ("the nearest
+  *upcoming* race") and rebuilt `plan_block` from it: the day after the goal race there was
+  no upcoming race, so `plan_block` rebuilt empty and `weekly_metrics.block` went NULL for
+  **every week of the completed cycle**. The athlete's entire periodization history was
+  erased at exactly the moment it became most useful - the post-race review - silently
+  breaking the PRD's user story 20.
+
+  The root error was treating one rule as an answer to two different questions. *"What am I
+  training for now?"* legitimately goes blank once the race is run. *"What block was the
+  week of 10 August in?"* is a historical fact that does not stop being true when the race
+  happens. `build_plan` therefore walks **every** confirmed A race, each owning the weeks
+  from the previous race (exclusive) or from `data_start`; `anchor_event` keeps the
+  "nearest upcoming" meaning and is now only what `event list` marks as the *current*
+  anchor. As a free consequence, a second A race correctly labels the weeks after the
+  first one.
+
+  `periodize.rollup` accordingly takes **no as-of date**: the plan is a fact about the
+  athlete's race calendar, not about when it is asked for, so every recompute reproduces
+  the same rows.
+
+- **The taper ends at the gun, not at the end of race week.** The race week keeps its
+  `taper` label - that is a fact about the week - but `taper_active` goes false once the
+  race date has passed, so `TAPER_ACTIVE` does not tell an athlete who raced on Saturday to
+  protect a taper on Sunday.
 
 - **`periodize` takes no training history.** The sketch's `periodize(event, today,
   history)` is reduced to `periodize(event, today, thresholds)`: blocks are a countdown

@@ -242,6 +242,12 @@ def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     _upsert(conn, "weekly_metrics", row, pk="week_start")
 
 
+def replace_plan_block(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Rebuild the `plan_block` mart wholesale; an empty plan clears it."""
+    conn.execute("DELETE FROM plan_block")
+    _insert_rows(conn, "plan_block", rows)
+
+
 def replace_pattern_overlap(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
     """Rebuild the `pattern_overlap` mart wholesale from a fresh computation."""
     conn.execute("DELETE FROM pattern_overlap")

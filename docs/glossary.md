@@ -193,7 +193,7 @@ code, docstrings, PRDs, and ADRs.
   *plan* prescribes, placed every `deload_every_n_weeks` counted back from the end of
   its block and only inside `base` / `build` (never `peak` or `taper`, which are
   downshifts already). Anchoring to the block's end means the athlete always enters the
-  next block fresh.
+  next block fresh. A block never opens with a deload - its first week is for ramping up.
 - **planned deload vs deload advised** - two answers to one question, deliberately kept
   apart. `is_deload` is what the plan intended; `DELOAD_ADVISED` is what the actual load
   did. Neither overrides the other; the divergence between them is itself the finding -

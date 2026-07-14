@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import db, load, overlap, snapshot, thresholds, weekly, zones
+from . import db, load, overlap, periodize, snapshot, thresholds, weekly, zones
 
 HRV_WINDOW_NIGHTS = 60
 
@@ -222,6 +222,9 @@ def features(
 
     # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
     weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)
+
+    # Rebuild the block calendar counted back from the anchor race (spans the future).
+    periodize.rollup(conn, data_start_date=data_start_date, through_date=end)
 
     # Recompute personal training zones from the LTHR anchor + aerobic runs.
     zones.rollup(conn, through_date=end)

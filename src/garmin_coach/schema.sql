@@ -441,7 +441,13 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('niggle_reduced_mode_severity',  3, 'active-niggle severity (1-5) that arms reduced-mode'),
  -- Phase 8 movement-overlap (Garmin-load units; placeholders, tune as history grows)
  ('pattern_load_floor',           20, 'min per-key session load to count a pattern as loaded'),
- ('pattern_overlap_high',         40, 'adjacent-day overlap at/above this arms PATTERN_STACK/MUSCLE_OVERLAP');
+ ('pattern_overlap_high',         40, 'adjacent-day overlap at/above this arms PATTERN_STACK/MUSCLE_OVERLAP'),
+ -- Phase 9 periodization: block lengths counted back from the race week. `base`
+ -- takes whatever is left, so the athlete is always in some block.
+ ('taper_weeks',                   2, 'final weeks before the race; TAPER_ACTIVE fires here'),
+ ('peak_weeks',                    3, 'weeks of peak work before the taper'),
+ ('build_weeks',                   5, 'weeks of build work before the peak'),
+ ('deload_every_n_weeks',          4, 'planned deload cadence, counted back from a block end');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (
@@ -616,6 +622,25 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   taper_active             INTEGER,
   planned_intent_today     TEXT,              -- plan_template[weekday(computed_at)]
   planned_label_today      TEXT
+);
+
+-- Periodization (mart): one row per week, the training block counted back from the
+-- anchor goal event. UNIQUE among the marts in that it spans the FUTURE too - out to
+-- the race week - which is why it cannot live as columns on weekly_metrics (that
+-- table only holds weeks that already happened). Empty when no confirmed priority-A
+-- race is upcoming: the system says it does not know what it is training for rather
+-- than counting down to a race already run. Recomputed by periodize.py as a tail of
+-- `features`. Phase 9.
+CREATE TABLE IF NOT EXISTS plan_block (
+  week_start       TEXT PRIMARY KEY,           -- Monday
+  block            TEXT NOT NULL CHECK (block IN ('base','build','peak','taper')),
+  weeks_to_event   INTEGER NOT NULL,           -- 0 in the race week itself
+  is_deload        INTEGER NOT NULL,           -- 1 = the PLAN prescribes a recovery week.
+                                               -- Independent of DELOAD_ADVISED, which is
+                                               -- what the actual load did; the divergence
+                                               -- between them is the finding, not a conflict.
+  anchor_event_id  INTEGER NOT NULL,
+  FOREIGN KEY (anchor_event_id) REFERENCES goal_event(id) ON DELETE CASCADE
 );
 
 -- Movement-pattern overlap: the same pattern or muscle group loaded on adjacent

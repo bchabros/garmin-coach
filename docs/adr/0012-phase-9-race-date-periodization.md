@@ -69,6 +69,15 @@ See `docs/prd/phase-9-periodization/PRD.md`.
   athlete always enters the next block fresh. `peak` and `taper` get no planned deload;
   a taper is a downshift already.
 
+  **A block never opens with a deload.** Its first week is for ramping up. This guard was
+  added during implementation, when the cadence was found to land on `base`'s opening week
+  for the athlete's real calendar (a 9-week base makes week 1 exactly 8 weeks before the
+  block end). At the left edge that week is bounded by `data_start` - an artifact of when
+  data begins, not a training decision - so a deload there would be an artifact too, and
+  Phase 5's plan-vs-actual would then report a "planned deload you skipped" that was never
+  a plan. Without the guard the athlete's calendar would deload on 2026-06-08; with it, the
+  base deloads fall on 07-06 and 08-03 as intended.
+
 - **`plan_block` is a separate mart, not two columns on `weekly_metrics`.** The sketch
   said the weekly rollup "gains `weeks_to_event` and `block`", but the row sets are
   disjoint: `weekly_metrics` holds only weeks that already happened, while blocks must

@@ -275,3 +275,35 @@ def test_golden_regression_weekly_rollup(conn):
         ) < 1e-6
         assert 0.0 <= w["plan_adherence"] <= 1.0
         assert 0 <= w["max_consec_hard"] <= 7
+
+
+# --- Phase 9: the week's block, copied from plan_block ---
+
+
+def test_week_row_carries_its_block_and_countdown(conn):
+    from garmin_coach import db, periodize
+
+    db.upsert_goal_event(conn, {
+        "date": "2026-10-17", "type": "hyrox", "priority": "A", "status": "confirmed",
+        "date_precision": "approx", "target_s": 3600, "note": None,
+    })
+    _seed_span(conn, "2026-06-08", "2026-06-21", load_day=50)
+    periodize.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-21")
+
+    weekly.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-21")
+
+    row = conn.execute(
+        "SELECT block, weeks_to_event FROM weekly_metrics WHERE week_start='2026-06-08'"
+    ).fetchone()
+    assert row == ("base", 18)
+
+
+def test_week_row_block_is_null_without_an_anchor(conn):
+    _seed_span(conn, "2026-06-08", "2026-06-21", load_day=50)
+
+    weekly.rollup(conn, data_start_date="2026-06-08", through_date="2026-06-21")
+
+    row = conn.execute(
+        "SELECT block, weeks_to_event FROM weekly_metrics WHERE week_start='2026-06-08'"
+    ).fetchone()
+    assert row == (None, None)

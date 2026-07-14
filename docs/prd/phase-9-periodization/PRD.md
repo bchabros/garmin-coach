@@ -183,9 +183,9 @@ why it is a separate mart rather than two new columns on `weekly_metrics` as the
 `PROJECT.md` sketch proposed: `weekly_metrics` holds only weeks that already happened, so
 the row sets are disjoint and future blocks have nowhere to live there.
 
-`plan_block` is the single source of truth. Recomputed as a tail of `features`, after
-`weekly.rollup` and before `snapshot.rollup`, alongside `zones` and `overlap`. Safe to drop
-and rebuild.
+`plan_block` is the single source of truth. Recomputed in the `features` tail **before**
+`weekly.rollup` (which copies each week's block from it) - it depends only on the goal
+events, so nothing gates it. Safe to drop and rebuild.
 
 ### Pure periodization function
 

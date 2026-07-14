@@ -266,3 +266,30 @@ def test_rollup_anchors_as_of_through_date_not_the_wall_clock(conn):
     periodize.rollup(conn, data_start_date=DATA_START, through_date="2026-10-20")
 
     assert _blocks(conn) == {}  # the race is behind through_date: no anchor
+
+
+# --- current_plan(): the plan row for the week a given day falls in ---
+
+
+def test_current_plan_reads_the_week_the_day_falls_in(conn):
+    _record(conn)
+    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+
+    plan = periodize.current_plan(conn, TODAY)  # Tue 2026-07-14 -> week of 07-13
+
+    assert plan["week_start"] == "2026-07-13"
+    assert plan["block"] == "base"
+    assert plan["weeks_to_event"] == 13
+    assert plan["race_date"] == "2026-10-17"
+    assert plan["race_type"] == "hyrox"
+
+
+def test_current_plan_carries_the_taper_week(conn):
+    _record(conn)
+    periodize.rollup(conn, data_start_date=DATA_START, through_date=TODAY)
+
+    assert periodize.current_plan(conn, "2026-10-07")["block"] == "taper"
+
+
+def test_current_plan_is_none_without_a_plan(conn):
+    assert periodize.current_plan(conn, TODAY) is None

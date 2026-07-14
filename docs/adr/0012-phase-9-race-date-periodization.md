@@ -86,7 +86,10 @@ See `docs/prd/phase-9-periodization/PRD.md`.
   is the single source of truth; `weekly_metrics` and `athlete_status` carry same-run
   copies for the weeks they do hold, following the `athlete_status` precedent of a
   same-run copy of finished marts. Recomputed as a tail of `features`, like `zones`,
-  `snapshot`, and `overlap`.
+  `snapshot`, and `overlap` - but **first** in that tail, ahead of `weekly.rollup`, which
+  copies each week's block from it. (This corrects the ordering first drafted here: the
+  plan depends only on the goal events, so nothing gates it, and everything that mirrors
+  a block must run after it.)
 
 - **`base` absorbs the remainder; a missing anchor is an explicit NULL.** `taper` (2),
   `peak` (3), and `build` (5) have fixed lengths from thresholds; everything earlier is

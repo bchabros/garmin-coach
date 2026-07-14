@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime as _dt
 import statistics
 
+from . import periodize as _periodize
+
 
 def hrv_sleep_confound(rows: list[dict], thresholds: dict[str, float]) -> dict | None:
     """Rule 5: HRV tracks sleep score across the window and a low night is present.
@@ -266,6 +268,73 @@ def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dic
             "rise_weeks": rise,
             "acwr_end": acwr_end,
             "monotony": monotony,
+        },
+    }
+
+
+def taper_active(plan: dict | None) -> dict | None:
+    """Phase 9: the current week is a taper week.
+
+    A statement of fact, not an instruction. Suppressing intensity on its basis is
+    the recommender's decision (Phase 10), deliberately not taken here.
+
+    Args:
+        plan: The current week's plan row (see ``periodize.current_plan``), or None.
+
+    Returns:
+        The signal, or None outside a taper week / with no plan at all.
+    """
+    if plan is None or plan["block"] != "taper":
+        return None
+    return {
+        "code": "TAPER_ACTIVE",
+        "severity": "info",
+        "facts": {
+            "block": plan["block"],
+            "weeks_to_event": plan["weeks_to_event"],
+            "race_date": plan["race_date"],
+            "race_type": plan["race_type"],
+        },
+    }
+
+
+def race_proximity(
+    events: list[dict], thresholds: dict[str, float], to_date: str
+) -> dict | None:
+    """Phase 9: a goal race is near - within ``race_proximity_weeks`` of the horizon.
+
+    Fires for the nearest *upcoming* event of ANY priority and ANY status, because
+    proximity is information, not anchoring: a tune-up race and a race the athlete has
+    not committed to both matter as they approach. Asks for a ``tentative`` race to be
+    decided and an ``approx`` date to be pinned, which is the whole payoff of keeping
+    those two axes apart.
+
+    Args:
+        events: All recorded goal events.
+        thresholds: Effective coach thresholds.
+        to_date: The report horizon.
+
+    Returns:
+        The signal, or None when no event falls inside the window.
+    """
+    upcoming = [event for event in events if event["date"] >= to_date]
+    if not upcoming:
+        return None
+    nearest = min(upcoming, key=lambda event: event["date"])
+    weeks_out = _periodize.weeks_to_event(to_date, nearest["date"])
+    if weeks_out > int(thresholds["race_proximity_weeks"]):
+        return None
+    return {
+        "code": "RACE_PROXIMITY",
+        "severity": "info",
+        "facts": {
+            "date": nearest["date"],
+            "type": nearest["type"],
+            "priority": nearest["priority"],
+            "status": nearest["status"],
+            "weeks_to_event": weeks_out,
+            "needs_decision": nearest["status"] == "tentative",
+            "needs_date_pinned": nearest["date_precision"] == "approx",
         },
     }
 

@@ -220,11 +220,12 @@ def features(
         db.upsert_daily(conn, "daily_metrics", row)
     conn.commit()
 
+    # Rebuild the block calendar first: it depends only on the goal events, and the
+    # weekly rollup copies each week's block from it.
+    periodize.rollup(conn, data_start_date=data_start_date, through_date=end)
+
     # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
     weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)
-
-    # Rebuild the block calendar counted back from the anchor race (spans the future).
-    periodize.rollup(conn, data_start_date=data_start_date, through_date=end)
 
     # Recompute personal training zones from the LTHR anchor + aerobic runs.
     zones.rollup(conn, through_date=end)

@@ -10,7 +10,9 @@ from __future__ import annotations
 import datetime as _dt
 import sqlite3
 
+from . import db as _db
 from . import overlap as _overlap
+from . import periodize as _periodize
 from . import signals as _signals
 from . import thresholds as _thresholds
 from . import weekly as _weekly
@@ -233,7 +235,13 @@ def build_digest(
     weekly_rows = _read_weekly(conn, to_date)
     weekly_section = _weekly_section(conn, weekly_rows, thr)
     zones_section = _zones_section(conn)
+    plan_section = _plan_section(conn, to_date)
     deload = _signals.deload_advised(weekly_rows, thr)
+    taper = _signals.taper_active(plan_section)
+    proximity = (
+        _signals.race_proximity(_db.list_goal_events(conn), thr, to_date)
+        if to_date is not None else None
+    )
     overlap_rows = _read_overlap(conn, to_date) if to_date is not None else []
     niggle = pattern = muscle = None
     if to_date is not None:
@@ -246,9 +254,13 @@ def build_digest(
         return {
             "window": {"from": from_date, "to": to_date, "days": 0},
             "headline": _headline([], [], thr),
-            "signals": [s for s in (deload, niggle, pattern, muscle) if s is not None],
+            "signals": [
+                s for s in (deload, niggle, pattern, muscle, taper, proximity)
+                if s is not None
+            ],
             "weekly": weekly_section,
             "zones": zones_section,
+            "plan": plan_section,
             "movement": movement,
             "disclaimer": DISCLAIMER,
         }
@@ -273,6 +285,8 @@ def build_digest(
         niggle,
         pattern,
         muscle,
+        taper,
+        proximity,
     )
     signals = sorted(
         (s for s in candidates if s is not None),
@@ -284,9 +298,17 @@ def build_digest(
         "signals": signals,
         "weekly": weekly_section,
         "zones": zones_section,
+        "plan": plan_section,
         "movement": movement,
         "disclaimer": DISCLAIMER,
     }
+
+
+def _plan_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
+    """The periodization standing: this week's block, countdown, and planned deload."""
+    if to_date is None:
+        return None
+    return _periodize.current_plan(conn, to_date)
 
 
 def _zones_section(conn: sqlite3.Connection) -> dict | None:

@@ -447,7 +447,8 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('taper_weeks',                   2, 'final weeks before the race; TAPER_ACTIVE fires here'),
  ('peak_weeks',                    3, 'weeks of peak work before the taper'),
  ('build_weeks',                   5, 'weeks of build work before the peak'),
- ('deload_every_n_weeks',          4, 'planned deload cadence, counted back from a block end');
+ ('deload_every_n_weeks',          4, 'planned deload cadence, counted back from a block end'),
+ ('race_proximity_weeks',          3, 'a goal race this close arms RACE_PROXIMITY');
 
 -- Weekly training template for plan-vs-actual (0=Mon..6=Sun).
 CREATE TABLE IF NOT EXISTS plan_template (
@@ -537,7 +538,11 @@ CREATE TABLE IF NOT EXISTS weekly_metrics (
   n_quality         INTEGER,
   n_rest_days       INTEGER,
   max_consec_hard   INTEGER,               -- longest run of hard days (fri->sat risk)
-  plan_adherence    REAL                   -- % of planned intents matched
+  plan_adherence    REAL,                  -- % of planned intents matched
+  -- Phase 9: same-run copies of the week's plan_block row (that mart is the
+  -- source of truth; these save the weekly report a join). NULL with no anchor.
+  block             TEXT,
+  weeks_to_event    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS weekly_plan_actual (

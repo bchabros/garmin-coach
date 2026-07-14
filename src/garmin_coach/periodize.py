@@ -147,6 +147,44 @@ def rollup(
     conn.commit()
 
 
+_CURRENT_PLAN_COLUMNS = (
+    "week_start", "block", "weeks_to_event", "is_deload",
+    "race_date", "race_type", "race_status", "race_date_precision",
+)
+
+
+def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
+    """Return the plan row for the week ``day`` falls in, joined to its anchor race.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        day: Any calendar day; the week containing it is looked up.
+
+    Returns:
+        The week's block, countdown, and planned-deload flag alongside the anchor
+        race's date/type/status, or None when there is no plan (no anchor race).
+    """
+    row = conn.execute(
+        """
+        SELECT p.week_start, p.block, p.weeks_to_event, p.is_deload,
+               e.date, e.type, e.status, e.date_precision
+        FROM plan_block p
+        JOIN goal_event e ON e.id = p.anchor_event_id
+        WHERE p.week_start = ?
+        """,
+        (_monday(day).isoformat(),),
+    ).fetchone()
+    return dict(zip(_CURRENT_PLAN_COLUMNS, row, strict=True)) if row else None
+
+
+def blocks_by_week(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    """Return every planned week keyed by `week_start` (empty without an anchor)."""
+    return {
+        row[0]: {"block": row[1], "weeks_to_event": row[2]}
+        for row in conn.execute("SELECT week_start, block, weeks_to_event FROM plan_block")
+    }
+
+
 def annotate(events: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
     """Return the goal events soonest first, each with its countdown and anchor flag.
 

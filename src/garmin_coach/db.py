@@ -34,6 +34,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "weekly_metrics": {  # Phase 7: weekly strength load + its share
         "load_strength": "REAL",
         "strength_share": "REAL",
+        # Phase 9: the week's block, copied from plan_block
+        "block": "TEXT",
+        "weeks_to_event": "INTEGER",
     },
 }
 

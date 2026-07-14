@@ -107,3 +107,72 @@ def test_bootstrap_sync_watermark_uses_day_before_data_start_when_core_empty(con
 
     assert watermark == "2026-06-07"
     assert db.get_sync_watermark(conn, "sleep") == "2026-06-07"
+
+
+# --- goal_event (Phase 9): manually-logged ground truth, two uncertainty axes ---
+
+
+def _goal_event(**over):
+    row = {
+        "date": "2026-10-17", "type": "hyrox", "priority": "A",
+        "status": "confirmed", "date_precision": "approx",
+        "target_s": 3600, "note": "PB 1:01:46",
+    }
+    return {**row, **over}
+
+
+def test_upsert_goal_event_round_trips_both_uncertainty_axes(conn):
+    db.upsert_goal_event(conn, _goal_event())
+
+    events = db.list_goal_events(conn)
+    assert len(events) == 1
+    assert events[0]["status"] == "confirmed"
+    assert events[0]["date_precision"] == "approx"
+
+
+def test_goal_event_target_is_stored_as_seconds(conn):
+    db.upsert_goal_event(conn, _goal_event(target_s=3600))
+
+    assert db.list_goal_events(conn)[0]["target_s"] == 3600
+
+
+def test_upsert_goal_event_is_idempotent_on_date_and_type(conn):
+    db.upsert_goal_event(conn, _goal_event())
+    db.upsert_goal_event(conn, _goal_event(target_s=3550))
+
+    events = db.list_goal_events(conn)
+    assert len(events) == 1
+    assert events[0]["target_s"] == 3550
+
+
+def test_update_goal_event_flips_status_and_date_precision(conn):
+    db.upsert_goal_event(conn, _goal_event(
+        date="2026-09-05", type="run_race", priority="B",
+        status="tentative", date_precision="exact", target_s=5400,
+    ))
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    db.update_goal_event(conn, event_id, status="confirmed")
+
+    updated = db.list_goal_events(conn)[0]
+    assert updated["status"] == "confirmed"
+    assert updated["date_precision"] == "exact"
+    assert updated["target_s"] == 5400
+
+
+def test_update_goal_event_pins_an_approx_date(conn):
+    db.upsert_goal_event(conn, _goal_event())
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    db.update_goal_event(conn, event_id, date="2026-10-24", date_precision="exact")
+
+    updated = db.list_goal_events(conn)[0]
+    assert updated["date"] == "2026-10-24"
+    assert updated["date_precision"] == "exact"
+
+
+def test_list_goal_events_is_ordered_by_date(conn):
+    db.upsert_goal_event(conn, _goal_event())
+    db.upsert_goal_event(conn, _goal_event(date="2026-09-05", type="run_race"))
+
+    assert [e["date"] for e in db.list_goal_events(conn)] == ["2026-09-05", "2026-10-17"]

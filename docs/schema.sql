@@ -154,6 +154,25 @@ CREATE TABLE IF NOT EXISTS niggle (
   PRIMARY KEY (date, body_part)
 );
 
+-- Goal events: the races the athlete is training toward. Manually logged
+-- (garmin-coach event), never from Garmin - ground truth, system of record.
+-- Two ORTHOGONAL uncertainty axes, deliberately not collapsed into one column:
+--   status         - will the athlete start?      (a race may be skipped)
+--   date_precision - is the exact day known?      (a committed race may be undated)
+-- Only a 'confirmed' priority-A event anchors the block calendar; date_precision
+-- suppresses nothing and merely asks the report to have the date pinned. Phase 9.
+CREATE TABLE IF NOT EXISTS goal_event (
+  id              INTEGER PRIMARY KEY,
+  date            TEXT NOT NULL,             -- race day (best known estimate)
+  type            TEXT NOT NULL CHECK (type IN ('hyrox','run_race')),
+  priority        TEXT NOT NULL CHECK (priority IN ('A','B','C')),
+  status          TEXT NOT NULL CHECK (status IN ('confirmed','tentative')),
+  date_precision  TEXT NOT NULL CHECK (date_precision IN ('exact','approx')),
+  target_s        INTEGER,                   -- goal time in seconds (not free text)
+  note            TEXT,
+  UNIQUE (date, type)                        -- re-adding the same race converges
+);
+
 -- Movement-pattern map: Garmin exercise subcategory -> movement pattern + muscle
 -- group. Hand-curated core reference data (not Garmin-written, not a mart), seeded
 -- here and extended by hand as new exercises appear. 'grip' lives on the muscle

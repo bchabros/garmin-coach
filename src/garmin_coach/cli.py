@@ -9,7 +9,7 @@ import pathlib
 import sqlite3
 from typing import TYPE_CHECKING
 
-from . import client, daily, db, features, report, snapshot, sync
+from . import client, daily, db, features, periodize, report, snapshot, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -119,6 +119,124 @@ def log_niggle(
     db.upsert_niggle(conn, {"date": day, "body_part": body_part, "severity": severity, "note": note})
     conn.commit()
     return day
+
+
+EVENT_TYPES = ("hyrox", "run_race")
+EVENT_PRIORITIES = ("A", "B", "C")
+EVENT_STATUSES = ("confirmed", "tentative")
+EVENT_DATE_PRECISIONS = ("exact", "approx")
+
+
+def parse_target_s(target: str) -> int:
+    """Parse a goal time into seconds.
+
+    Accepts ``H:MM:SS``, ``MM:SS``, or bare seconds, so the athlete can type a race
+    goal the way they say it ("1:00:00") and the DB still stores a number a later
+    race plan can split across segments.
+
+    Raises:
+        ValueError: If the text is not a colon-separated time or a plain integer.
+    """
+    parts = target.split(":")
+    if len(parts) > 3 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"target must be H:MM:SS, MM:SS or seconds (got {target!r})")
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return seconds
+
+
+def _check_choice(name: str, value: str, allowed: tuple[str, ...]) -> None:
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of {'|'.join(allowed)} (got {value!r})")
+
+
+def add_goal_event(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    type: str,  # noqa: A002 - mirrors the goal_event column and the --type flag
+    priority: str,
+    status: str,
+    date_precision: str,
+    target: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Record a goal race in core (transport-free); re-adding the same race converges.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        date: Race day YYYY-MM-DD (the best known estimate).
+        type: Race type (``hyrox`` or ``run_race``).
+        priority: Race priority (``A``, ``B``, or ``C``).
+        status: Whether the athlete will start (``confirmed`` or ``tentative``).
+        date_precision: Whether the exact day is known (``exact`` or ``approx``).
+        target: Optional goal time as ``H:MM:SS``, ``MM:SS``, or seconds.
+        note: Optional free-text note.
+
+    Raises:
+        ValueError: If an enum value is unknown or the target time is unparseable.
+    """
+    _check_choice("type", type, EVENT_TYPES)
+    _check_choice("priority", priority, EVENT_PRIORITIES)
+    _check_choice("status", status, EVENT_STATUSES)
+    _check_choice("date_precision", date_precision, EVENT_DATE_PRECISIONS)
+    db.upsert_goal_event(conn, {
+        "date": date, "type": type, "priority": priority, "status": status,
+        "date_precision": date_precision,
+        "target_s": parse_target_s(target) if target else None,
+        "note": note,
+    })
+    conn.commit()
+
+
+def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: str) -> None:
+    """Update a recorded goal event (pin an approx date, commit a tentative start).
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        event_id: The event's `id`, as shown by `event list`.
+        **fields: Any of `date`, `type`, `priority`, `status`, `date_precision`,
+            `target` (parsed to seconds), or `note`. Omitted fields keep their value.
+
+    Raises:
+        ValueError: If an enum value is unknown or the target time is unparseable.
+    """
+    changes: dict[str, object] = {k: v for k, v in fields.items() if v is not None}
+    for name, allowed in (
+        ("type", EVENT_TYPES), ("priority", EVENT_PRIORITIES),
+        ("status", EVENT_STATUSES), ("date_precision", EVENT_DATE_PRECISIONS),
+    ):
+        if name in changes:
+            _check_choice(name, str(changes[name]), allowed)
+    if "target" in changes:
+        changes["target_s"] = parse_target_s(str(changes.pop("target")))
+    db.update_goal_event(conn, event_id, **changes)
+    conn.commit()
+
+
+def list_goal_events(conn: sqlite3.Connection, *, today: str | None = None) -> list[dict]:
+    """Return the recorded goal events, each with its countdown and anchor flag.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        today: The as-of date YYYY-MM-DD (default: today).
+
+    Returns:
+        The events soonest first, each carrying `weeks_to_event` and `is_anchor`.
+        At most one event is the anchor; none is, when no confirmed A race is upcoming.
+    """
+    as_of = today or _dt.date.today().isoformat()
+    events = db.list_goal_events(conn)
+    anchor = periodize.anchor_event(events, as_of)
+    return [
+        {
+            **event,
+            "weeks_to_event": periodize.weeks_to_event(as_of, event["date"]),
+            "is_anchor": anchor is not None and event["id"] == anchor["id"],
+        }
+        for event in events
+    ]
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
@@ -246,6 +364,57 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _format_event(row: dict) -> str:
+    """Render one `event list` line: the race, its two uncertainty axes, its countdown."""
+    anchor = "*" if row["is_anchor"] else " "
+    target = f" target={row['target_s']}s" if row["target_s"] else ""
+    return (
+        f"{anchor} [{row['id']}] {row['date']} ({row['date_precision']}) "
+        f"{row['type']} prio={row['priority']} {row['status']}"
+        f"{target} weeks_to_event={row['weeks_to_event']}"
+    )
+
+
+def _cmd_event(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    conn = _bootstrap_db(settings)
+
+    try:
+        if args.event_command == "add":
+            add_goal_event(
+                conn, date=args.date, type=args.type, priority=args.priority,
+                status=args.status, date_precision=args.date_precision,
+                target=args.target, note=args.note,
+            )
+            message = f"event add complete: {args.type} on {args.date} ({args.status})"
+        elif args.event_command == "update":
+            update_goal_event(
+                conn, args.event_id, date=args.date, type=args.type,
+                priority=args.priority, status=args.status,
+                date_precision=args.date_precision, target=args.target, note=args.note,
+            )
+            message = f"event update complete: id={args.event_id}"
+        else:
+            rows = list_goal_events(conn)
+            conn.close()
+            if not rows:
+                print("event list: no goal events recorded; the plan has no anchor")
+                return 0
+            for row in rows:
+                print(_format_event(row))
+            if not any(row["is_anchor"] for row in rows):
+                print("note: no confirmed priority-A race upcoming, so the plan has no anchor")
+            return 0
+    except ValueError as exc:
+        conn.close()
+        print(f"event failed: {exc}")
+        return 2
+
+    conn.close()
+    print(message)
+    return 0
+
+
 def _cmd_daily(args: argparse.Namespace) -> int:
     settings = get_settings()
     daily.configure_logging(
@@ -356,6 +525,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
     lr.set_defaults(func=_cmd_log_rpe)
+
+    ev = sub.add_parser("event", help="Record the races you are training for (transport-free).")
+    ev_sub = ev.add_subparsers(dest="event_command", required=True)
+
+    ev_add = ev_sub.add_parser("add", help="Record a goal race.")
+    ev_add.add_argument("--date", required=True, help="Race day YYYY-MM-DD (best estimate).")
+    ev_add.add_argument("--type", required=True, choices=EVENT_TYPES, help="Race type.")
+    ev_add.add_argument(
+        "--priority", required=True, choices=EVENT_PRIORITIES,
+        help="A anchors the plan; B/C never do.",
+    )
+    ev_add.add_argument(
+        "--status", required=True, choices=EVENT_STATUSES,
+        help="Will you start? Only 'confirmed' anchors the plan or fires the taper.",
+    )
+    ev_add.add_argument(
+        "--date-precision", dest="date_precision", required=True,
+        choices=EVENT_DATE_PRECISIONS,
+        help="Is the exact day known? 'approx' still drives every block.",
+    )
+    ev_add.add_argument("--target", default=None, help="Goal time H:MM:SS, MM:SS, or seconds.")
+    ev_add.add_argument("--note", default=None, help="Optional free-text note.")
+    ev_add.set_defaults(func=_cmd_event)
+
+    ev_list = ev_sub.add_parser("list", help="Show the recorded races, the anchor, and countdowns.")
+    ev_list.set_defaults(func=_cmd_event)
+
+    ev_up = ev_sub.add_parser("update", help="Pin a date, or commit to a tentative race.")
+    ev_up.add_argument("event_id", type=int, help="Event id (from `event list`).")
+    ev_up.add_argument("--date", default=None, help="New race day YYYY-MM-DD.")
+    ev_up.add_argument("--type", default=None, choices=EVENT_TYPES, help="New race type.")
+    ev_up.add_argument(
+        "--priority", default=None, choices=EVENT_PRIORITIES, help="New race priority."
+    )
+    ev_up.add_argument("--status", default=None, choices=EVENT_STATUSES, help="New start status.")
+    ev_up.add_argument(
+        "--date-precision", dest="date_precision", default=None,
+        choices=EVENT_DATE_PRECISIONS, help="New date precision.",
+    )
+    ev_up.add_argument("--target", default=None, help="New goal time H:MM:SS, MM:SS, or seconds.")
+    ev_up.add_argument("--note", default=None, help="New free-text note.")
+    ev_up.set_defaults(func=_cmd_event)
 
     dl = sub.add_parser(
         "daily", help="Nightly run: sync -> features -> alerts (for cron/launchd)."

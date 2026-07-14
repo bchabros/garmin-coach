@@ -169,6 +169,61 @@ def upsert_niggle(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     )
 
 
+_GOAL_EVENT_COLUMNS = (
+    "id", "date", "type", "priority", "status", "date_precision", "target_s", "note",
+)
+
+_GOAL_EVENT_UPDATABLE = frozenset(_GOAL_EVENT_COLUMNS) - {"id"}
+
+
+def upsert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Upsert a `goal_event` row by (date, type); re-adding the same race converges."""
+    conn.execute(
+        "INSERT INTO goal_event(date, type, priority, status, date_precision, target_s, note) "
+        "VALUES (?,?,?,?,?,?,?) "
+        "ON CONFLICT(date, type) DO UPDATE SET "
+        "priority=excluded.priority, status=excluded.status, "
+        "date_precision=excluded.date_precision, target_s=excluded.target_s, "
+        "note=excluded.note",
+        (
+            row["date"], row["type"], row["priority"], row["status"],
+            row["date_precision"], row.get("target_s"), row.get("note"),
+        ),
+    )
+
+
+def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: Any) -> None:
+    """Partially update one `goal_event` row (e.g. pin a date, confirm a start).
+
+    Args:
+        conn: Open SQLite connection.
+        event_id: The event's `id`.
+        **fields: Any of the goal-event columns except `id`; omitted ones keep
+            their stored value.
+
+    Raises:
+        ValueError: If a field is not an updatable goal-event column.
+    """
+    unknown = set(fields) - _GOAL_EVENT_UPDATABLE
+    if unknown:
+        raise ValueError(f"unknown goal_event field(s): {','.join(sorted(unknown))}")
+    if not fields:
+        return
+    assignments = ",".join(f"{name}=?" for name in fields)
+    conn.execute(
+        f"UPDATE goal_event SET {assignments} WHERE id=?",
+        [*fields.values(), event_id],
+    )
+
+
+def list_goal_events(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return every recorded goal event, soonest first."""
+    rows = conn.execute(
+        f"SELECT {','.join(_GOAL_EVENT_COLUMNS)} FROM goal_event ORDER BY date"
+    ).fetchall()
+    return [dict(zip(_GOAL_EVENT_COLUMNS, row, strict=True)) for row in rows]
+
+
 def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert the singleton `athlete_zones` mart row (id=1)."""
     _upsert(conn, "athlete_zones", row, pk="id")

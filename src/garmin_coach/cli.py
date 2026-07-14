@@ -7,7 +7,7 @@ import datetime as _dt
 import os
 import pathlib
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from . import client, daily, db, features, periodize, report, snapshot, sync
 from .config import get_settings
@@ -126,6 +126,15 @@ EVENT_PRIORITIES = ("A", "B", "C")
 EVENT_STATUSES = ("confirmed", "tentative")
 EVENT_DATE_PRECISIONS = ("exact", "approx")
 
+# The single source of truth for the goal-event enums: argparse `choices=` and the
+# add/update validators both read it, so the CLI and the writers cannot drift apart.
+EVENT_CHOICES: dict[str, tuple[str, ...]] = {
+    "type": EVENT_TYPES,
+    "priority": EVENT_PRIORITIES,
+    "status": EVENT_STATUSES,
+    "date_precision": EVENT_DATE_PRECISIONS,
+}
+
 
 def parse_target_s(target: str) -> int:
     """Parse a goal time into seconds.
@@ -134,21 +143,41 @@ def parse_target_s(target: str) -> int:
     goal the way they say it ("1:00:00") and the DB still stores a number a later
     race plan can split across segments.
 
+    Args:
+        target: The goal time as ``H:MM:SS``, ``MM:SS``, or plain seconds.
+
+    Returns:
+        The goal time in whole seconds.
+
     Raises:
-        ValueError: If the text is not a colon-separated time or a plain integer.
+        ValueError: If the text is not a colon-separated time or a plain integer, or
+            if a minutes/seconds field is out of range (a mistyped goal must not be
+            silently accepted as a plausible number).
     """
     parts = target.split(":")
     if len(parts) > 3 or not all(part.isdigit() for part in parts):
         raise ValueError(f"target must be H:MM:SS, MM:SS or seconds (got {target!r})")
+    if any(int(part) >= 60 for part in parts[1:]):
+        raise ValueError(f"target has a minutes/seconds field above 59 (got {target!r})")
     seconds = 0
     for part in parts:
         seconds = seconds * 60 + int(part)
     return seconds
 
 
-def _check_choice(name: str, value: str, allowed: tuple[str, ...]) -> None:
-    if value not in allowed:
-        raise ValueError(f"{name} must be one of {'|'.join(allowed)} (got {value!r})")
+def _check_date(value: str) -> str:
+    """Return an ISO date, refusing anything a later read could not parse."""
+    try:
+        return _dt.date.fromisoformat(value).isoformat()
+    except ValueError:
+        raise ValueError(f"date must be YYYY-MM-DD (got {value!r})") from None
+
+
+def _check_choices(fields: dict[str, Any]) -> None:
+    for name, allowed in EVENT_CHOICES.items():
+        value = fields.get(name)
+        if value is not None and value not in allowed:
+            raise ValueError(f"{name} must be one of {'|'.join(allowed)} (got {value!r})")
 
 
 def add_goal_event(
@@ -175,68 +204,43 @@ def add_goal_event(
         note: Optional free-text note.
 
     Raises:
-        ValueError: If an enum value is unknown or the target time is unparseable.
+        ValueError: If the date is malformed, an enum value is unknown, or the target
+            time is unparseable.
     """
-    _check_choice("type", type, EVENT_TYPES)
-    _check_choice("priority", priority, EVENT_PRIORITIES)
-    _check_choice("status", status, EVENT_STATUSES)
-    _check_choice("date_precision", date_precision, EVENT_DATE_PRECISIONS)
+    fields = {"type": type, "priority": priority, "status": status,
+              "date_precision": date_precision}
+    _check_choices(fields)
     db.upsert_goal_event(conn, {
-        "date": date, "type": type, "priority": priority, "status": status,
-        "date_precision": date_precision,
+        "date": _check_date(date), **fields,
         "target_s": parse_target_s(target) if target else None,
         "note": note,
     })
     conn.commit()
 
 
-def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: str) -> None:
+def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: str | None) -> None:
     """Update a recorded goal event (pin an approx date, commit a tentative start).
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         event_id: The event's `id`, as shown by `event list`.
         **fields: Any of `date`, `type`, `priority`, `status`, `date_precision`,
-            `target` (parsed to seconds), or `note`. Omitted fields keep their value.
+            `target` (parsed to seconds), or `note`. Fields left None keep their value.
 
     Raises:
-        ValueError: If an enum value is unknown or the target time is unparseable.
+        ValueError: If no field is given, the event does not exist, the date is
+            malformed, an enum value is unknown, or the target time is unparseable.
     """
-    changes: dict[str, object] = {k: v for k, v in fields.items() if v is not None}
-    for name, allowed in (
-        ("type", EVENT_TYPES), ("priority", EVENT_PRIORITIES),
-        ("status", EVENT_STATUSES), ("date_precision", EVENT_DATE_PRECISIONS),
-    ):
-        if name in changes:
-            _check_choice(name, str(changes[name]), allowed)
+    changes: dict[str, Any] = {k: v for k, v in fields.items() if v is not None}
+    if not changes:
+        raise ValueError(f"nothing to update on event {event_id}; pass at least one field")
+    _check_choices(changes)
+    if "date" in changes:
+        changes["date"] = _check_date(str(changes["date"]))
     if "target" in changes:
         changes["target_s"] = parse_target_s(str(changes.pop("target")))
     db.update_goal_event(conn, event_id, **changes)
     conn.commit()
-
-
-def list_goal_events(conn: sqlite3.Connection, *, today: str | None = None) -> list[dict]:
-    """Return the recorded goal events, each with its countdown and anchor flag.
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        today: The as-of date YYYY-MM-DD (default: today).
-
-    Returns:
-        The events soonest first, each carrying `weeks_to_event` and `is_anchor`.
-        At most one event is the anchor; none is, when no confirmed A race is upcoming.
-    """
-    as_of = today or _dt.date.today().isoformat()
-    events = db.list_goal_events(conn)
-    anchor = periodize.anchor_event(events, as_of)
-    return [
-        {
-            **event,
-            "weeks_to_event": periodize.weeks_to_event(as_of, event["date"]),
-            "is_anchor": anchor is not None and event["id"] == anchor["id"],
-        }
-        for event in events
-    ]
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
@@ -364,7 +368,7 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
     return 0
 
 
-def _format_event(row: dict) -> str:
+def _format_event(row: dict[str, Any]) -> str:
     """Render one `event list` line: the race, its two uncertainty axes, its countdown."""
     anchor = "*" if row["is_anchor"] else " "
     target = f" target={row['target_s']}s" if row["target_s"] else ""
@@ -373,6 +377,18 @@ def _format_event(row: dict) -> str:
         f"{row['type']} prio={row['priority']} {row['status']}"
         f"{target} weeks_to_event={row['weeks_to_event']}"
     )
+
+
+def _list_events(conn: sqlite3.Connection) -> int:
+    rows = periodize.annotate(db.list_goal_events(conn), _dt.date.today().isoformat())
+    if not rows:
+        print("event list: no goal events recorded; the plan has no anchor")
+        return 0
+    for row in rows:
+        print(_format_event(row))
+    if not any(row["is_anchor"] for row in rows):
+        print("note: no confirmed priority-A race upcoming, so the plan has no anchor")
+    return 0
 
 
 def _cmd_event(args: argparse.Namespace) -> int:
@@ -395,17 +411,10 @@ def _cmd_event(args: argparse.Namespace) -> int:
             )
             message = f"event update complete: id={args.event_id}"
         else:
-            rows = list_goal_events(conn)
+            exit_code = _list_events(conn)
             conn.close()
-            if not rows:
-                print("event list: no goal events recorded; the plan has no anchor")
-                return 0
-            for row in rows:
-                print(_format_event(row))
-            if not any(row["is_anchor"] for row in rows):
-                print("note: no confirmed priority-A race upcoming, so the plan has no anchor")
-            return 0
-    except ValueError as exc:
+            return exit_code
+    except (ValueError, sqlite3.IntegrityError) as exc:
         conn.close()
         print(f"event failed: {exc}")
         return 2

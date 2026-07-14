@@ -202,7 +202,8 @@ def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: Any) ->
             their stored value.
 
     Raises:
-        ValueError: If a field is not an updatable goal-event column.
+        ValueError: If a field is not an updatable goal-event column, or if no event
+            has that id (a typo'd id must not read as a successful no-op).
     """
     unknown = set(fields) - _GOAL_EVENT_UPDATABLE
     if unknown:
@@ -210,10 +211,12 @@ def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: Any) ->
     if not fields:
         return
     assignments = ",".join(f"{name}=?" for name in fields)
-    conn.execute(
+    cursor = conn.execute(
         f"UPDATE goal_event SET {assignments} WHERE id=?",
         [*fields.values(), event_id],
     )
+    if cursor.rowcount == 0:
+        raise ValueError(f"no goal event with id {event_id}; run `garmin-coach event list`")
 
 
 def list_goal_events(conn: sqlite3.Connection) -> list[dict[str, Any]]:

@@ -49,3 +49,26 @@ def weeks_to_event(day: str, event_date: str) -> int:
     calendar weeks and is 0 anywhere inside the race week itself.
     """
     return (_monday(event_date) - _monday(day)).days // 7
+
+
+def annotate(events: list[dict[str, Any]], today: str) -> list[dict[str, Any]]:
+    """Return the goal events soonest first, each with its countdown and anchor flag.
+
+    Args:
+        events: Goal-event rows (as stored in ``goal_event``).
+        today: The as-of date (YYYY-MM-DD).
+
+    Returns:
+        The events ordered soonest first, each carrying ``weeks_to_event`` and
+        ``is_anchor``. At most one is the anchor; none is, when no confirmed
+        priority-A race is upcoming.
+    """
+    anchor = anchor_event(events, today)
+    return [
+        {
+            **event,
+            "weeks_to_event": weeks_to_event(today, event["date"]),
+            "is_anchor": anchor is not None and event["id"] == anchor["id"],
+        }
+        for event in sorted(events, key=lambda event: event["date"])
+    ]

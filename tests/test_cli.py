@@ -135,31 +135,51 @@ def test_add_goal_event_records_the_race(conn):
     assert events[0]["target_s"] == 3600
 
 
-def test_list_goal_events_marks_exactly_one_anchor(conn):
+def test_parse_target_s_rejects_out_of_range_minutes_and_seconds():
+    with pytest.raises(ValueError, match="target"):
+        cli.parse_target_s("1:99")
+    with pytest.raises(ValueError, match="target"):
+        cli.parse_target_s("0:0:75")
+
+
+def test_add_goal_event_rejects_a_malformed_date(conn):
+    """A date typo must be refused at entry: it would otherwise poison every later read."""
+    with pytest.raises(ValueError, match="date"):
+        cli.add_goal_event(
+            conn, date="17/10/2026", type="run_race", priority="B",
+            status="tentative", date_precision="exact",
+        )
+
+    assert db.list_goal_events(conn) == []
+
+
+def test_update_goal_event_rejects_a_malformed_date(conn):
     cli.add_goal_event(
         conn, date="2026-10-17", type="hyrox", priority="A",
         status="confirmed", date_precision="approx",
     )
-    cli.add_goal_event(
-        conn, date="2026-09-05", type="run_race", priority="B",
-        status="tentative", date_precision="exact",
-    )
+    event_id = db.list_goal_events(conn)[0]["id"]
 
-    rows = cli.list_goal_events(conn, today="2026-07-14")
+    with pytest.raises(ValueError, match="date"):
+        cli.update_goal_event(conn, event_id, date="24.10.2026")
 
-    assert [r["is_anchor"] for r in rows] == [False, True]
-    assert rows[1]["weeks_to_event"] == 13
+    assert db.list_goal_events(conn)[0]["date"] == "2026-10-17"
 
 
-def test_list_goal_events_marks_no_anchor_when_only_tentative(conn):
+def test_update_goal_event_rejects_an_unknown_id(conn):
+    with pytest.raises(ValueError, match="999"):
+        cli.update_goal_event(conn, 999, status="confirmed")
+
+
+def test_update_goal_event_rejects_an_empty_update(conn):
     cli.add_goal_event(
         conn, date="2026-10-17", type="hyrox", priority="A",
-        status="tentative", date_precision="approx",
+        status="confirmed", date_precision="approx",
     )
+    event_id = db.list_goal_events(conn)[0]["id"]
 
-    rows = cli.list_goal_events(conn, today="2026-07-14")
-
-    assert not any(r["is_anchor"] for r in rows)
+    with pytest.raises(ValueError, match="nothing to update"):
+        cli.update_goal_event(conn, event_id)
 
 
 def test_update_goal_event_commits_a_tentative_race(conn):

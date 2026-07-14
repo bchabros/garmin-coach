@@ -77,6 +77,32 @@ def test_an_approx_date_still_anchors():
     assert anchor is not None
 
 
+def test_annotate_marks_exactly_one_anchor_and_its_countdown():
+    half = _event("2026-09-05", id=2, type="run_race", priority="B", status="tentative")
+    hyrox = _event("2026-10-17", id=1)
+
+    rows = periodize.annotate([half, hyrox], TODAY)
+
+    assert [row["is_anchor"] for row in rows] == [False, True]
+    assert rows[1]["weeks_to_event"] == 13
+
+
+def test_annotate_marks_no_anchor_when_only_tentative():
+    rows = periodize.annotate([_event("2026-10-17", status="tentative")], TODAY)
+
+    assert not any(row["is_anchor"] for row in rows)
+    assert rows[0]["weeks_to_event"] == 13
+
+
+def test_annotate_orders_events_soonest_first():
+    half = _event("2026-09-05", id=2, type="run_race", priority="B")
+    hyrox = _event("2026-10-17", id=1)
+
+    assert [row["date"] for row in periodize.annotate([hyrox, half], TODAY)] == [
+        "2026-09-05", "2026-10-17",
+    ]
+
+
 def test_weeks_to_event_counts_whole_weeks_between_mondays():
     # 2026-07-14 (Tue) -> Monday 07-13; 2026-10-17 (Sat) -> Monday 10-12. 13 weeks.
     assert periodize.weeks_to_event(TODAY, "2026-10-17") == 13

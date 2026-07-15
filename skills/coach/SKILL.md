@@ -42,8 +42,9 @@ only.
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
    `signals` list already ordered alert > warn > info, a `zones` block (personal
    training zones; may be null), a `plan` block (the periodization standing; may be
-   null), a `movement` block (per-set map coverage; may be null), and a `disclaimer`.
-   Do not open the mart or recompute anything.
+   null), a `movement` block (per-set map coverage; may be null), a `recommendation`
+   block (tomorrow's prospective session advice; absent when there is no horizon), and a
+   `disclaimer`. Do not open the mart or recompute anything.
 
    Also read `reports/{today}/snapshot.json` (may be absent if the mart was never
    materialized). It is the current standing: `computed_at`, `vo2max` (+ `vo2max_delta`
@@ -96,6 +97,9 @@ only.
        `overlap_max`, suggest spacing them or inserting recovery.
      - `MUSCLE_OVERLAP` -> the same muscle group(s) (`facts.keys`, e.g. grip + posterior
        chain) stacked across adjacent sessions; flag the recovery risk on those tissues.
+     - `HARD_RPE_YESTERDAY` -> yesterday's session was subjectively very hard
+       (`facts.rpe` on Borg CR10); the next day should back off. This feeds tomorrow's
+       recommendation below.
    - **Movement coverage** - when the digest's `movement` block is present and
      `sets_unmapped` > 0, add one brief line that the overlap read is partial: N of
      `sets_total` sets are unmapped (`unmapped` names), so those exercises need adding to
@@ -124,6 +128,31 @@ only.
        `load_total` (and no `DELOAD_ADVISED`), name the divergence - the plan asked for
        a recovery week and it did not happen. Plan and reality are tracked separately on
        purpose; the gap is the finding.
+   - **Rekomendacja na dziś** - only when the digest has a non-null `recommendation`
+     block. It advises the *next* session (`target_date`, i.e. tomorrow relative to the
+     window) and only ever softens what the weekly template planned. Render:
+     - The session: `intended_type` (rest/easy/tempo/hyrox/quality) with the
+       `intensity_cap` when non-null (Z2/Z3/Z4 HR ceiling) and `pace_target_s_per_km` as
+       min:sec/km when non-null. If `pace_target_s_per_km` is null, do not invent a pace
+       (the zones are still on a fallback multiplier). If `downgraded` is true, say it is
+       a step down from the planned `planned_intent` and give the reason; if false, tell
+       the athlete to keep the planned session.
+     - The reasons: translate every code in `rationale` using the Sygnały mapping above
+       (e.g. `HRV_LOW_MORNING`, `ACWR_OUT_OF_RANGE`, `TWO_HARD_DAYS`,
+       `HARD_RPE_YESTERDAY`, `DELOAD_ADVISED`, `AEROBIC_LOW_SHORTAGE`, `TAPER_ACTIVE`).
+       For `NIGGLE_REDUCED_MODE`, name the affected body part from that signal's
+       `facts.body_part` in the `signals` list. An empty `rationale` with `downgraded`
+       false means "trzymaj plan" - say so plainly.
+     - `avoid` - when non-empty, one short line naming the movement patterns / muscle
+       groups to keep off tomorrow (they stacked on back-to-back days).
+     - `replan` - when present (not null), the last complete week missed `replan.missed`
+       planned sessions, so a broken week now needs realigning. Lay out the three
+       `options` (`extend` / `rebuild` / `continue`) with their `cite`, and mark
+       `replan.recommended` as the suggested one for the current block. Frame it as the
+       athlete's choice, not an order; note that `rebuild` is a manual call, because the
+       system holds no session priorities to rebuild from.
+     - This whole block is a suggestion, never a prescription - keep the reading framing.
+     Skip the entire block when `recommendation` is absent.
    - **Wykresy** - embed both: `![HRV](hrv_band.png)` and `![ACWR](acwr.png)`.
    - **Zastrzeżenie** - end with the digest `disclaimer` verbatim.
 

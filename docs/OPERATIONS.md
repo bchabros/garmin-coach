@@ -182,10 +182,11 @@ quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push repor
 
 ## The coach MCP server (mcp__coach__*)
 
-One local stdio server, registered in the repo's versioned `.mcp.json` — any Claude
-Code / Cowork session pointed at this folder gets the tools automatically. It is a
-thin layer over the same functions the CLI uses (see ADR 0014); the exploratory
-`mcp__garmin__*` server stays separate and ad-hoc-only.
+One local stdio server (entry point `garmin-coach-mcp`), registered in the repo's
+versioned `.mcp.json`. It is a thin layer over the same functions the CLI uses (see
+ADR 0014); the exploratory `mcp__garmin__*` server stays separate and ad-hoc-only.
+Which clients pick it up and how is covered in "Registering the server" below — it is
+**not** automatic everywhere.
 
 - **Read tools** (local DB, no Garmin): `get_snapshot`, `get_digest`,
   `get_recent_activities(n)`, `get_weekly(week_start)`, `get_zones`,
@@ -210,6 +211,54 @@ Sleep, HRV, and readiness are morning-complete and safe to read all day. In
 `get_recent_activities`, an activity dated today additionally carries
 `partial_today: true` — its training-effect numbers may still settle, so treat them
 as provisional too.
+
+### Registering the server in a client
+
+The `.mcp.json` in the repo root is a **Claude Code** convention; other clients need
+their own setup. In all cases the `garmin-coach-mcp` script must exist first
+(`poetry install` registers it).
+
+- **Claude Code (CLI + IDE), run in this folder** — auto-discovered from `.mcp.json`.
+  On first use the project server shows `Pending approval`; approve it once and the
+  `mcp__coach__*` tools appear. To re-prompt after a config change, reset the trust
+  choice with `claude mcp reset-project-choices`.
+- **Claude Desktop** — does **not** read `.mcp.json`. Add the server to
+  `claude_desktop_config.json` (macOS:
+  `~/Library/Application Support/Claude/claude_desktop_config.json`). Desktop launches
+  the command from its own working directory, so pin the project with `cwd`:
+
+  ```json
+  {
+    "mcpServers": {
+      "coach": {
+        "command": "/Users/Chabi/.local/bin/poetry",
+        "args": ["run", "garmin-coach-mcp"],
+        "cwd": "/Users/Chabi/garmin-coach"
+      }
+    }
+  }
+  ```
+
+  Use poetry's **absolute path** (a GUI app does not inherit your shell `PATH`, so a
+  bare `poetry` often fails to resolve); `which poetry` prints it. If the launcher
+  still cannot find its runtime, add an `env` block with a `PATH` that includes your
+  Python/poetry bin dirs.
+- **Restricted sandboxes (e.g. a Cowork-style environment without poetry)** — the
+  repo's own note below applies: poetry needs Python 3.13 and may be absent. Register
+  a poetry-free launch instead, after installing the deps once:
+
+  ```bash
+  pip install mcp matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
+  PYTHONPATH=src python3 -m garmin_coach.mcp_server
+  ```
+
+  (`matplotlib` is needed because the server's import chain reaches `report` ->
+  `charts`, even though the MCP tools never render a chart.)
+
+  Note: the exact mechanism a Cowork-style client uses to register a local stdio MCP
+  server is not covered by public docs at time of writing — the command above is what
+  to register once you locate that setting; confirm the client's MCP configuration in
+  its own documentation.
 
 ## Cowork agent notes
 

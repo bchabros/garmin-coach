@@ -21,11 +21,11 @@ def _tokenstore(settings: Settings) -> str:
     return os.path.expanduser(settings.garmintokens)
 
 
-def login(
+def login_api(
     settings: Settings | None = None,
     prompt_mfa: Callable[[], str] | None = None,
-) -> "GarminTransport":
-    """Log in, preferring cached tokens; fall back to a full login with MFA.
+) -> Garmin:
+    """Log in and return the authenticated garminconnect ``Garmin`` client.
 
     First run caches OAuth tokens to GARMINTOKENS (mode 0600 by garth); later
     runs resume from them and only re-login when the refresh token expires.
@@ -37,7 +37,7 @@ def login(
     api = Garmin()
     try:
         api.login(tokenstore)
-        return GarminTransport(api)
+        return api
     except Exception:
         pass  # no/expired tokens -> full login below
 
@@ -54,7 +54,15 @@ def login(
     # runs resume from them (and never hit the rate-limited login endpoint).
     os.makedirs(os.path.expanduser(tokenstore), exist_ok=True)
     api.login(tokenstore)
-    return GarminTransport(api)
+    return api
+
+
+def login(
+    settings: Settings | None = None,
+    prompt_mfa: Callable[[], str] | None = None,
+) -> "GarminTransport":
+    """Log in (preferring cached tokens) and adapt the client to the read transport."""
+    return GarminTransport(login_api(settings, prompt_mfa))
 
 
 class GarminTransport:

@@ -218,18 +218,66 @@ def _existing_hash(workout: dict[str, Any]) -> str | None:
     return None
 
 
-def connect_publisher(settings: Any) -> WorkoutPublisher:
-    """Build the live Garmin write surface.
+class GarminWorkoutPublisher:
+    """The live ``WorkoutPublisher`` over an authenticated garminconnect client.
 
-    The real wrapper over ``client.login`` is wired in a later ticket (the one that
-    also runs the manual live-push acceptance and settles the response shapes). Until
-    then this raises so the orchestration and CLI can be built and reviewed against the
-    fake without a live account.
-
-    Raises:
-        NotImplementedError: Always, until the live wrapper ticket lands.
+    Out-of-seam transport, isolated exactly like ``client.py`` and never unit-tested
+    (network/auth); the orchestration is covered by the fake, and this wrapper's
+    response-field extraction is settled by the manual live-push acceptance step in
+    ``docs/OPERATIONS.md``.
     """
-    raise NotImplementedError("live workout transport is wired in a later ticket (see PRD 06)")
+
+    def __init__(self, api: Any) -> None:
+        self._api = api
+
+    def list_workouts(self) -> list[dict[str, Any]]:
+        """Return the account's workout library summaries."""
+        return list(self._api.get_workouts())
+
+    def upload(self, payload: dict[str, Any]) -> int:
+        """Upload a workout payload; return its new ``workoutId``."""
+        created = self._api.upload_workout(payload)
+        return int(created["workoutId"])
+
+    def schedule(self, workout_id: int, date: str) -> int:
+        """Schedule a library workout to a date; return the schedule id."""
+        scheduled = self._api.schedule_workout(workout_id, date)
+        return int(scheduled.get("workoutScheduleId") or scheduled["id"])
+
+    def unschedule(self, schedule_id: int) -> None:
+        """Remove a scheduled-workout calendar entry."""
+        self._api.unschedule_workout(schedule_id)
+
+    def delete(self, workout_id: int) -> None:
+        """Delete a workout from the library."""
+        self._api.delete_workout(workout_id)
+
+    def list_scheduled(self, date: str) -> list[dict[str, Any]]:
+        """Return the calendar entries on a date (each with ``scheduleId``/``workoutId``)."""
+        year, month, _ = date.split("-")
+        payload = self._api.get_scheduled_workouts(int(year), int(month))
+        entries = payload.get("calendarItems", payload) if isinstance(payload, dict) else payload
+        scheduled = []
+        for item in entries or []:
+            if item.get("date") == date and item.get("workoutId") is not None:
+                scheduled.append(
+                    {
+                        "scheduleId": item.get("workoutScheduleId") or item.get("id"),
+                        "workoutId": item["workoutId"],
+                    }
+                )
+        return scheduled
+
+
+def connect_publisher(settings: Any) -> WorkoutPublisher:
+    """Log in and build the live Garmin write surface.
+
+    Reuses ``client.login_api`` for authentication (token cache, MFA, retry-on-expired),
+    then wraps the authenticated client in the write-side publisher.
+    """
+    from . import client
+
+    return GarminWorkoutPublisher(client.login_api(settings))
 
 
 def _spec_hash(spec: dict[str, Any]) -> str:

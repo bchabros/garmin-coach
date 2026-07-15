@@ -42,7 +42,7 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 8 | Per-set capture + movement-pattern overlap | Done | [section](#phase-8-per-set-capture-and-overlap) · [PRD](prd/phase-8-movement-overlap/PRD.md) |
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done | [section](#phase-9-race-date-periodization) · [PRD](prd/phase-9-periodization/PRD.md) |
 | 9b | Race-day pacing (`race_plan`) | Planned | [section](#phase-9b-race-day-pacing) |
-| 10 | Prospective session recommender (re-planning-aware) | PRD ready | [section](#phase-10-prospective-recommender) · [PRD](prd/phase-10-recommender/PRD.md) |
+| 10 | Prospective session recommender (re-planning-aware) | Done | [section](#phase-10-prospective-recommender) · [PRD](prd/phase-10-recommender/PRD.md) |
 | 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
 | read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
 

@@ -133,6 +133,11 @@ If the response-field extraction in `GarminWorkoutPublisher` (workout id, schedu
 scheduled-list shape) does not match what the live account returns, fix it here -- that
 mapping is deliberately settled by this step, not guessed in a unit test.
 
+Passed on 2026-07-17 (a `quality` push): create scheduled exactly one `GC 2026-07-17
+quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push reported
+`noop` with no duplicate, and all four response mappings (`get_workouts`,
+`upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
+
 ## Cowork agent notes
 
 For Claude running in Cowork (pointed at this folder, commands via the Linux sandbox):

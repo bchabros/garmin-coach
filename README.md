@@ -16,7 +16,7 @@ and what's missing.
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
 [docs/PROJECT.md](docs/PROJECT.md) for the full brief and roadmap — the built
-phases 0-9 plus the forward plan for phases 9b-11 + read-MCP.
+phases 0-10 plus the forward plan for phase 11 + read-MCP.
 
 ## Status
 
@@ -33,14 +33,15 @@ phases 0-9 plus the forward plan for phases 9b-11 + read-MCP.
 | 7 | Session-RPE load model for strength/Hyrox + niggle log | Done — [docs/prd/phase-7/PRD.md](docs/prd/phase-7/PRD.md), [ADR 0010](docs/adr/0010-phase-7-strength-load-and-niggle.md)                                      |
 | 8 | Per-set capture + movement-pattern overlap | Done — [docs/prd/phase-8-movement-overlap/PRD.md](docs/prd/phase-8-movement-overlap/PRD.md), [ADR 0011](docs/adr/0011-phase-8-movement-overlap.md)                  |
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done — [docs/prd/phase-9-periodization/PRD.md](docs/prd/phase-9-periodization/PRD.md), [ADR 0012](docs/adr/0012-phase-9-race-date-periodization.md)                  |
-| 9b | Race-day pacing (`race_plan`) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-9b-race-day-pacing)                                                                                      |
-| 10 | Prospective session recommender (re-planning-aware) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-10-prospective-recommender)                                                                                      |
+| 10 | Prospective session recommender (re-planning-aware) | Done — [docs/prd/phase-10-recommender/PRD.md](docs/prd/phase-10-recommender/PRD.md)                                                                                      |
 | 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-11-workout-authoring-and-push)                                                                                      |
 | read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/PROJECT.md](docs/PROJECT.md#read-mcp-conversational-read-layer)                                                                                      |
 
-Phases 0-9 are built and everything after is the forward plan; both live in
+Phases 0-10 are built and everything after is the forward plan; both live in
 [docs/PROJECT.md](docs/PROJECT.md), which also records the industry survey and the
-dependency ordering between the planned phases.
+dependency ordering between the planned phases. Phase 9b (race-day pacing) has moved
+out of the roadmap to GitHub issue [#13](https://github.com/bchabros/garmin-coach/issues/13) —
+it is deliberately scoped to run close to race day.
 
 ## Layout
 
@@ -54,14 +55,14 @@ garmin-coach/
 ├── .codex/                   # Codex local notes and companion files
 ├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
-│   ├── PROJECT.md            # build brief + roadmap: phases 0–9 (built) and 9b–11 + read-MCP
+│   ├── PROJECT.md            # build brief + roadmap: phases 0–10 (built) and 11 + read-MCP
 │   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
 │   ├── DEVELOPMENT.md        # coding guide: workflow, module map, conventions, seams
 │   ├── OPERATIONS.md         # operator runbook: pipeline, exit codes, logs, reports
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
 │   ├── glossary.md           # domain vocabulary (single source of truth)
 │   ├── adr/                  # decision records (0001–0012; one per phase + architecture/docs)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-9) + docs-layering
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-10) + docs-layering
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -84,6 +85,7 @@ garmin-coach/
 │   ├── thresholds.py         # coach threshold policy: defaults + DB overrides
 │   ├── digest.py             # headline + coach signals + weekly/zones/plan sections (build_digest)
 │   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED, TAPER_ACTIVE)
+│   ├── recommend.py          # tomorrow's session recommendation composed from the digest (Phase 10)
 │   ├── charts.py             # HRV band + ACWR matplotlib charts
 │   ├── report.py             # orchestrates digest + charts → reports/{date}/
 │   ├── daily.py              # nightly orchestrator: sync → features → alerts

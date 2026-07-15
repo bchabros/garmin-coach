@@ -41,10 +41,13 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 7 | Session-RPE load model for strength/Hyrox + niggle log | Done | [section](#phase-7-strength-and-hyrox-load-model) · [PRD](prd/phase-7/PRD.md) |
 | 8 | Per-set capture + movement-pattern overlap | Done | [section](#phase-8-per-set-capture-and-overlap) · [PRD](prd/phase-8-movement-overlap/PRD.md) |
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done | [section](#phase-9-race-date-periodization) · [PRD](prd/phase-9-periodization/PRD.md) |
-| 9b | Race-day pacing (`race_plan`) | Planned | [section](#phase-9b-race-day-pacing) |
 | 10 | Prospective session recommender (re-planning-aware) | Done | [section](#phase-10-prospective-recommender) · [PRD](prd/phase-10-recommender/PRD.md) |
 | 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
 | read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
+
+Phase 9b (race-day pacing, `race_plan`) has moved out of this roadmap to GitHub issue
+[#13](https://github.com/bchabros/garmin-coach/issues/13) — see the
+[stub section](#phase-9b-race-day-pacing) for why.
 
 Reference sections: [database schema](#brief-4-database-schema-raw-core-mart) ·
 [metric definitions](#brief-6-metric-definitions-featurespy) · [gotchas](#brief-10-gotchas) ·
@@ -846,49 +849,15 @@ template stays the athlete's, the engine annotates it.
 
 ## Phase 9b: race-day pacing
 
-> **Deterministic race-day pacing plan (`race_plan`). Split out of Phase 9 — see
-> [ADR 0012](adr/0012-phase-9-race-date-periodization.md).**
+> **Moved to GitHub issue
+> [#13](https://github.com/bchabros/garmin-coach/issues/13).**
 
-**Goal.** `race_plan(event, athlete_status) -> per-segment targets`: for Hyrox, 8×1 km run
-paces + station effort caps from current threshold pace/HR (Garmin PacePro / ROXFIT
-"PaceMe" analogue); output into `reports/{race_date}/`. Include a one-paragraph fueling
-note — that covers ~90% of nutrition's value without building any nutrition feature.
-
-**Why it was split off (important).** The athlete's A race is HYROX **Doubles**, and the
-original Phase 9 sketch's `race_plan(event, athlete_status)` signature cannot express it.
-In Doubles the 8 km of running is **shared** (pace is bounded by the slower partner) and
-the stations are **split** by a strategy the database has no way to know; `athlete_status`
-holds no partner threshold pace and never will, because the partner wears no watch we read.
-The partner is therefore the *only* input in the whole system that the DB cannot hold —
-which is exactly the argument for this being its own seam. Building it early would mean
-inventing a partner model, a station-split policy, and baseline station times all at once,
-producing a confidently wrong plan for the athlete's only A race.
-
-**The rule this must respect.** The coach optimizes **the athlete, not the team** — no
-partner load, no shared readiness. Training is solo by choice; race day is paired by
-physics. The partner exists here and nowhere else.
-
-**Blockers to clear first.**
-- **Regression-backed zones.** At design time `athlete_zones.source` was still
-  `threshold_pace_fallback+lthr` (one qualifying run short of `zones_regression_min_runs`),
-  so the threshold pace every race target derives from was a multiplier, not a measurement.
-- **The pair's station split.** Who does which half of the wall balls is a decision, not a
-  measurement — it must be an *input*.
-- **Baseline station times.** The athlete's 1:01:46 reference race predates `data_start`,
-  so no station splits exist anywhere in the DB. Sub-60 needs 106 s found somewhere, and
-  nothing in the system currently knows *where*.
-
-**Design question left open.** Does `race_plan` work *forward* from current fitness
-(predict a finish time) or *backward* from the goal time (allocate 3600 s across segments
-and report whether it is reachable)? The backward form is the falsifiable one and is the
-likely answer, but it is gated on the baseline station times above.
-
-**Seam & tests.** Pure; golden test from a fixture snapshot.
-
-**Deps.** 6 (threshold pace), 6b (snapshot). Nothing depends on 9b — it is a leaf, which is
-what made splitting it free.
-
-**Timing.** Scoped to run close to race day, when the information actually exists.
+The deterministic race-day pacing plan (`race_plan`) was split out of Phase 9 (see
+[ADR 0012](adr/0012-phase-9-race-date-periodization.md)) and now lives outside this
+roadmap: the full design record - the Doubles constraint, the athlete-not-the-team
+rule, the three blockers, and the open forward-vs-backward question - is in the
+issue. It stays a leaf (nothing depends on it) and is deliberately scoped to run
+close to race day, when the information it needs actually exists.
 
 ## Phase 10: prospective recommender
 

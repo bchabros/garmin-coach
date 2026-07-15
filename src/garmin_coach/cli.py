@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import pathlib
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import client, daily, db, features, periodize, report, snapshot, sync
+from . import author as _author
+from . import client, daily, db, digest, features, periodize, report, snapshot, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -314,6 +316,43 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_author(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
+    thresholds = report.read_thresholds(conn)
+    dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    conn.close()
+
+    recommendation = dg.get("recommendation")
+    if recommendation is None:
+        print(f"author: no recommendation for {args.date}; run `garmin-coach features` first")
+        return 1
+
+    request = _author.request_from_recommendation(recommendation, sport=args.sport)
+    context = {"zones": dg.get("zones"), "today": _dt.date.today().isoformat()}
+    try:
+        spec = _author.author(request, context)
+    except ValueError as exc:
+        print(f"author failed: {exc}")
+        return 1
+
+    if spec is None:
+        print(f"author: nothing to author for {args.date} (rest)")
+        return 0
+
+    out = pathlib.Path(args.reports_dir) / args.date
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "workout.json").write_text(json.dumps(spec, indent=2))
+    print(f"author complete: {out / 'workout.json'} ({spec['name']}, {len(spec['steps'])} steps)")
+    for warning in spec["warnings"]:
+        print(f"  warning: {warning}")
+    return 0
+
+
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     settings = get_settings()
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
@@ -499,6 +538,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="Last day to emit YYYY-MM-DD (default: latest core date)."
     )
     ft.set_defaults(func=_cmd_features)
+
+    au = sub.add_parser(
+        "author", help="Turn a recommendation into a workout spec in reports/{date}/ (no network)."
+    )
+    au.add_argument("--date", dest="date", required=True, help="Target date YYYY-MM-DD.")
+    au.add_argument(
+        "--from-recommendation", dest="from_recommendation", action="store_true",
+        help="Author from the Phase 10 recommendation for the target date.",
+    )
+    au.add_argument(
+        "--sport", dest="sport", default="run", choices=["run"],
+        help="Authoring family (only run is authored in this phase).",
+    )
+    au.add_argument(
+        "--reports-dir", dest="reports_dir", default="./reports",
+        help="Root directory for dated report folders.",
+    )
+    au.set_defaults(func=_cmd_author)
 
     rp = sub.add_parser("report", help="Build the coach digest + charts into reports/{date}/.")
     rp.add_argument(

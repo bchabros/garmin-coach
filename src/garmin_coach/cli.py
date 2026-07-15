@@ -11,7 +11,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from . import author as _author
-from . import client, daily, db, digest, features, periodize, report, snapshot, sync
+from . import client, daily, db, digest, features, periodize, publish, report, snapshot, sync
 from .config import get_settings
 
 if TYPE_CHECKING:
@@ -364,6 +364,49 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0
 
 
+def _activity_dates(conn: sqlite3.Connection, date: str) -> set[str]:
+    """The target date, when it already carries a logged activity in core."""
+    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
+    return {date} if row else set()
+
+
+def _cmd_push(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    spec_path = pathlib.Path(args.reports_dir) / args.date / "workout.json"
+    if not spec_path.exists():
+        conn.close()
+        print(f"push: no workout.json for {args.date}; run `garmin-coach author` first")
+        return 1
+    spec = json.loads(spec_path.read_text())
+    activity_dates = _activity_dates(conn, args.date)
+    conn.close()
+
+    try:
+        publisher = publish.connect_publisher(settings)
+    except NotImplementedError as exc:
+        print(f"push: {exc}")
+        return 1
+
+    result = publish.publish(spec, publisher, confirm=args.confirm, activity_dates=activity_dates)
+    for warning in result.warnings:
+        print(f"  warning: {warning}")
+    print(f"push [{result.action}]: {result.message}")
+    if not result.applied and args.confirm and result.action == "refuse":
+        return 1
+    if result.applied:
+        receipt = result.as_receipt()
+        receipt["pushed_at"] = _dt.datetime.now().isoformat(timespec="seconds")
+        (spec_path.parent / "push.json").write_text(json.dumps(receipt, indent=2))
+        print(f"push complete: {spec_path.parent / 'push.json'}")
+    elif not args.confirm:
+        print("push: dry-run (re-run with --confirm to write to your Garmin account)")
+    return 0
+
+
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     settings = get_settings()
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
@@ -572,6 +615,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Root directory for dated report folders.",
     )
     au.set_defaults(func=_cmd_author)
+
+    pu = sub.add_parser(
+        "push", help="Push a workout spec to Garmin (dry-run unless --confirm)."
+    )
+    pu.add_argument("--date", dest="date", required=True, help="Target date YYYY-MM-DD.")
+    pu.add_argument(
+        "--confirm", dest="confirm", action="store_true",
+        help="Actually write to the Garmin account (default: dry-run, shows the payload).",
+    )
+    pu.add_argument(
+        "--reports-dir", dest="reports_dir", default="./reports",
+        help="Root directory for dated report folders.",
+    )
+    pu.set_defaults(func=_cmd_push)
 
     rp = sub.add_parser("report", help="Build the coach digest + charts into reports/{date}/.")
     rp.add_argument(

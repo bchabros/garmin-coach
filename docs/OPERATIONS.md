@@ -27,6 +27,7 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
 ```bash
 poetry run garmin-coach backfill --from 2026-06-08   # [--to YYYY-MM-DD]  one-off history fill
 poetry run garmin-coach sync                          # pull missing data since watermarks
+poetry run garmin-coach refresh-today                 # opt-in same-day pull + features (partial!)
 poetry run garmin-coach features                      # recompute marts (daily + weekly + zones)
 poetry run garmin-coach report [--to YYYY-MM-DD]      # build digest.json + charts for a date
 poetry run garmin-coach daily  [--to YYYY-MM-DD]      # nightly: sync -> features -> alerts
@@ -70,7 +71,12 @@ Config keys (`config.py`, overridable via env / `.env`):
   hammer it, **wait it out**. A 429 typically surfaces as a `failed` run.
 - **Backfill / sync exclude "today".** HRV and sleep only land after the night, so the
   pipeline only pulls through **yesterday**. A missing current-day row is expected, not a
-  bug.
+  bug. To see *this morning's* HRV/readiness for a same-day call, opt in explicitly with
+  `refresh-today`: it pulls today (partial), rebuilds the mart through today, and **never
+  advances sync watermarks**, so the nightly run re-pulls the day complete. Morning
+  streams (sleep, HRV, readiness) are reliable after wake; intraday fields (today's
+  load/TE, steps, RHR) are partial until the nightly run - never read them as final.
+  Same exit-code contract as `daily` (0 ok / 1 degraded / 2 failed).
 - **Re-running is safe (idempotency).** Re-running `backfill`/`sync` must not change
   **core** row counts (upsert by PK). Only `raw_payloads` grows (append-only, keyed by
   `fetched_at`). Re-run freely to recover from a degraded run.

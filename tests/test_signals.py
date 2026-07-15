@@ -171,3 +171,35 @@ def test_race_proximity_asks_to_pin_an_approx_date():
 
 def test_race_proximity_ignores_a_race_already_run():
     assert signals.race_proximity([_goal("2026-06-20")], TH9, "2026-07-14") is None
+
+
+# --- Phase 10: subjective hard-RPE trigger ------------------------------------
+
+from garmin_coach.signals import hard_rpe_yesterday  # noqa: E402
+
+HARD_RPE_THR = {"hard_rpe": 8}
+
+
+def _rated(activity_id, rpe, date="2026-06-14"):
+    return {"activity_id": activity_id, "rpe": rpe, "date": date}
+
+
+def test_hard_rpe_fires_at_floor():
+    sig = hard_rpe_yesterday([_rated(1, 8)], HARD_RPE_THR)
+    assert sig["code"] == "HARD_RPE_YESTERDAY"
+    assert sig["severity"] == "warn"
+    assert sig["facts"] == {"activity_id": 1, "rpe": 8, "date": "2026-06-14"}
+
+
+def test_hard_rpe_silent_below_floor():
+    assert hard_rpe_yesterday([_rated(1, 7)], HARD_RPE_THR) is None
+
+
+def test_hard_rpe_picks_the_max_rpe_of_the_day():
+    sig = hard_rpe_yesterday([_rated(1, 6), _rated(2, 9)], HARD_RPE_THR)
+    assert sig["facts"]["activity_id"] == 2
+    assert sig["facts"]["rpe"] == 9
+
+
+def test_hard_rpe_silent_without_any_rated_session():
+    assert hard_rpe_yesterday([], HARD_RPE_THR) is None

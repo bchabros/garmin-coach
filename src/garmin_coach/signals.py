@@ -231,6 +231,32 @@ def niggle_reduced_mode(
     }
 
 
+def hard_rpe_yesterday(
+    rated_rows: list[dict], thresholds: dict[str, float]
+) -> dict | None:
+    """Phase 10: the latest day carried a subjectively hard session.
+
+    ``rated_rows`` are ``{activity_id, rpe, date}`` for the sessions rated on the
+    window's last day (the caller scopes them). Fires on the day's worst RPE when it
+    reaches ``hard_rpe`` - a very hard session (Borg 8-10) warrants an easy next day,
+    which the recommender then acts on. Facts are flat scalars.
+    """
+    if not rated_rows:
+        return None
+    worst = max(rated_rows, key=lambda r: r["rpe"])
+    if worst["rpe"] < thresholds["hard_rpe"]:
+        return None
+    return {
+        "code": "HARD_RPE_YESTERDAY",
+        "severity": "warn",
+        "facts": {
+            "activity_id": worst["activity_id"],
+            "rpe": worst["rpe"],
+            "date": worst["date"],
+        },
+    }
+
+
 def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dict | None:
     """Rule 6 (prospective): load has climbed into an overtraining flag.
 

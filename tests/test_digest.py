@@ -7,6 +7,7 @@ returned digest dict - never on internal helpers. Mirrors test_features.py.
 
 from __future__ import annotations
 
+import datetime as _dt
 import pathlib
 
 from garmin_coach import db, weekly
@@ -606,3 +607,60 @@ def test_digest_plan_is_none_without_an_anchor(conn):
 
     assert digest["plan"] is None
     assert "TAPER_ACTIVE" not in _codes(digest)
+
+
+# --- Phase 10: HARD_RPE_YESTERDAY through the digest --------------------------
+
+def _rated_activity(conn, activity_id, date, rpe):
+    db.upsert_activity(conn, {
+        "activity_id": activity_id, "start_local": f"{date} 08:00:00",
+        "date": date, "gtype": "strength_training", "discipline": "Siła",
+    })
+    db.upsert_session_rpe(conn, {"activity_id": activity_id, "rpe": rpe})
+
+
+def test_hard_rpe_yesterday_fires_on_latest_day_rated_session(conn):
+    _mart(conn, date="2026-06-14", load_day=100)
+    _rated_activity(conn, 1, "2026-06-14", 9)
+    s = _signal(build_digest(conn, from_date="2026-06-14", to_date="2026-06-14"),
+                "HARD_RPE_YESTERDAY")
+    assert s["facts"]["rpe"] == 9
+    assert s["facts"]["activity_id"] == 1
+
+
+def test_hard_rpe_yesterday_silent_for_a_soft_session(conn):
+    _mart(conn, date="2026-06-14", load_day=100)
+    _rated_activity(conn, 1, "2026-06-14", 5)
+    assert "HARD_RPE_YESTERDAY" not in _codes(
+        build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
+    )
+
+
+def test_hard_rpe_yesterday_silent_when_hard_session_is_not_on_to_date(conn):
+    _mart(conn, date="2026-06-13", load_day=100)
+    _mart(conn, date="2026-06-14", load_day=100)
+    _rated_activity(conn, 1, "2026-06-13", 9)  # hard, but a day before to_date
+    assert "HARD_RPE_YESTERDAY" not in _codes(
+        build_digest(conn, from_date="2026-06-13", to_date="2026-06-14")
+    )
+
+
+# --- Phase 10: recommendation block through the digest ------------------------
+
+def test_recommendation_rides_in_digest_for_tomorrow(conn):
+    _mart(conn, date="2026-06-14", load_day=100)
+    dg = build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
+    rec = dg["recommendation"]
+    assert rec["target_date"] == "2026-06-15"
+    expected = conn.execute(
+        "SELECT intent FROM plan_template WHERE dow = ?",
+        (_dt.date(2026, 6, 15).weekday(),),
+    ).fetchone()[0]
+    assert rec["planned_intent"] == expected
+    assert rec["avoid"] == []
+    assert rec["replan"] is None
+
+
+def test_no_recommendation_without_a_horizon(conn):
+    dg = build_digest(conn)  # empty mart -> to_date is None
+    assert "recommendation" not in dg

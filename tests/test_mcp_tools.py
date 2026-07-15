@@ -176,3 +176,143 @@ def test_get_workout_status_with_no_artifacts_is_explicit(conn, tmp_path):
 
     assert out["data"]["workout"] is None
     assert out["data"]["push"] is None
+
+
+# --- action tools -----------------------------------------------------------
+
+FUTURE = (dt.date.today() + dt.timedelta(days=2)).isoformat()
+
+
+def _seed_activity(conn, aid=1, date="2026-07-10") -> None:
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": aid,
+            "start_local": f"{date} 18:00:00",
+            "date": date,
+            "gtype": "strength_training",
+            "discipline": "Sila",
+            "aero_te": 1.4,
+            "anaero_te": 0.3,
+            "training_load": 22.0,
+            "dur_s": 4200,
+        },
+    )
+
+
+def test_log_rpe_writes_and_recomputes_load(conn):
+    _seed_activity(conn)
+
+    out = mcp_tools.log_rpe(conn, activity_id=1, rpe=8, data_start_date=DATA_START)
+
+    assert out["data"]["date"] == "2026-07-10"
+    assert conn.execute("SELECT rpe FROM session_rpe WHERE activity_id=1").fetchone()[0] == 8
+
+
+def test_log_rpe_unknown_activity_returns_error(conn):
+    out = mcp_tools.log_rpe(conn, activity_id=999, rpe=8, data_start_date=DATA_START)
+
+    assert "not found" in out["data"]["error"]
+
+
+def test_log_niggle_writes_a_niggle_row(conn):
+    out = mcp_tools.log_niggle(conn, body_part="achilles", severity=2, date="2026-07-10")
+
+    assert out["data"]["date"] == "2026-07-10"
+    assert conn.execute("SELECT severity FROM niggle WHERE body_part='achilles'").fetchone()[0] == 2
+
+
+def test_refresh_today_tool_reports_status_and_envelope(conn, fake_client):
+    client = fake_client()
+
+    out = mcp_tools.refresh_today(conn, client, data_start_date=DATA_START, today=TODAY)
+
+    assert out["data"]["status"] == "ok"
+    assert out["data"]["features_ok"] is True
+    assert out["freshness"]["today_included"] is True
+
+
+def test_author_workout_from_request_writes_the_spec(conn, tmp_path, fixture):
+    request = fixture("tempo_request")
+
+    out = mcp_tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+
+    assert out["data"]["error"] is None
+    assert out["data"]["spec"]["date"] == FUTURE
+    assert (tmp_path / FUTURE / "workout.json").exists()
+
+
+def test_author_workout_defers_strength(conn, tmp_path):
+    request = {"sport": "strength", "origin": "athlete", "session_type": "quality"}
+
+    out = mcp_tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+
+    assert out["data"]["spec"] is None
+    assert out["data"]["error"] is not None
+
+
+def test_author_workout_without_recommendation_errors(conn, tmp_path, monkeypatch):
+    monkeypatch.setattr(mcp_tools.digest, "build_digest", lambda *a, **k: {})
+
+    out = mcp_tools.author_workout(conn, date=FUTURE, reports_dir=str(tmp_path))
+
+    assert out["data"]["spec"] is None
+    assert "recommendation" in out["data"]["error"]
+
+
+def test_push_preview_returns_action_hash_and_payload(conn, tmp_path, fixture, fake_publisher):
+    request = fixture("tempo_request")
+    mcp_tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    pub = fake_publisher()
+
+    out = mcp_tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    assert out["data"]["action"] == "create"
+    assert out["data"]["spec_hash"]
+    assert out["data"]["payload"]["workoutName"].startswith("GC ")
+    assert pub.calls == []
+
+
+def test_push_confirm_refuses_a_stale_hash(conn, tmp_path, fixture, fake_publisher):
+    request = fixture("tempo_request")
+    mcp_tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    pub = fake_publisher()
+
+    out = mcp_tools.push_confirm(
+        conn, date=FUTURE, spec_hash="deadbeef", publisher=pub, reports_dir=str(tmp_path)
+    )
+
+    assert out["data"]["error"] is not None
+    assert "stale" in out["data"]["error"]
+    assert pub.calls == []
+
+
+def test_push_confirm_with_matching_hash_uploads_and_schedules(
+    conn, tmp_path, fixture, fake_publisher
+):
+    request = fixture("tempo_request")
+    mcp_tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    pub = fake_publisher()
+    preview = mcp_tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    out = mcp_tools.push_confirm(
+        conn,
+        date=FUTURE,
+        spec_hash=preview["data"]["spec_hash"],
+        publisher=pub,
+        reports_dir=str(tmp_path),
+    )
+
+    assert out["data"]["error"] is None
+    assert out["data"]["applied"] is True
+    assert "upload" in pub.calls and "schedule" in pub.calls
+    assert (tmp_path / FUTURE / "push.json").exists()
+
+
+def test_push_preview_without_a_spec_is_explicit(conn, tmp_path, fake_publisher):
+    out = mcp_tools.push_preview(
+        conn, date=FUTURE, publisher=fake_publisher(), reports_dir=str(tmp_path)
+    )
+
+    assert out["data"]["error"] is not None
+    assert "workout.json" in out["data"]["error"]

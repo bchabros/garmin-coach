@@ -16,7 +16,8 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from . import db, digest, periodize, report, snapshot
+from . import author, cli, daily, db, digest, periodize, publish, report, snapshot
+from .sync import GarminClient
 
 # Mart fields that accumulate during the day; they are only final after the
 # nightly run. Morning-complete streams (sleep, HRV, readiness) never appear.
@@ -160,3 +161,222 @@ def _read_json(path: pathlib.Path) -> Any:
     if not path.exists():
         return None
     return json.loads(path.read_text())
+
+
+# --- action tools (local writes, transport, workout push) -------------------
+
+
+def log_rpe(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    rpe: int,
+    soreness: int | None = None,
+    mood: int | None = None,
+    note: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Log a session RPE from chat; recomputes the affected day's blended load."""
+    try:
+        date = cli.log_session_rpe(
+            conn,
+            activity_id=activity_id,
+            rpe=rpe,
+            soreness=soreness,
+            mood=mood,
+            note=note,
+            data_start_date=data_start_date,
+        )
+    except ValueError as exc:
+        return _wrap(conn, {"error": str(exc)})
+    return _wrap(conn, {"activity_id": activity_id, "rpe": rpe, "date": date, "error": None})
+
+
+def log_niggle(
+    conn: sqlite3.Connection,
+    *,
+    body_part: str,
+    severity: int,
+    date: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Log a niggle (a sub-injury complaint) from chat."""
+    try:
+        day = cli.log_niggle(conn, body_part=body_part, severity=severity, date=date, note=note)
+    except ValueError as exc:
+        return _wrap(conn, {"error": str(exc)})
+    return _wrap(conn, {"body_part": body_part, "severity": severity, "date": day, "error": None})
+
+
+def refresh_today(
+    conn: sqlite3.Connection,
+    client: GarminClient,
+    *,
+    data_start_date: str,
+    today: str | None = None,
+) -> dict[str, Any]:
+    """Run the same-day refresh (issue #8) and report its status.
+
+    Thin wrapper over ``daily.run_refresh_today`` - the one MCP tool that
+    triggers Garmin transport (a read). Watermarks are never advanced.
+    """
+    result = daily.run_refresh_today(client, conn, data_start_date=data_start_date, today=today)
+    data = {
+        "status": result.status,
+        "features_ok": result.features_ok,
+        "warnings": list(result.sync.warnings) if result.sync else [],
+        "errors": list(result.errors),
+    }
+    return _wrap(conn, data)
+
+
+def author_workout(
+    conn: sqlite3.Connection,
+    date: str,
+    request: dict[str, Any] | None = None,
+    sport: str = "run",
+    reports_dir: str = "reports",
+) -> dict[str, Any]:
+    """Author a workout spec for a date and write ``workout.json``.
+
+    Mirrors the CLI author path: without ``request`` the spec comes from the
+    recommendation targeting ``date``; with one, the request dict (athlete or
+    hybrid, including a custom ``structure``) is authored as-is.
+    """
+    to_date = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+    thresholds = report.read_thresholds(conn)
+    dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    recommendation = dg.get("recommendation")
+
+    if request is not None:
+        request = dict(request)
+        request["date"] = date
+    else:
+        if recommendation is None:
+            return _wrap(
+                conn,
+                {"spec": None, "error": f"no recommendation for {date}; run features first"},
+            )
+        request = author.request_from_recommendation(recommendation, sport=sport)
+
+    context = {
+        "zones": dg.get("zones"),
+        "today": dt.date.today().isoformat(),
+        "recommendation": recommendation,
+    }
+    try:
+        spec = author.author(request, context)
+    except (author.DeferredSportError, author.HyroxSplitRequired, ValueError) as exc:
+        return _wrap(conn, {"spec": None, "error": str(exc)})
+
+    if spec is None:
+        return _wrap(conn, {"spec": None, "error": None, "note": "rest - nothing to author"})
+
+    out_dir = pathlib.Path(reports_dir) / date
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "workout.json"
+    path.write_text(json.dumps(spec, indent=2))
+    return _wrap(conn, {"spec": spec, "error": None, "path": str(path)})
+
+
+def push_preview(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    publisher: publish.WorkoutPublisher,
+    reports_dir: str = "reports",
+) -> dict[str, Any]:
+    """Dry-run the push for a date: the resolved action, payload, and spec_hash.
+
+    The returned ``spec_hash`` is the confirm token: ``push_confirm`` refuses
+    any other value, so a push can only follow a preview the caller displayed.
+    """
+    spec, error = _load_spec(date, reports_dir)
+    if spec is None:
+        return _wrap(conn, {"error": error})
+
+    result = publish.publish(
+        spec, publisher, confirm=False, activity_dates=_dates_with_activity(conn, date)
+    )
+    data = {
+        "date": date,
+        "action": result.action,
+        "spec_hash": result.spec_hash,
+        "payload": result.payload,
+        "message": result.message,
+        "warnings": result.warnings,
+        "error": None,
+    }
+    return _wrap(conn, data)
+
+
+def push_confirm(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    spec_hash: str,
+    publisher: publish.WorkoutPublisher,
+    replace: bool = False,
+    reports_dir: str = "reports",
+) -> dict[str, Any]:
+    """Execute the push for a date, gated on the hash from ``push_preview``.
+
+    A mismatched hash is refused without touching the account - the spec
+    changed since the preview (or no preview happened), so preview again.
+    """
+    spec, error = _load_spec(date, reports_dir)
+    if spec is None:
+        return _wrap(conn, {"error": error, "applied": False})
+
+    current = publish.spec_hash(spec)
+    if spec_hash != current:
+        return _wrap(
+            conn,
+            {
+                "error": "stale spec_hash: the spec changed since the preview; "
+                "run push_preview again",
+                "applied": False,
+            },
+        )
+
+    result = publish.publish(
+        spec,
+        publisher,
+        confirm=True,
+        replace=replace,
+        activity_dates=_dates_with_activity(conn, date),
+    )
+    if result.applied or result.error is not None:
+        _write_receipt(result, pathlib.Path(reports_dir) / date)
+    data = {
+        "date": date,
+        "action": result.action,
+        "applied": result.applied,
+        "workout_id": result.workout_id,
+        "schedule_id": result.schedule_id,
+        "message": result.message,
+        "warnings": result.warnings,
+        "error": result.error,
+    }
+    return _wrap(conn, data)
+
+
+def _load_spec(date: str, reports_dir: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Read the authored spec for a date, or explain why there is none."""
+    path = pathlib.Path(reports_dir) / date / "workout.json"
+    if not path.exists():
+        return None, f"no workout.json for {date}; run author_workout first"
+    return json.loads(path.read_text()), None
+
+
+def _dates_with_activity(conn: sqlite3.Connection, date: str) -> set[str]:
+    """The target date, when it already carries a logged activity in core."""
+    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
+    return {date} if row else set()
+
+
+def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None:
+    """Write the push.json receipt, stamped with the push time."""
+    receipt = result.as_receipt()
+    receipt["pushed_at"] = dt.datetime.now().isoformat(timespec="seconds")
+    (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))

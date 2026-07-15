@@ -16,7 +16,7 @@ and what's missing.
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
 [docs/PROJECT.md](docs/PROJECT.md) for the full brief and roadmap — the built
-phases 0-5 plus the forward plan for phases 6b-11 + read-MCP.
+phases 0-9 plus the forward plan for phases 9b-11 + read-MCP.
 
 ## Status
 
@@ -31,15 +31,16 @@ phases 0-5 plus the forward plan for phases 6b-11 + read-MCP.
 | 6 | Personal training zones (`athlete_zones` mart, LTHR anchor) | Done — [docs/prd/phase-6.md](docs/prd/phase-6.md), [ADR 0007](docs/adr/0007-phase-6-personal-zones.md)                              |
 | 6b | Athlete snapshot (`athlete_status` mart + `snapshot` command) | Done — [docs/prd/phase-6b/PRD.md](docs/prd/phase-6b/PRD.md), [ADR 0009](docs/adr/0009-phase-6b-athlete-snapshot.md)                                      |
 | 7 | Session-RPE load model for strength/Hyrox + niggle log | Done — [docs/prd/phase-7/PRD.md](docs/prd/phase-7/PRD.md), [ADR 0010](docs/adr/0010-phase-7-strength-load-and-niggle.md)                                      |
-| 8 | Per-set capture + movement-pattern overlap (finishes D9) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-8-per-set-capture-and-overlap)                                                                                      |
-| 9 | Race-date periodization + race-day pacing | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-9-race-date-periodization)                                                                                      |
+| 8 | Per-set capture + movement-pattern overlap | Done — [docs/prd/phase-8-movement-overlap/PRD.md](docs/prd/phase-8-movement-overlap/PRD.md), [ADR 0011](docs/adr/0011-phase-8-movement-overlap.md)                  |
+| 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done — [docs/prd/phase-9-periodization/PRD.md](docs/prd/phase-9-periodization/PRD.md), [ADR 0012](docs/adr/0012-phase-9-race-date-periodization.md)                  |
+| 9b | Race-day pacing (`race_plan`) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-9b-race-day-pacing)                                                                                      |
 | 10 | Prospective session recommender (re-planning-aware) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-10-prospective-recommender)                                                                                      |
 | 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-11-workout-authoring-and-push)                                                                                      |
 | read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/PROJECT.md](docs/PROJECT.md#read-mcp-conversational-read-layer)                                                                                      |
 
-Phases 0-5 are the built foundation and everything after Phase 5 is the forward
-plan; both live in [docs/PROJECT.md](docs/PROJECT.md), which also records the
-industry survey and the dependency ordering between the planned phases.
+Phases 0-9 are built and everything after is the forward plan; both live in
+[docs/PROJECT.md](docs/PROJECT.md), which also records the industry survey and the
+dependency ordering between the planned phases.
 
 ## Layout
 
@@ -53,14 +54,14 @@ garmin-coach/
 ├── .codex/                   # Codex local notes and companion files
 ├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
-│   ├── PROJECT.md            # build brief + roadmap: phases 0–5 (built) and 6b–11 + read-MCP
+│   ├── PROJECT.md            # build brief + roadmap: phases 0–9 (built) and 9b–11 + read-MCP
 │   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
 │   ├── DEVELOPMENT.md        # coding guide: workflow, module map, conventions, seams
 │   ├── OPERATIONS.md         # operator runbook: pipeline, exit codes, logs, reports
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
 │   ├── glossary.md           # domain vocabulary (single source of truth)
-│   ├── adr/                  # decision records (0001–0008; one per phase + architecture/docs)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-6) + docs-layering
+│   ├── adr/                  # decision records (0001–0012; one per phase + architecture/docs)
+│   └── prd/                  # per-phase PRDs (phase-0 .. phase-9) + docs-layering
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -73,15 +74,20 @@ garmin-coach/
 │   ├── sync.py               # backfill + incremental sync: raw-first, upsert core,
 │   │                          #   retry/backoff, per-day fallback, isolated streams
 │   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
+│   ├── load.py               # per-activity sRPE load blend (strength/Hyrox) shared by marts
 │   ├── weekly.py             # mart: weekly_metrics + weekly_plan_actual (run by features)
 │   ├── zones.py              # mart: athlete_zones (LTHR anchor → %LTHR HR bands + Z2 pace ceiling)
+│   ├── overlap.py            # mart: pattern_overlap (same movement pattern/muscle on adjacent days)
+│   ├── periodize.py          # mart: plan_block (training blocks counted back from the goal race)
+│   ├── weeks.py              # leaf: Monday-anchored week arithmetic
+│   ├── snapshot.py           # mart: athlete_status (the single current-standing snapshot)
 │   ├── thresholds.py         # coach threshold policy: defaults + DB overrides
-│   ├── digest.py             # headline + coach signals + weekly section (build_digest)
-│   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED)
+│   ├── digest.py             # headline + coach signals + weekly/zones/plan sections (build_digest)
+│   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED, TAPER_ACTIVE)
 │   ├── charts.py             # HRV band + ACWR matplotlib charts
 │   ├── report.py             # orchestrates digest + charts → reports/{date}/
 │   ├── daily.py              # nightly orchestrator: sync → features → alerts
-│   ├── cli.py                # argparse entry point (backfill/sync/features/report/daily)
+│   ├── cli.py                # argparse entry point (backfill/sync/features/report/snapshot/event/log-rpe/daily)
 │   └── schema.sql            # runtime schema (loaded via importlib.resources)
 ├── tests/
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader

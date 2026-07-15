@@ -80,10 +80,17 @@ def log_session_rpe(
     if row is None:
         raise ValueError(f"activity {activity_id} not found; run `garmin-coach sync` first")
     activity_date = row[0]
-    db.upsert_session_rpe(conn, {
-        "activity_id": activity_id, "rpe": rpe, "soreness": soreness,
-        "mood": mood, "source": source, "notes": note,
-    })
+    db.upsert_session_rpe(
+        conn,
+        {
+            "activity_id": activity_id,
+            "rpe": rpe,
+            "soreness": soreness,
+            "mood": mood,
+            "source": source,
+            "notes": note,
+        },
+    )
     conn.commit()
     features.features(conn, data_start_date=data_start_date, from_date=activity_date)
     return activity_date
@@ -118,7 +125,9 @@ def log_niggle(
     """
     _check_range("severity", severity, 1, 5)
     day = date or _dt.date.today().isoformat()
-    db.upsert_niggle(conn, {"date": day, "body_part": body_part, "severity": severity, "note": note})
+    db.upsert_niggle(
+        conn, {"date": day, "body_part": body_part, "severity": severity, "note": note}
+    )
     conn.commit()
     return day
 
@@ -210,11 +219,16 @@ def add_goal_event(
             is unparseable, or the race is already recorded (correct it with `update`
             rather than re-adding it, which would erase the fields left unset here).
     """
-    fields = {"type": type, "priority": priority, "status": status,
-              "date_precision": date_precision}
+    fields = {
+        "type": type,
+        "priority": priority,
+        "status": status,
+        "date_precision": date_precision,
+    }
     _check_choices(fields)
     row = {
-        "date": _check_date(date), **fields,
+        "date": _check_date(date),
+        **fields,
         "target_s": parse_target_s(target) if target else None,
         "note": note,
     }
@@ -222,7 +236,8 @@ def add_goal_event(
         db.insert_goal_event(conn, row)
     except sqlite3.IntegrityError:
         existing = next(
-            e for e in db.list_goal_events(conn)
+            e
+            for e in db.list_goal_events(conn)
             if e["date"] == row["date"] and e["type"] == row["type"]
         )
         raise ValueError(
@@ -300,7 +315,9 @@ def _cmd_features(args: argparse.Namespace) -> int:
         to_date=args.to_date,
     )
     conn.close()
-    print(f"features complete: {args.from_date or settings.data_start_date} .. {args.to_date or 'latest'}")
+    print(
+        f"features complete: {args.from_date or settings.data_start_date} .. {args.to_date or 'latest'}"
+    )
     return 0
 
 
@@ -387,9 +404,9 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
     try:
         publisher = publish.connect_publisher(settings)
-    except NotImplementedError as exc:
-        print(f"push: {exc}")
-        return 1
+    except Exception as exc:  # noqa: BLE001 - surface Garmin login failures as a failed push
+        print(f"push failed: login error: {exc}")
+        return 2
 
     result = publish.publish(
         spec, publisher, confirm=args.confirm, replace=args.replace, activity_dates=activity_dates
@@ -472,10 +489,7 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
                 date=args.date,
                 note=args.note,
             )
-            message = (
-                f"log-rpe complete: niggle {args.body_part} "
-                f"severity={args.severity} on {day}"
-            )
+            message = f"log-rpe complete: niggle {args.body_part} severity={args.severity} on {day}"
     except ValueError as exc:
         conn.close()
         print(f"log-rpe failed: {exc}")
@@ -516,16 +530,27 @@ def _cmd_event(args: argparse.Namespace) -> int:
     try:
         if args.event_command == "add":
             add_goal_event(
-                conn, date=args.date, type=args.type, priority=args.priority,
-                status=args.status, date_precision=args.date_precision,
-                target=args.target, note=args.note,
+                conn,
+                date=args.date,
+                type=args.type,
+                priority=args.priority,
+                status=args.status,
+                date_precision=args.date_precision,
+                target=args.target,
+                note=args.note,
             )
             message = f"event add complete: {args.type} on {args.date} ({args.status})"
         elif args.event_command == "update":
             update_goal_event(
-                conn, args.event_id, date=args.date, type=args.type,
-                priority=args.priority, status=args.status,
-                date_precision=args.date_precision, target=args.target, note=args.note,
+                conn,
+                args.event_id,
+                date=args.date,
+                type=args.type,
+                priority=args.priority,
+                status=args.status,
+                date_precision=args.date_precision,
+                target=args.target,
+                note=args.note,
             )
             message = f"event update complete: id={args.event_id}"
         else:
@@ -564,10 +589,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
     )
     conn.close()
     warnings = len(result.sync.warnings) if result.sync else 0
-    print(
-        f"daily complete: status={result.status} "
-        f"alerts={len(result.alerts)} warnings={warnings}"
-    )
+    print(f"daily complete: status={result.status} alerts={len(result.alerts)} warnings={warnings}")
     return result.exit_code
 
 
@@ -602,7 +624,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="First changed day YYYY-MM-DD (weekly rollup may expand to Monday).",
     )
     ft.add_argument(
-        "--to", dest="to_date", default=None, help="Last day to emit YYYY-MM-DD (default: latest core date)."
+        "--to",
+        dest="to_date",
+        default=None,
+        help="Last day to emit YYYY-MM-DD (default: latest core date).",
     )
     ft.set_defaults(func=_cmd_features)
 
@@ -612,48 +637,65 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument("--date", dest="date", required=True, help="Target date YYYY-MM-DD.")
     au_src = au.add_mutually_exclusive_group(required=True)
     au_src.add_argument(
-        "--from-recommendation", dest="from_recommendation", action="store_true",
+        "--from-recommendation",
+        dest="from_recommendation",
+        action="store_true",
         help="Author from the Phase 10 recommendation for the target date.",
     )
     au_src.add_argument(
-        "--request", dest="request", default=None,
+        "--request",
+        dest="request",
+        default=None,
         help="Author from an athlete-authored workout_request JSON file.",
     )
     au.add_argument(
-        "--sport", dest="sport", default="run", choices=["run"],
+        "--sport",
+        dest="sport",
+        default="run",
+        choices=["run"],
         help="Authoring family for --from-recommendation (only run is authored in this phase).",
     )
     au.add_argument(
-        "--reports-dir", dest="reports_dir", default="./reports",
+        "--reports-dir",
+        dest="reports_dir",
+        default="./reports",
         help="Root directory for dated report folders.",
     )
     au.set_defaults(func=_cmd_author)
 
-    pu = sub.add_parser(
-        "push", help="Push a workout spec to Garmin (dry-run unless --confirm)."
-    )
+    pu = sub.add_parser("push", help="Push a workout spec to Garmin (dry-run unless --confirm).")
     pu.add_argument("--date", dest="date", required=True, help="Target date YYYY-MM-DD.")
     pu.add_argument(
-        "--confirm", dest="confirm", action="store_true",
+        "--confirm",
+        dest="confirm",
+        action="store_true",
         help="Actually write to the Garmin account (default: dry-run, shows the payload).",
     )
     pu.add_argument(
-        "--replace", dest="replace", action="store_true",
+        "--replace",
+        dest="replace",
+        action="store_true",
         help="Overwrite a different workout of the same name (unschedule + delete + re-push).",
     )
     pu.add_argument(
-        "--reports-dir", dest="reports_dir", default="./reports",
+        "--reports-dir",
+        dest="reports_dir",
+        default="./reports",
         help="Root directory for dated report folders.",
     )
     pu.set_defaults(func=_cmd_push)
 
     rp = sub.add_parser("report", help="Build the coach digest + charts into reports/{date}/.")
     rp.add_argument(
-        "--from", dest="from_date", default=None,
+        "--from",
+        dest="from_date",
+        default=None,
         help="Window start YYYY-MM-DD (default: trailing 28 days).",
     )
     rp.add_argument(
-        "--to", dest="to_date", default=None,
+        "--to",
+        dest="to_date",
+        default=None,
         help="Window end YYYY-MM-DD (default: latest mart day).",
     )
     rp.set_defaults(func=_cmd_report)
@@ -662,21 +704,26 @@ def build_parser() -> argparse.ArgumentParser:
         "snapshot", help="Write the current standing to reports/{date}/snapshot.json."
     )
     sp.add_argument(
-        "--reports-dir", dest="reports_dir", default="./reports",
+        "--reports-dir",
+        dest="reports_dir",
+        default="./reports",
         help="Root directory for dated report folders.",
     )
     sp.set_defaults(func=_cmd_snapshot)
 
-    lr = sub.add_parser(
-        "log-rpe", help="Log a session RPE or a niggle to core (transport-free)."
-    )
+    lr = sub.add_parser("log-rpe", help="Log a session RPE or a niggle to core (transport-free).")
     mode = lr.add_mutually_exclusive_group(required=True)
     mode.add_argument(
-        "--activity", dest="activity_id", type=int, default=None,
+        "--activity",
+        dest="activity_id",
+        type=int,
+        default=None,
         help="Activity ID to rate (RPE mode); recomputes load.",
     )
     mode.add_argument(
-        "--niggle", dest="body_part", default=None,
+        "--niggle",
+        dest="body_part",
+        default=None,
         help="Body part for a niggle entry (niggle mode).",
     )
     lr.add_argument(
@@ -688,7 +735,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--severity", type=int, default=None, help="Niggle severity (1-5), with --niggle."
     )
     lr.add_argument(
-        "--date", dest="date", default=None,
+        "--date",
+        dest="date",
+        default=None,
         help="Niggle date YYYY-MM-DD (default: today).",
     )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
@@ -701,15 +750,21 @@ def build_parser() -> argparse.ArgumentParser:
     ev_add.add_argument("--date", required=True, help="Race day YYYY-MM-DD (best estimate).")
     ev_add.add_argument("--type", required=True, choices=EVENT_TYPES, help="Race type.")
     ev_add.add_argument(
-        "--priority", required=True, choices=EVENT_PRIORITIES,
+        "--priority",
+        required=True,
+        choices=EVENT_PRIORITIES,
         help="A anchors the plan; B/C never do.",
     )
     ev_add.add_argument(
-        "--status", required=True, choices=EVENT_STATUSES,
+        "--status",
+        required=True,
+        choices=EVENT_STATUSES,
         help="Will you start? Only 'confirmed' anchors the plan or fires the taper.",
     )
     ev_add.add_argument(
-        "--date-precision", dest="date_precision", required=True,
+        "--date-precision",
+        dest="date_precision",
+        required=True,
         choices=EVENT_DATE_PRECISIONS,
         help="Is the exact day known? 'approx' still drives every block.",
     )
@@ -729,16 +784,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ev_up.add_argument("--status", default=None, choices=EVENT_STATUSES, help="New start status.")
     ev_up.add_argument(
-        "--date-precision", dest="date_precision", default=None,
-        choices=EVENT_DATE_PRECISIONS, help="New date precision.",
+        "--date-precision",
+        dest="date_precision",
+        default=None,
+        choices=EVENT_DATE_PRECISIONS,
+        help="New date precision.",
     )
     ev_up.add_argument("--target", default=None, help="New goal time H:MM:SS, MM:SS, or seconds.")
     ev_up.add_argument("--note", default=None, help="New free-text note.")
     ev_up.set_defaults(func=_cmd_event)
 
-    dl = sub.add_parser(
-        "daily", help="Nightly run: sync -> features -> alerts (for cron/launchd)."
-    )
+    dl = sub.add_parser("daily", help="Nightly run: sync -> features -> alerts (for cron/launchd).")
     dl.add_argument(
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
     )

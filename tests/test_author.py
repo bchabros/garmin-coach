@@ -332,3 +332,24 @@ def test_to_garmin_no_target_step_has_no_target_type():
     spec = author(req, _context(zones=None))
     step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
     assert step["targetType"]["workoutTargetTypeKey"] == "no.target"
+
+
+def test_to_garmin_encodes_a_distance_ended_step():
+    # the spec vocabulary allows a distance end condition; the translator honours it
+    spec = {
+        "sport": "run",
+        "date": "2026-07-17",
+        "session_type": "quality",
+        "name": "GC 2026-07-17 quality",
+        "steps": [
+            {
+                "kind": "work",
+                "end": {"type": "distance", "metres": 1000},
+                "target": {"type": "none"},
+            }
+        ],
+        "warnings": [],
+    }
+    step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+    assert step["endCondition"]["conditionTypeKey"] == "distance"
+    assert step["endConditionValue"] == 1000.0

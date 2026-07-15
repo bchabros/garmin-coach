@@ -12,8 +12,10 @@ each system-authored workout carries a hash of its canonical spec in the workout
 actually holds. ``author`` owns the pure spec; ``publish`` reads it and calls
 ``author.to_garmin`` to build the payload. ``author`` never imports ``publish``.
 
-This ticket handles create / no-op / schedule / refuse; ``--replace`` and the
-partial-failure retry arrive in the next ticket.
+The account state resolves to one action: create, no-op, schedule (a library-only
+match), refuse (a changed workout without ``--replace``), or replace (unschedule +
+delete + re-push). A schedule that fails after a successful upload is left for the
+next idempotent push to complete - never rolled back.
 """
 
 from __future__ import annotations
@@ -214,7 +216,7 @@ def _existing_hash(workout: dict[str, Any]) -> str | None:
     """The canonical-spec hash tagged in a workout's description, or None."""
     description = workout.get("description") or ""
     if description.startswith(_HASH_PREFIX):
-        return description[len(_HASH_PREFIX):]
+        return description[len(_HASH_PREFIX) :]
     return None
 
 

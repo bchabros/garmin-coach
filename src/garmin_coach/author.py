@@ -11,8 +11,9 @@ The spec's units are domain units (seconds per km, bpm). ``to_garmin`` converts 
 finished spec into the Garmin ``RunningWorkout`` JSON the transport uploads,
 reusing garminconnect's verified step/target structures.
 
-This ticket authors the ``easy`` run only; tempo/quality structure, athlete
-requests, and hybrid validation arrive in later tickets.
+Run authoring covers ``easy``/``tempo``/``quality``; ``rest`` yields no spec, a
+``hyrox`` recommendation asks the athlete for the run/station split, and the
+``hiit``/``strength`` sports are deferred to the push spike.
 """
 
 from __future__ import annotations
@@ -64,11 +65,10 @@ _STEP_BUILDERS = {
     "cooldown": create_cooldown_step,
 }
 
-# Allowed request enumerations and the run session types this phase authors.
+# Allowed request enumerations.
 _SPORTS = ("run", "hiit", "strength")
 _ORIGINS = ("recommender", "athlete")
 _SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox")
-_AUTHORABLE_TYPES = ("rest", "easy", "tempo", "quality")
 
 # Session-type hardness, for spotting an athlete request that exceeds the
 # recommender's advice. Mirrors the recommender's intent ranking.
@@ -260,7 +260,7 @@ def _step(kind: str, seconds: int, target: dict[str, Any]) -> dict[str, Any]:
 def _easy_target(
     request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
 ) -> dict[str, Any]:
-    """The easy step's target, degrading pace -> heart rate -> none.
+    """The easy step's target: at or slower than the Z2 ceiling, degrading to HR -> none.
 
     The recommender only carries a measured pace when zones are regression-backed,
     so an absent ``pace_target_s_per_km`` is the signal to degrade.
@@ -272,11 +272,7 @@ def _easy_target(
             "fast_s_per_km": pace,
             "slow_s_per_km": pace + EASY_PACE_SLOW_MARGIN_S,
         }
-    if zones and zones.get("z2_hi_bpm") is not None:
-        warnings.append("no measured pace; targeting easy by heart rate (Z2 band)")
-        return {"type": "hr_band", "low_bpm": zones["z1_hi_bpm"], "high_bpm": zones["z2_hi_bpm"]}
-    warnings.append("no target: no measured pace or heart-rate band; time only")
-    return {"type": "none"}
+    return _hr_or_none(zones, "z1_hi_bpm", "z2_hi_bpm", "easy (Z2 band)", warnings)
 
 
 def _threshold_target(
@@ -290,9 +286,20 @@ def _threshold_target(
             "fast_s_per_km": pace - THRESHOLD_PACE_MARGIN_S,
             "slow_s_per_km": pace + THRESHOLD_PACE_MARGIN_S,
         }
-    if zones and zones.get("z4_hi_bpm") is not None:
-        warnings.append("no measured pace; targeting threshold by heart rate (Z4 band)")
-        return {"type": "hr_band", "low_bpm": zones["z3_hi_bpm"], "high_bpm": zones["z4_hi_bpm"]}
+    return _hr_or_none(zones, "z3_hi_bpm", "z4_hi_bpm", "threshold (Z4 band)", warnings)
+
+
+def _hr_or_none(
+    zones: dict[str, Any] | None,
+    low_key: str,
+    high_key: str,
+    label: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    """Degrade a missing pace target to a heart-rate band, then to no target at all."""
+    if zones and zones.get(high_key) is not None:
+        warnings.append(f"no measured pace; targeting {label} by heart rate")
+        return {"type": "hr_band", "low_bpm": zones[low_key], "high_bpm": zones[high_key]}
     warnings.append("no target: no measured pace or heart-rate band; time only")
     return {"type": "none"}
 
@@ -334,8 +341,10 @@ def _garmin_step(step: dict[str, Any], order: int) -> Any:
     """Build one garminconnect executable step from a spec step."""
     builder = _STEP_BUILDERS[step["kind"]]
     target_type = _garmin_target_type(step["target"])
-    executable = builder(step["end"]["seconds"], step_order=order, target_type=target_type)
-    _apply_end_condition(executable, step["end"])
+    end = step["end"]
+    end_value = end["seconds"] if end["type"] == "time" else end["metres"]
+    executable = builder(end_value, step_order=order, target_type=target_type)
+    _apply_end_condition(executable, end)
     _apply_target_values(executable, step["target"])
     return executable
 
@@ -343,14 +352,22 @@ def _garmin_step(step: dict[str, Any], order: int) -> Any:
 def _garmin_target_type(target: dict[str, Any]) -> dict[str, Any]:
     """The Garmin target-type descriptor for a spec target."""
     if target["type"] == "pace_band":
-        return {"workoutTargetTypeId": TargetType.PACE_ZONE, "workoutTargetTypeKey": "pace.zone", "displayOrder": 1}
+        return {
+            "workoutTargetTypeId": TargetType.PACE_ZONE,
+            "workoutTargetTypeKey": "pace.zone",
+            "displayOrder": 1,
+        }
     if target["type"] == "hr_band":
         return {
             "workoutTargetTypeId": TargetType.HEART_RATE_ZONE,
             "workoutTargetTypeKey": "heart.rate.zone",
             "displayOrder": 1,
         }
-    return {"workoutTargetTypeId": TargetType.NO_TARGET, "workoutTargetTypeKey": "no.target", "displayOrder": 1}
+    return {
+        "workoutTargetTypeId": TargetType.NO_TARGET,
+        "workoutTargetTypeKey": "no.target",
+        "displayOrder": 1,
+    }
 
 
 def _apply_target_values(executable: Any, target: dict[str, Any]) -> None:

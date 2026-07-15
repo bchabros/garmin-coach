@@ -225,40 +225,48 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
 - **Claude Desktop** — does **not** read `.mcp.json`. Add the server to
   `claude_desktop_config.json` (macOS:
   `~/Library/Application Support/Claude/claude_desktop_config.json`). Desktop launches
-  the command from its own working directory, so pin the project with `cwd`:
+  the command from its own working directory, so pin the project with poetry's
+  `-C <dir>` flag rather than relying on a `cwd` key (which is community-documented,
+  not part of an official schema):
 
   ```json
   {
     "mcpServers": {
       "coach": {
         "command": "/Users/Chabi/.local/bin/poetry",
-        "args": ["run", "garmin-coach-mcp"],
-        "cwd": "/Users/Chabi/garmin-coach"
+        "args": ["-C", "/Users/Chabi/garmin-coach", "run", "garmin-coach-mcp"]
       }
     }
   }
   ```
 
   Use poetry's **absolute path** (a GUI app does not inherit your shell `PATH`, so a
-  bare `poetry` often fails to resolve); `which poetry` prints it. If the launcher
-  still cannot find its runtime, add an `env` block with a `PATH` that includes your
-  Python/poetry bin dirs.
-- **Restricted sandboxes (e.g. a Cowork-style environment without poetry)** — the
-  repo's own note below applies: poetry needs Python 3.13 and may be absent. Register
-  a poetry-free launch instead, after installing the deps once:
+  bare `poetry` often fails to resolve); `which poetry` prints it. This exact command
+  is verified to launch the server from an unrelated working directory. If the
+  launcher still cannot find its runtime, add an `env` block with a `PATH` that
+  includes your Python/poetry bin dirs.
+- **Claude Cowork / claude.ai** — **not supported.** A local stdio server like this
+  one cannot run here. Per Anthropic's docs, Cowork/claude.ai custom connectors are
+  **remote MCP only** (a server URL added under Settings -> Connectors): "Local MCP
+  servers configured in Claude Desktop via `claude_desktop_config.json` ... aren't
+  available in Cowork or claude.ai." Using the coach tools from Cowork would mean
+  exposing this server behind a public URL as a remote connector -- a different
+  deployment from this local, single-athlete design, and out of scope. For an
+  agent/chat workflow, use Claude Code (above), which is the sanctioned surface. In a
+  Cowork sandbox, keep to the read-side CLI path described in "Cowork agent notes"
+  below.
 
-  ```bash
-  pip install mcp matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
-  PYTHONPATH=src python3 -m garmin_coach.mcp_server
-  ```
+**Running the server without poetry.** On any host where poetry is unavailable (it
+needs Python 3.13), launch the module directly after installing the deps once, and
+register *that* command wherever a stdio command is accepted:
 
-  (`matplotlib` is needed because the server's import chain reaches `report` ->
-  `charts`, even though the MCP tools never render a chart.)
+```bash
+pip install mcp matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
+PYTHONPATH=src python3 -m garmin_coach.mcp_server
+```
 
-  Note: the exact mechanism a Cowork-style client uses to register a local stdio MCP
-  server is not covered by public docs at time of writing — the command above is what
-  to register once you locate that setting; confirm the client's MCP configuration in
-  its own documentation.
+(`matplotlib` is needed because the server's import chain reaches `report` ->
+`charts`, even though the MCP tools never render a chart.)
 
 ## Cowork agent notes
 

@@ -43,7 +43,12 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done | [section](#phase-9-race-date-periodization) · [PRD](prd/phase-9-periodization/PRD.md) |
 | 10 | Prospective session recommender (re-planning-aware) | Done | [section](#phase-10-prospective-recommender) · [PRD](prd/phase-10-recommender/PRD.md) |
 | 11 | Structured workout authoring + push to Garmin (run first) | Done | [section](#phase-11-workout-authoring-and-push) · [PRD](prd/phase-11-workout-push/PRD.md) |
-| read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
+| read-MCP | Coach MCP server (reads + same-day refresh + workout push) | Done | [section](#read-mcp-the-coach-mcp-server) · [epic #18](https://github.com/bchabros/garmin-coach/issues/18) |
+
+The roadmap ends here: with the coach MCP server shipped, new work is tracked as
+GitHub issues (see `docs/agents/issue-tracker.md`), titled by the capability gap
+they close — e.g. [#16](https://github.com/bchabros/garmin-coach/issues/16)
+(strength/HIIT authoring + push).
 
 Phase 9b (race-day pacing, `race_plan`) has moved out of this roadmap to GitHub issue
 [#13](https://github.com/bchabros/garmin-coach/issues/13) — see the
@@ -971,37 +976,43 @@ tests green. Strength spike outcome documented (endpoint works / fallback chosen
 **Risk.** Writing is near-irreversible (creates account-side workouts). Dry-run by
 default, explicit confirm, never auto-schedule from the nightly path.
 
-## Read-MCP: conversational read layer
+## Read-MCP: the coach MCP server
 
-> **Conversational read layer over the local marts (tooling, build last).**
+> **Done** — shipped as the `coach` MCP server (stdio, versioned `.mcp.json`), scope
+> grown beyond the original read-only sketch: reads + same-day refresh (issue #8) +
+> the Phase 11 workout push, per [epic #18](https://github.com/bchabros/garmin-coach/issues/18)
+> and [ADR 0014](adr/0014-coach-mcp-server.md).
 
-**Goal.** A thin, read-only MCP server exposing the finished marts, digest, and
-snapshot so a chat session can pull "current stats", the latest digest, or recent
-activities in one call — instead of hand-written SQL/Python.
+**Goal (as built).** One local MCP server so a chat session can pull "current stats"
+in one call, see *today's* morning HRV/readiness on demand, log sRPE/niggles, and
+finish an agreed session by authoring + pushing it to the watch — terminal needed
+only for operating the pipeline.
 
-**Why (evidence).** This very kind of session mixed two read patterns: hand-written
-SQLite queries over the local DB (digest, activities, zone deduction) and ad-hoc
-`mcp__garmin__*` calls for same-day data. The first pattern is repetitive and would
-collapse to a single tool call. Survey precedent: Intervals.icu — a deterministic data
-platform with a thin open API surface, not an AI product.
+**Why (evidence).** Coaching sessions mixed hand-written SQLite queries (repetitive;
+now one tool call) with ad-hoc `mcp__garmin__*` calls for same-day data (now
+`refresh_today`), and a session that agreed on a workout still had to end in a
+terminal (now the preview/confirm pair). Survey precedent: Intervals.icu — a
+deterministic data platform with a thin open API surface, not an AI product.
 
-**Not a second Garmin MCP.** A `mcp__garmin__*` server already exists (~150 tools,
-verbose payloads) and stays scoped to **ad-hoc exploration / fixtures** per the golden
-rule. This new MCP reads the **local DB only** — the finished marts, `digest.json`,
-`snapshot.json`, recent `activities`. It never calls Garmin live, so the golden rule
-holds.
+**Not a second Garmin MCP.** The `mcp__garmin__*` server (~150 tools, verbose
+payloads) stays scoped to **ad-hoc exploration / fixtures**. `mcp__coach__*` reads
+the **local DB** and reuses the system's own transport seams for exactly two
+purposes: the same-day refresh (a read that never advances watermarks) and the
+Phase 11 push (behind a preview-hash handshake stricter than the CLI's
+`--confirm`). No metric ever depends on live Garmin — ADR 0014 records how this
+supersedes the earlier "read-only by construction" clause.
 
-**Surface.** Small, e.g. `get_snapshot`, `get_digest`, `get_recent_activities(n)`,
-`get_weekly(week_start)`, `get_zones`, `get_recommendation`. Each wraps a function the
-CLI already uses; returns compact JSON (no profile URLs / auth scopes / per-minute
-series).
+**Surface (14 tools, four groups).** Read: `get_snapshot`, `get_digest`,
+`get_recent_activities(n)`, `get_weekly(week_start)`, `get_zones`,
+`get_recommendation`, `get_events`, `get_workout_status(date)`. Local writes:
+`log_rpe`, `log_niggle`. Transport read: `refresh_today`. Workout push:
+`author_workout`, `push_preview`, `push_confirm(spec_hash)`. Every response carries
+a freshness envelope (`data_through`, `today_included`, `partial_fields`) so partial
+same-day numbers are never mistaken for final.
 
-**Build.** Thin server (the repo's `mcp-builder` skill applies). Reuses the same pure
-readers as `report`/`snapshot`; no new computation. Ship after the marts (6, 6b, 7, 8,
-9) have stabilized so the surface doesn't churn.
-
-**Risk.** Read-only by construction — no write tools, no Garmin transport in this
-server. Keep it a window onto the deterministic engine, nothing more.
+**Build.** `mcp_tools` (pure functions over the same seams the CLI uses; fully
+offline-tested) + `mcp_server` (thin FastMCP wiring, smoke-tested in-process).
+No new computation anywhere.
 
 ## Explicit non-goals
 

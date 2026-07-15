@@ -13,7 +13,9 @@ skill. Full brief and roadmap: `docs/PROJECT.md`. Per-phase PRDs: `docs/prd/`.
 **Golden rule -- separate transport from intelligence.** The deterministic ETL uses
 the `garminconnect` library. The metrics/coach layer only ever reads the finished
 DB -- it must never call Garmin live. The `mcp__garmin__*` tools are for **ad-hoc
-exploration and building test fixtures only**, never the pipeline.
+exploration and building test fixtures only**, never the pipeline. The repo's own
+`mcp__coach__*` server is the sanctioned tool surface (reads + same-day refresh +
+workout push; see ADR 0014).
 
 **Onboarding cutoff.** This account has real data from **2026-06-08** (`data_start`);
 earlier dates are onboarding -- explicit gaps, not zero training. Every metric is
@@ -46,8 +48,9 @@ Per-repo config for the engineering skills, written by `/setup-matt-pocock-skill
 
 ### Issue tracker
 
-Work is scoped to a PRD under `docs/prd/<feature>/` (`PRD.md` + optional
-`issues/NN-slug.md`); existing flat `phase-N.md` stay flat. No external tracker.
+New work is tracked as **GitHub issues** titled by the capability gap (spec in the
+issue body, tickets as a checklist; the PR closes the issue). The phased history
+under `docs/prd/` stays as-is and is never migrated.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels

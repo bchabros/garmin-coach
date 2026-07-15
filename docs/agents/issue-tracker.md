@@ -1,64 +1,45 @@
-# Issue tracker: PRD-scoped Markdown
+# Issue tracker: GitHub issues (with a PRD-file history)
 
-This repo has no external issue tracker (no GitHub Issues, Jira, etc.). Work is
-scoped to a PRD and lives beside it under `docs/prd/`, versioned in git. This
-follows the repo's house rule that the PRD -- not an external tracker -- is the
-source of work (`docs/PROJECT.md`, `docs/prd/phase-6.md`).
+New work is tracked as **GitHub issues** on `bchabros/garmin-coach`, titled by the
+capability gap they close (not by roadmap phase numbers). The phased build that got
+the system here lives on in `docs/prd/` as history - those files are pinned by
+README, tests, and ADRs and are **not** migrated.
 
-## Layout
-
-A PRD is a flat file by default and grows into a folder only when it needs a task
-breakdown or a wayfinder map:
-
-```
-docs/prd/
-├── phase-6.md                  <- flat file; no breakdown needed
-└── phase-7-<slug>/             <- folder once the phase gains children
-    ├── PRD.md                  <- the spec (to-spec writes here)
-    ├── issues/NN-<slug>.md     <- task breakdown, numbered from 01 (to-tickets)
-    └── map.md                  <- wayfinder map, if used
-```
-
-- Existing flat PRDs (`phase-0.md`..`phase-6.md`) stay flat -- they are pinned by
-  README, tests, ADRs, and `src/`. Do not migrate them.
-- `<feature>` is normally the phase slug (`phase-7-<name>`).
-- Everything is committed to git; there is no separate scratch area.
+The transition was decided after Phase 11 shipped (2026-07-15); the first issues in
+the new convention are #13 (race-day pacing), #16 (strength/HIIT authoring), and
+epic #18 (the coach MCP server).
 
 ## Conventions
 
-- One feature per directory: `docs/prd/<feature>/`
-- The spec is `docs/prd/<feature>/PRD.md`
-- Implementation issues are `docs/prd/<feature>/issues/<NN>-<slug>.md`, numbered
-  from `01`
-- Triage state is recorded as a `Status:` line near the top of each issue file
-  (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a
-  `## Comments` heading
+- **One issue per work item**, titled by what is missing or being built
+  (e.g. "Strength/HIIT workout authoring + push"), not "Phase N".
+- **The spec lives in the issue body** - problem, solution, decisions, testing
+  notes - written by `/to-spec` when the pipeline runs.
+- **Tickets are a task-list checklist** inside the issue (`- [ ] T1 ...`); separate
+  child issues only when a ticket needs its own conversation.
+- **The PR closes the issue** (`Closes #N` in the description); squash merge.
+- Architecture decisions still go to `docs/adr/` in the repo - the tracker holds
+  work, the repo holds decisions.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a new file under `docs/prd/<feature>/` (creating the directory, and an
-`issues/` subdirectory, if needed).
+Create a GitHub issue with `gh issue create` (title = the capability gap, body = the
+spec + ticket checklist).
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the file at the referenced path. The user will normally pass the path or the
-issue number directly.
+`gh issue view <number>` (the user will normally pass the number or URL).
 
-## Wayfinding operations
+## Legacy: PRD-scoped Markdown (docs/prd/)
 
-Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
+Everything below applies only to the existing `docs/prd/` folders; do not create
+new ones.
 
-- **Map**: `docs/prd/<feature>/map.md` -- the Notes / Decisions-so-far / Fog body.
-- **Child ticket**: `docs/prd/<feature>/issues/NN-<slug>.md`, numbered from `01`,
-  with the question in the body. A `Type:` line records the ticket type
-  (`research`/`prototype`/`grilling`/`task`); a `Status:` line records
-  `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked
-  when every file it lists is `resolved`.
-- **Frontier**: scan `docs/prd/<feature>/issues/` for files that are open,
-  unblocked, and unclaimed; first by number wins.
-- **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set
-  `Status: resolved`, then append a context pointer (gist + link) to the map's
-  Decisions-so-far in `map.md`.
+- A PRD is a flat file (`phase-N.md`) or a folder (`docs/prd/<feature>/` with
+  `PRD.md`, `issues/NN-<slug>.md`, optional `map.md`).
+- Triage state is a `Status:` line near the top of an issue file (vocabulary in
+  `triage-labels.md`); comments append under a `## Comments` heading.
+- Wayfinding (`/wayfinder`) operates on these folders: the map is
+  `docs/prd/<feature>/map.md`, children are `issues/NN-<slug>.md` with `Type:` /
+  `Status:` / `Blocked by:` lines; claim by setting `Status: claimed`, resolve by
+  appending `## Answer` and updating the map's Decisions-so-far.

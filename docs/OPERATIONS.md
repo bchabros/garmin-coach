@@ -6,7 +6,8 @@ definitions live in `docs/glossary.md`; deep design detail for the nightly path 
 `docs/prd/phase-4.md`.
 
 The golden rule still holds here: this layer reads the finished DB. Only `backfill`,
-`sync`, and `daily` talk to Garmin; `features` and `report` never do.
+`sync`, `refresh-today`, and `daily` talk to Garmin (plus the out-of-seam `push`);
+`features` and `report` never do.
 
 ## Directory map (what lives where)
 
@@ -178,6 +179,34 @@ Passed on 2026-07-17 (a `quality` push): create scheduled exactly one `GC 2026-0
 quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push reported
 `noop` with no duplicate, and all four response mappings (`get_workouts`,
 `upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
+
+## The coach MCP server (mcp__coach__*)
+
+One local stdio server, registered in the repo's versioned `.mcp.json` — any Claude
+Code / Cowork session pointed at this folder gets the tools automatically. It is a
+thin layer over the same functions the CLI uses (see ADR 0014); the exploratory
+`mcp__garmin__*` server stays separate and ad-hoc-only.
+
+- **Read tools** (local DB, no Garmin): `get_snapshot`, `get_digest`,
+  `get_recent_activities(n)`, `get_weekly(week_start)`, `get_zones`,
+  `get_recommendation(date)`, `get_events`, `get_workout_status(date)`.
+- **Local writes** (transport-free): `log_rpe(activity_id, rpe, ...)`,
+  `log_niggle(body_part, severity, ...)` — same validation as `log-rpe` in the CLI.
+- **`refresh_today`** — the MCP form of `refresh-today` (see above): pulls today
+  partial, rebuilds the mart, never advances watermarks. Call it at most once per
+  coach read; it shares the login rate-limit exposure (429) of any transport call.
+- **Workout push** — `author_workout(date, request?)` writes `workout.json`;
+  `push_preview(date)` returns the resolved action, the Garmin payload, and a
+  `spec_hash`; `push_confirm(date, spec_hash, replace?)` writes to the account and
+  **refuses any hash other than the previewed one**. Show the preview to the athlete
+  before confirming — the handshake exists so an agent cannot push what it has not
+  displayed.
+
+**Reading the freshness envelope.** Every response carries
+`{data_through, today_included, partial_fields}`. If `today_included` is true, any
+field listed in `partial_fields` (load, ACWR, zone minutes, RHR, stress, body
+battery) is an intraday running value — quote it as "so far today", never as final.
+Sleep, HRV, and readiness are morning-complete and safe to read all day.
 
 ## Cowork agent notes
 

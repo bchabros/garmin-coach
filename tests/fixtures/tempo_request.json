@@ -1,0 +1,16 @@
+{
+  "sport": "run",
+  "origin": "athlete",
+  "date": "2026-07-23",
+  "session_type": "quality",
+  "intensity_cap": null,
+  "pace_target_s_per_km": null,
+  "structure": {
+    "reps": 8,
+    "warmup_end": "lap",
+    "work_end": { "distance_m": 1000 },
+    "work_pace_band": [220, 240],
+    "recovery_end": { "min": 2 },
+    "cooldown_end": "lap"
+  }
+}

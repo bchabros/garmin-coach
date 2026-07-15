@@ -353,3 +353,235 @@ def test_to_garmin_encodes_a_distance_ended_step():
     step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
     assert step["endCondition"]["conditionTypeKey"] == "distance"
     assert step["endConditionValue"] == 1000.0
+
+
+# --- Phase 11a: uniform end conditions (lap / distance from a request) -------
+
+
+def test_lap_ended_warmup_and_cooldown():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": "lap", "cooldown_end": "lap"}
+    spec = author(req, _context())
+    warmup, work, cooldown = spec["steps"]
+    assert warmup["end"] == {"type": "lap"}
+    assert cooldown["end"] == {"type": "lap"}
+    # work still time-ended by default
+    assert work["end"]["type"] == "time"
+
+
+def test_lap_ended_recovery_in_quality():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"recovery_end": "lap"}
+    spec = author(req, _context())
+    recovery = spec["steps"][1]["steps"][1]
+    assert recovery["end"] == {"type": "lap"}
+
+
+def test_distance_ended_work_interval_from_request():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"reps": 8, "work_end": {"distance_m": 1000}}
+    spec = author(req, _context())
+    repeat = spec["steps"][1]
+    assert repeat["reps"] == 8
+    assert repeat["steps"][0]["end"] == {"type": "distance", "metres": 1000}
+
+
+def test_distance_ended_easy_run():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"work_end": {"distance_m": 8000}}
+    spec = author(req, _context())
+    assert spec["steps"][0]["end"] == {"type": "distance", "metres": 8000}
+
+
+def test_minutes_via_end_descriptor_matches_the_old_min_key():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": {"min": 5}}
+    spec = author(req, _context())
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 300}
+
+
+def test_to_garmin_encodes_a_lap_button_end():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": "lap"}
+    spec = author(req, _context())
+    warmup = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+    assert warmup["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert warmup["endCondition"]["conditionTypeId"] == 1
+    assert warmup.get("endConditionValue") is None
+
+
+# --- Phase 11a: structure validation ----------------------------------------
+
+
+def test_lap_on_a_work_step_is_refused():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"work_end": "lap"}
+    with pytest.raises(ValueError, match="work"):
+        author(req, _context())
+
+
+def test_end_and_min_clash_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": {"min": 5}, "warmup_min": 10}
+    with pytest.raises(ValueError, match="warmup"):
+        author(req, _context())
+
+
+def test_easy_work_end_and_duration_clash_is_refused():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"work_end": {"distance_m": 8000}, "duration_min": 60}
+    with pytest.raises(ValueError, match="work"):
+        author(req, _context())
+
+
+def test_non_positive_distance_is_refused():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"work_end": {"distance_m": 0}}
+    with pytest.raises(ValueError, match="distance"):
+        author(req, _context())
+
+
+def test_non_positive_minutes_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": {"min": -3}}
+    with pytest.raises(ValueError, match="min"):
+        author(req, _context())
+
+
+# --- Phase 11a: custom pace band --------------------------------------------
+
+
+def test_explicit_pace_band_is_used_verbatim_on_quality_work():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"work_pace_band": [220, 240]}
+    spec = author(req, _context())
+    work = spec["steps"][1]["steps"][0]
+    assert work["target"] == {"type": "pace_band", "fast_s_per_km": 220, "slow_s_per_km": 240}
+
+
+def test_explicit_band_on_tempo_work():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"work_pace_band": [220, 240]}
+    spec = author(req, _context())
+    assert spec["steps"][1]["target"] == {
+        "type": "pace_band",
+        "fast_s_per_km": 220,
+        "slow_s_per_km": 240,
+    }
+
+
+def test_explicit_band_on_easy_work():
+    req = _request(session_type="easy", pace=330, origin="athlete")
+    req["structure"] = {"work_pace_band": [300, 320]}
+    spec = author(req, _context())
+    assert spec["steps"][0]["target"] == {
+        "type": "pace_band",
+        "fast_s_per_km": 300,
+        "slow_s_per_km": 320,
+    }
+
+
+def test_explicit_band_overrides_recommender_pace_and_suppresses_degradation():
+    # no zones at all: without a band this would degrade to "none" with a warning
+    req = _request(session_type="tempo", pace=None, cap=None, origin="athlete")
+    req["structure"] = {"work_pace_band": [220, 240]}
+    spec = author(req, _context(zones=None))
+    assert spec["steps"][1]["target"] == {
+        "type": "pace_band",
+        "fast_s_per_km": 220,
+        "slow_s_per_km": 240,
+    }
+    assert not any("no target" in w or "heart rate" in w for w in spec["warnings"])
+
+
+def test_inverted_pace_band_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"work_pace_band": [240, 220]}
+    with pytest.raises(ValueError, match="work_pace_band"):
+        author(req, _context())
+
+
+def test_non_positive_pace_band_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"work_pace_band": [0, 240]}
+    with pytest.raises(ValueError, match="work_pace_band"):
+        author(req, _context())
+
+
+def test_pace_band_harder_than_recommendation_warns_cited():
+    ctx = _context_with_rec("tempo", ["ACWR_OUT_OF_RANGE"])
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"work_pace_band": [220, 240]}
+    spec = author(req, ctx)
+    warning = next(w for w in spec["warnings"] if "faster" in w)
+    assert "220-240" in warning
+    assert "ACWR_OUT_OF_RANGE" in warning
+
+
+def test_pace_band_within_recommendation_does_not_warn():
+    # slow bound 240 is not faster than the suggested 230 -> band overlaps, no warning
+    req = _request(session_type="tempo", pace=230, origin="athlete")
+    req["structure"] = {"work_pace_band": [225, 240]}
+    spec = author(req, _context())
+    assert not any("faster than the recommended" in w for w in spec["warnings"])
+
+
+# --- Phase 11a: duration estimate -------------------------------------------
+
+
+def test_estimate_counts_distance_reps_by_band_midpoint():
+    req = _request(session_type="quality", origin="athlete")
+    req["structure"] = {
+        "reps": 8,
+        "warmup_end": "lap",
+        "work_end": {"distance_m": 1000},
+        "work_pace_band": [220, 240],
+        "recovery_end": {"min": 2},
+        "cooldown_end": "lap",
+    }
+    payload = to_garmin(author(req, _context()))
+    # 8 * (1km @ midpoint 230 s/km = 230s + 120s recovery) = 2800; lap warmup/cooldown 0
+    assert payload["estimatedDurationInSecs"] == 2800
+
+
+def test_estimate_ignores_lap_and_paceless_distance():
+    spec = {
+        "sport": "run",
+        "date": "2026-07-17",
+        "session_type": "quality",
+        "name": "GC 2026-07-17 quality",
+        "steps": [
+            {"kind": "warmup", "end": {"type": "lap"}, "target": {"type": "none"}},
+            {
+                "kind": "work",
+                "end": {"type": "distance", "metres": 1000},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+    assert to_garmin(spec)["estimatedDurationInSecs"] == 0
+
+
+# --- Phase 11a: canonical tempo fixture (end to end) ------------------------
+
+
+def test_canonical_tempo_fixture_authors_end_to_end(fixture):
+    req = fixture("tempo_request")
+    spec = author(req, _context(today="2026-07-15"))
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+    warmup, repeat, cooldown = spec["steps"]
+    assert warmup["end"] == {"type": "lap"}
+    assert cooldown["end"] == {"type": "lap"}
+    assert repeat["reps"] == 8
+    work, recovery = repeat["steps"]
+    assert work["end"] == {"type": "distance", "metres": 1000}
+    assert work["target"] == {"type": "pace_band", "fast_s_per_km": 220, "slow_s_per_km": 240}
+    assert recovery["end"] == {"type": "time", "seconds": 120}
+    # typed JSON: lap warmup, distance work with a pace target
+    steps = to_garmin(spec)["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["endCondition"]["conditionTypeKey"] == "lap.button"
+    nested_work = steps[1]["workoutSteps"][0]
+    assert nested_work["endCondition"]["conditionTypeKey"] == "distance"
+    assert nested_work["endConditionValue"] == 1000.0
+    assert nested_work["targetType"]["workoutTargetTypeKey"] == "pace.zone"

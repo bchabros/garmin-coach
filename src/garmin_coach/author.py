@@ -74,6 +74,23 @@ _SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox")
 # recommender's advice. Mirrors the recommender's intent ranking.
 _HARDNESS = {"rest": 0, "easy": 1, "tempo": 2, "quality": 3, "hyrox": 3}
 
+# Per session type: the (end_key, min_key) pairs whose end a structure override may set.
+# The min_key is the pre-11a minutes alias kept for back-compat (easy uses ``duration_min``).
+_STRUCTURE_ROLES = {
+    "easy": (("work_end", "duration_min"),),
+    "tempo": (
+        ("warmup_end", "warmup_min"),
+        ("work_end", "work_min"),
+        ("cooldown_end", "cooldown_min"),
+    ),
+    "quality": (
+        ("warmup_end", "warmup_min"),
+        ("work_end", "work_min"),
+        ("recovery_end", "recovery_min"),
+        ("cooldown_end", "cooldown_min"),
+    ),
+}
+
 
 class DeferredSportError(Exception):
     """Raised when a request's sport (``hiit``/``strength``) awaits the push spike."""
@@ -125,6 +142,8 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
+    _validate_structure(request.get("structure") or {}, session_type)
+    warnings.extend(_pace_band_warning(request, context))
     steps = _expand(session_type, request, context.get("zones"), warnings)
     return {
         "sport": request["sport"],
@@ -175,6 +194,29 @@ def _hybrid_warnings(request: dict[str, Any], context: dict[str, Any]) -> list[s
     return [f"you asked for {requested} but the recommender advises {advised}{cite}"]
 
 
+def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    """Warn (never block) when an athlete's explicit band is faster than the suggestion.
+
+    Fires only when the whole band is faster than the recommender's suggested pace (even
+    the band's slow bound beats it). Cites the recommendation's rationale codes when present.
+    """
+    if request["origin"] != "athlete":
+        return []
+    structure = request.get("structure") or {}
+    band = structure.get("work_pace_band")
+    suggested = request.get("pace_target_s_per_km")
+    if not band or suggested is None:
+        return []
+    fast, slow = band
+    if slow >= suggested:
+        return []
+    codes = (context.get("recommendation") or {}).get("rationale") or []
+    cite = f" ({', '.join(codes)})" if codes else ""
+    return [
+        f"your pace band {fast}-{slow} s/km is faster than the recommended {suggested} s/km{cite}"
+    ]
+
+
 def request_from_recommendation(
     recommendation: dict[str, Any], *, sport: str = "run"
 ) -> dict[str, Any]:
@@ -217,13 +259,22 @@ def _expand(
     structure = request.get("structure") or {}
     if session_type == "easy":
         target = _easy_target(request, zones, warnings)
-        return [_step("work", _mins(structure, "duration_min", EASY_DEFAULT_S), target)]
+        end = _end_condition(structure, "work_end", "duration_min", EASY_DEFAULT_S)
+        return [_step("work", end, target)]
     if session_type == "tempo":
         work = _threshold_target(request, zones, warnings)
         return [
-            _step("warmup", _mins(structure, "warmup_min", TEMPO_WARMUP_S), _NO_TARGET),
-            _step("work", _mins(structure, "work_min", TEMPO_WORK_S), work),
-            _step("cooldown", _mins(structure, "cooldown_min", TEMPO_COOLDOWN_S), _NO_TARGET),
+            _step(
+                "warmup",
+                _end_condition(structure, "warmup_end", "warmup_min", TEMPO_WARMUP_S),
+                _NO_TARGET,
+            ),
+            _step("work", _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S), work),
+            _step(
+                "cooldown",
+                _end_condition(structure, "cooldown_end", "cooldown_min", TEMPO_COOLDOWN_S),
+                _NO_TARGET,
+            ),
         ]
     if session_type == "quality":
         work = _threshold_target(request, zones, warnings)
@@ -231,30 +282,119 @@ def _expand(
             "kind": "repeat",
             "reps": int(structure.get("reps", QUALITY_REPS)),
             "steps": [
-                _step("work", _mins(structure, "work_min", QUALITY_WORK_S), work),
-                _step("recovery", _mins(structure, "recovery_min", QUALITY_RECOVERY_S), _NO_TARGET),
+                _step(
+                    "work", _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S), work
+                ),
+                _step(
+                    "recovery",
+                    _end_condition(structure, "recovery_end", "recovery_min", QUALITY_RECOVERY_S),
+                    _NO_TARGET,
+                ),
             ],
         }
         return [
-            _step("warmup", _mins(structure, "warmup_min", QUALITY_WARMUP_S), _NO_TARGET),
+            _step(
+                "warmup",
+                _end_condition(structure, "warmup_end", "warmup_min", QUALITY_WARMUP_S),
+                _NO_TARGET,
+            ),
             interval,
-            _step("cooldown", _mins(structure, "cooldown_min", QUALITY_COOLDOWN_S), _NO_TARGET),
+            _step(
+                "cooldown",
+                _end_condition(structure, "cooldown_end", "cooldown_min", QUALITY_COOLDOWN_S),
+                _NO_TARGET,
+            ),
         ]
     raise ValueError(f"unsupported session type: {session_type}")
 
 
-def _mins(structure: dict[str, Any], key: str, default_s: int) -> int:
-    """Override a default duration (seconds) with a request's minutes value, if given."""
-    minutes = structure.get(key)
-    return default_s if minutes is None else int(minutes) * 60
+def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
+    """Validate a structure override's per-role end conditions.
+
+    Raises:
+        ValueError: If a role sets two ends at once, an end is malformed or out of
+            range, or a work step is asked to end on the lap button.
+    """
+    if not structure:
+        return
+    for end_key, min_key in _STRUCTURE_ROLES.get(session_type, ()):
+        end = structure.get(end_key)
+        if end is None:
+            continue
+        if structure.get(min_key) is not None:
+            raise ValueError(f"structure sets both {end_key} and {min_key}; give only one")
+        _validate_end(end, end_key)
+    _validate_pace_band(structure)
+
+
+def _validate_pace_band(structure: dict[str, Any]) -> None:
+    """Check an explicit work pace band is a well-formed, faster-first window.
+
+    Raises:
+        ValueError: If the band is not a two-element positive ``[fast, slow]`` with
+            ``fast < slow``.
+    """
+    band = structure.get("work_pace_band")
+    if band is None:
+        return
+    if (
+        not isinstance(band, list | tuple)
+        or len(band) != 2
+        or not all(isinstance(x, int | float) and x > 0 for x in band)
+    ):
+        raise ValueError("work_pace_band must be [fast_s_per_km, slow_s_per_km], both positive")
+    if band[0] >= band[1]:
+        raise ValueError("work_pace_band fast bound must be faster (smaller) than the slow bound")
+
+
+def _validate_end(end: Any, end_key: str) -> None:
+    """Check one role's end value is a well-formed, allowed end condition.
+
+    Raises:
+        ValueError: If the end is not lap/time/distance-shaped, out of range, or a lap
+            button on a work step.
+    """
+    if end == "lap":
+        if end_key == "work_end":
+            raise ValueError("a work step cannot end on the lap button; give a time or distance")
+        return
+    if not isinstance(end, dict) or ("distance_m" in end) == ("min" in end):
+        raise ValueError(f'{end_key} must be "lap", {{"min": N}}, or {{"distance_m": N}}')
+    if "distance_m" in end:
+        if not isinstance(end["distance_m"], int) or end["distance_m"] <= 0:
+            raise ValueError(f"{end_key} distance_m must be a positive integer")
+    elif not isinstance(end["min"], int | float) or end["min"] <= 0:
+        raise ValueError(f"{end_key} min must be positive")
+
+
+def _end_condition(
+    structure: dict[str, Any], end_key: str, min_key: str, default_s: int
+) -> dict[str, Any]:
+    """Resolve a role's end: an explicit end descriptor, an old ``*_min`` alias, or default."""
+    end = structure.get(end_key)
+    if end is not None:
+        return _end_descriptor(end)
+    minutes = structure.get(min_key)
+    if minutes is not None:
+        return {"type": "time", "seconds": int(minutes) * 60}
+    return {"type": "time", "seconds": default_s}
+
+
+def _end_descriptor(end: Any) -> dict[str, Any]:
+    """Turn a validated request end value into a spec end descriptor."""
+    if end == "lap":
+        return {"type": "lap"}
+    if "distance_m" in end:
+        return {"type": "distance", "metres": int(end["distance_m"])}
+    return {"type": "time", "seconds": int(end["min"]) * 60}
 
 
 _NO_TARGET = {"type": "none"}
 
 
-def _step(kind: str, seconds: int, target: dict[str, Any]) -> dict[str, Any]:
-    """A time-ended spec step."""
-    return {"kind": kind, "end": {"type": "time", "seconds": seconds}, "target": target}
+def _step(kind: str, end: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    """A spec step with an explicit end descriptor (time / distance / lap)."""
+    return {"kind": kind, "end": end, "target": target}
 
 
 def _easy_target(
@@ -263,8 +403,12 @@ def _easy_target(
     """The easy step's target: at or slower than the Z2 ceiling, degrading to HR -> none.
 
     The recommender only carries a measured pace when zones are regression-backed,
-    so an absent ``pace_target_s_per_km`` is the signal to degrade.
+    so an absent ``pace_target_s_per_km`` is the signal to degrade. An explicit
+    athlete band wins over both and suppresses the degradation.
     """
+    explicit = _explicit_band(request)
+    if explicit is not None:
+        return explicit
     pace = request.get("pace_target_s_per_km")
     if pace is not None:
         return {
@@ -278,7 +422,10 @@ def _easy_target(
 def _threshold_target(
     request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
 ) -> dict[str, Any]:
-    """A threshold work target: a band around threshold pace, degrading to Z4 HR -> none."""
+    """A threshold work target: an explicit band, else a band around threshold pace, else HR."""
+    explicit = _explicit_band(request)
+    if explicit is not None:
+        return explicit
     pace = request.get("pace_target_s_per_km")
     if pace is not None:
         return {
@@ -287,6 +434,16 @@ def _threshold_target(
             "slow_s_per_km": pace + THRESHOLD_PACE_MARGIN_S,
         }
     return _hr_or_none(zones, "z3_hi_bpm", "z4_hi_bpm", "threshold (Z4 band)", warnings)
+
+
+def _explicit_band(request: dict[str, Any]) -> dict[str, Any] | None:
+    """The athlete's custom work pace band as a target, or None when not given."""
+    structure = request.get("structure") or {}
+    band = structure.get("work_pace_band")
+    if band is None:
+        return None
+    fast, slow = band
+    return {"type": "pace_band", "fast_s_per_km": fast, "slow_s_per_km": slow}
 
 
 def _hr_or_none(
@@ -342,11 +499,19 @@ def _garmin_step(step: dict[str, Any], order: int) -> Any:
     builder = _STEP_BUILDERS[step["kind"]]
     target_type = _garmin_target_type(step["target"])
     end = step["end"]
-    end_value = end["seconds"] if end["type"] == "time" else end["metres"]
-    executable = builder(end_value, step_order=order, target_type=target_type)
+    executable = builder(_builder_end_value(end), step_order=order, target_type=target_type)
     _apply_end_condition(executable, end)
     _apply_target_values(executable, step["target"])
     return executable
+
+
+def _builder_end_value(end: dict[str, Any]) -> float:
+    """The seconds/metres the step builder wants; a placeholder for a lap-button end."""
+    if end["type"] == "time":
+        return end["seconds"]
+    if end["type"] == "distance":
+        return end["metres"]
+    return 0.0  # lap: the builder needs a value; ``_apply_end_condition`` clears it
 
 
 def _garmin_target_type(target: dict[str, Any]) -> dict[str, Any]:
@@ -385,7 +550,7 @@ def _apply_target_values(executable: Any, target: dict[str, Any]) -> None:
 
 
 def _apply_end_condition(executable: Any, end: dict[str, Any]) -> None:
-    """Override the builder's default (time) end condition for a distance step."""
+    """Override the builder's default (time) end condition for a distance or lap step."""
     if end["type"] == "distance":
         executable.endCondition = {
             "conditionTypeId": ConditionType.DISTANCE,
@@ -394,14 +559,45 @@ def _apply_end_condition(executable: Any, end: dict[str, Any]) -> None:
             "displayable": True,
         }
         executable.endConditionValue = float(end["metres"])
+    elif end["type"] == "lap":
+        executable.endCondition = {
+            "conditionTypeId": ConditionType.LAP_BUTTON,
+            "conditionTypeKey": "lap.button",
+            "displayOrder": 1,
+            "displayable": True,
+        }
+        executable.endConditionValue = None
 
 
 def _estimated_duration(nodes: list[dict[str, Any]]) -> int:
-    """Sum the time-ended steps' seconds, counting repeat iterations, for the estimate."""
+    """Approximate the workout's seconds, counting repeat iterations.
+
+    A time step contributes its seconds; a distance step with a pace band is estimated
+    from the band midpoint; a lap step (or a distance step without a pace band) is
+    unknowable and contributes 0. Garmin recomputes the real estimate on the device.
+    """
     total = 0
     for node in nodes:
         if node["kind"] == "repeat":
             total += node["reps"] * _estimated_duration(node["steps"])
-        elif node["end"]["type"] == "time":
-            total += node["end"]["seconds"]
+        else:
+            total += _step_seconds(node)
     return total
+
+
+def _step_seconds(step: dict[str, Any]) -> int:
+    """The estimated seconds one executable step contributes (0 when unknowable)."""
+    end = step["end"]
+    if end["type"] == "time":
+        return int(end["seconds"])
+    if end["type"] == "distance":
+        return _distance_seconds(end["metres"], step["target"])
+    return 0  # lap: unknowable
+
+
+def _distance_seconds(metres: int, target: dict[str, Any]) -> int:
+    """Estimate a distance step's seconds from its pace band midpoint, or 0 without one."""
+    if target["type"] != "pace_band":
+        return 0
+    midpoint = (target["fast_s_per_km"] + target["slow_s_per_km"]) / 2
+    return round(metres / 1000 * midpoint)

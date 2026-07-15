@@ -228,6 +228,26 @@ code, docstrings, PRDs, and ADRs.
   exists only inside a race plan, because race day is paired by physics while training
   is solo by choice.
 
+## Authoring terms (request -> author -> publish, Phase 11)
+
+- **workout request** - the structured, source-agnostic ask consumed by `author`:
+  session type, target date, optional explicit structure. Carries `origin:
+  recommender | athlete`. Not "intent" - that word is reserved for the daily
+  `plan_template` category.
+- **workout spec** - the deterministic output of `author`: a complete,
+  Garmin-shaped description of one workout (steps, targets, durations), written
+  to `reports/{date}/`. The only thing `publish` is allowed to send.
+- **origin (workout request)** - who produced the request: `recommender` (Phase 10
+  output) or `athlete` (the user, composed conversationally). The hybrid mode is a
+  *process*, not a third origin: an `athlete` request that passed through
+  recommender validation before authoring.
+- **sport (workout request)** - the authoring/push family of a session: `run |
+  hiit | strength`. Distinct from both `discipline` (human-facing grouping) and
+  the daily `intent`: a run-dominant Hyrox session is `run` (pushable), a
+  station/crossfit-style one is `hiit`, FBB is `strength` (both await the
+  strength/HIIT push spike). The recommender's `intended_type: hyrox` never maps
+  to a sport automatically - the athlete says which kind it is.
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier

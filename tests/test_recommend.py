@@ -9,11 +9,26 @@ from __future__ import annotations
 
 from garmin_coach.recommend import recommend
 
-THRESHOLDS = {"hard_rpe": 8}
+THRESHOLDS = {"hard_rpe": 8, "replan_missed_sessions": 2}
 
 
-def _digest(signals=None, zones=None, to="2026-06-14"):
-    return {"window": {"to": to}, "signals": signals or [], "zones": zones}
+def _digest(signals=None, zones=None, to="2026-06-14", weekly=None, plan=None):
+    return {
+        "window": {"to": to},
+        "signals": signals or [],
+        "zones": zones,
+        "weekly": weekly,
+        "plan": plan,
+    }
+
+
+def _week(plan_rows, week_start="2026-07-06"):
+    """A weekly section carrying a plan-vs-actual grid from (planned, matched) tuples."""
+    pva = [
+        {"dow": i, "date": week_start, "planned": planned, "actual": "x", "match": matched}
+        for i, (planned, matched) in enumerate(plan_rows)
+    ]
+    return {"week_start": week_start, "plan_vs_actual": pva}
 
 
 def _zones(source="regression+lthr", z2=330, thr=270):
@@ -183,6 +198,53 @@ def test_niggle_downgrades_without_fabricating_an_avoid_pattern():
     rec = recommend(_digest(signals=signals, zones=_zones()), "quality", THRESHOLDS)
     assert rec["intended_type"] == "easy"  # niggle still softens the session
     assert rec["avoid"] == []  # but invents no movement pattern
+
+
+def test_replan_menu_fires_on_a_missed_week():
+    weekly = _week([("quality", False), ("easy", False), ("rest", True), ("quality", True)])
+    plan = {"block": "build", "weeks_to_event": 14}
+    rp = recommend(_digest(weekly=weekly, plan=plan), "quality", THRESHOLDS)["replan"]
+    assert rp["missed"] == 2
+    assert rp["week_start"] == "2026-07-06"
+    assert rp["recommended"] == "extend"
+    assert [o["id"] for o in rp["options"]] == ["extend", "rebuild", "continue"]
+
+
+def test_replan_is_null_below_the_threshold():
+    weekly = _week([("quality", False), ("rest", True), ("easy", True)])  # one miss
+    rec = recommend(
+        _digest(weekly=weekly, plan={"block": "build", "weeks_to_event": 14}),
+        "quality", THRESHOLDS,
+    )
+    assert rec["replan"] is None
+
+
+def test_replan_recommends_continue_near_the_race():
+    weekly = _week([("quality", False), ("quality", False)])
+    plan = {"block": "taper", "weeks_to_event": 2}
+    rp = recommend(_digest(weekly=weekly, plan=plan), "easy", THRESHOLDS)["replan"]
+    assert rp["recommended"] == "continue"
+
+
+def test_replan_rebuild_is_flagged_manual():
+    weekly = _week([("quality", False), ("easy", False)])
+    plan = {"block": "build", "weeks_to_event": 14}
+    rp = recommend(_digest(weekly=weekly, plan=plan), "quality", THRESHOLDS)["replan"]
+    rebuild = next(o for o in rp["options"] if o["id"] == "rebuild")
+    assert "manual" in rebuild["cite"]
+
+
+def test_replan_does_not_count_a_skipped_rest_day_as_a_miss():
+    weekly = _week([("rest", False), ("rest", False), ("quality", False)])  # one real miss
+    rec = recommend(
+        _digest(weekly=weekly, plan={"block": "build", "weeks_to_event": 14}),
+        "quality", THRESHOLDS,
+    )
+    assert rec["replan"] is None
+
+
+def test_replan_is_null_without_a_complete_week():
+    assert recommend(_digest(), "quality", THRESHOLDS)["replan"] is None
 
 
 def test_downgrade_never_disturbs_a_rest_day():

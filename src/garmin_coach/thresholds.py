@@ -44,6 +44,7 @@ DEFAULTS: dict[str, float] = {
     "build_weeks": 5,
     "deload_every_n_weeks": 4,
     "race_proximity_weeks": 3,
+    "replan_missed_sessions": 2,
 }
 
 

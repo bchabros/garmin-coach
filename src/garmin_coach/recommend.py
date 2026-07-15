@@ -76,7 +76,7 @@ def recommend(
             digest["signals"], fired, downgraded, intended_type, intensity_cap, pace
         ),
         "avoid": _avoid(fired),
-        "replan": None,
+        "replan": _replan(digest, thresholds),
     }
 
 
@@ -174,6 +174,39 @@ def _avoid(fired: dict[str, dict[str, Any]]) -> list[str]:
         if signal is not None:
             keys.update(k for k in signal["facts"]["keys"].split(",") if k)
     return sorted(keys)
+
+
+def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, Any] | None:
+    """A re-plan menu when last complete week missed too many planned sessions.
+
+    A menu the athlete chooses from - never an executed re-plan. ``extend`` and
+    ``continue`` are cited by the current block; ``rebuild`` is always offered but is a
+    manual suggestion, because ``plan_template`` has no session priority to rebuild from.
+    """
+    weekly = digest.get("weekly")
+    if not weekly or not weekly.get("plan_vs_actual"):
+        return None
+    missed = sum(
+        1 for row in weekly["plan_vs_actual"] if row["planned"] != "rest" and not row["match"]
+    )
+    if missed < thresholds["replan_missed_sessions"]:
+        return None
+
+    plan = digest.get("plan")
+    block = plan["block"] if plan else None
+    block_cite = (
+        f"weeks_to_event={plan['weeks_to_event']}, block={block}" if plan else "no anchor race"
+    )
+    return {
+        "week_start": weekly.get("week_start"),
+        "missed": missed,
+        "recommended": "extend" if block in ("base", "build") else "continue",
+        "options": [
+            {"id": "extend", "cite": block_cite},
+            {"id": "rebuild", "cite": "manual: no session priorities in plan_template"},
+            {"id": "continue", "cite": block_cite},
+        ],
+    }
 
 
 def _tomorrow(to_date: str) -> str:

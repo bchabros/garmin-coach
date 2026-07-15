@@ -518,12 +518,35 @@ def test_pace_band_harder_than_recommendation_warns_cited():
     assert "ACWR_OUT_OF_RANGE" in warning
 
 
-def test_pace_band_within_recommendation_does_not_warn():
-    # slow bound 240 is not faster than the suggested 230 -> band overlaps, no warning
+def test_pace_band_fast_bound_beyond_recommendation_warns():
+    # fast bound 200 is well beyond the suggested 230 even though the band straddles it
+    ctx = _context_with_rec("tempo", ["HRV_LOW_MORNING"])
+    req = _request(session_type="tempo", pace=230, origin="athlete")
+    req["structure"] = {"work_pace_band": [200, 240]}
+    spec = author(req, ctx)
+    assert any("faster than the recommended" in w for w in spec["warnings"])
+
+
+def test_pace_band_near_recommendation_does_not_warn():
+    # fast bound 225 is within the small margin of the suggested 230 -> no warning
     req = _request(session_type="tempo", pace=230, origin="athlete")
     req["structure"] = {"work_pace_band": [225, 240]}
     spec = author(req, _context())
     assert not any("faster than the recommended" in w for w in spec["warnings"])
+
+
+def test_unknown_structure_key_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmp_end": "lap"}  # typo for warmup_end
+    with pytest.raises(ValueError, match="unknown structure"):
+        author(req, _context())
+
+
+def test_role_not_valid_for_session_type_is_refused():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"recovery_end": {"min": 2}}  # tempo has no recovery role
+    with pytest.raises(ValueError, match="recovery_end"):
+        author(req, _context())
 
 
 # --- Phase 11a: duration estimate -------------------------------------------

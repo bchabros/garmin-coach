@@ -45,6 +45,9 @@ EASY_PACE_SLOW_MARGIN_S = 40
 # Threshold work is a symmetric window around threshold pace (seconds per km).
 THRESHOLD_PACE_MARGIN_S = 5
 
+# How far past the suggested pace an explicit band's fast bound must reach to warn.
+PACE_BAND_WARN_MARGIN_S = 5
+
 # Default tempo structure: an easy warmup, a continuous threshold block, an easy cooldown.
 TEMPO_WARMUP_S = 10 * 60
 TEMPO_WORK_S = 20 * 60
@@ -189,16 +192,15 @@ def _hybrid_warnings(request: dict[str, Any], context: dict[str, Any]) -> list[s
     requested = request["session_type"]
     if advised is None or _HARDNESS.get(requested, 0) <= _HARDNESS.get(advised, 0):
         return []
-    codes = recommendation.get("rationale") or []
-    cite = f" ({', '.join(codes)})" if codes else ""
+    cite = _rationale_cite(recommendation)
     return [f"you asked for {requested} but the recommender advises {advised}{cite}"]
 
 
 def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list[str]:
     """Warn (never block) when an athlete's explicit band is faster than the suggestion.
 
-    Fires only when the whole band is faster than the recommender's suggested pace (even
-    the band's slow bound beats it). Cites the recommendation's rationale codes when present.
+    Fires when the band's fast bound reaches meaningfully past (beyond a small margin) the
+    recommender's suggested pace. Cites the recommendation's rationale codes when present.
     """
     if request["origin"] != "athlete":
         return []
@@ -208,13 +210,18 @@ def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list
     if not band or suggested is None:
         return []
     fast, slow = band
-    if slow >= suggested:
+    if fast >= suggested - PACE_BAND_WARN_MARGIN_S:
         return []
-    codes = (context.get("recommendation") or {}).get("rationale") or []
-    cite = f" ({', '.join(codes)})" if codes else ""
+    cite = _rationale_cite(context.get("recommendation"))
     return [
         f"your pace band {fast}-{slow} s/km is faster than the recommended {suggested} s/km{cite}"
     ]
+
+
+def _rationale_cite(recommendation: dict[str, Any] | None) -> str:
+    """The ' (CODE, CODE)' citation of a recommendation's rationale, or '' when absent."""
+    codes = (recommendation or {}).get("rationale") or []
+    return f" ({', '.join(codes)})" if codes else ""
 
 
 def request_from_recommendation(
@@ -262,61 +269,70 @@ def _expand(
         end = _end_condition(structure, "work_end", "duration_min", EASY_DEFAULT_S)
         return [_step("work", end, target)]
     if session_type == "tempo":
-        work = _threshold_target(request, zones, warnings)
-        return [
-            _step(
-                "warmup",
-                _end_condition(structure, "warmup_end", "warmup_min", TEMPO_WARMUP_S),
-                _NO_TARGET,
-            ),
-            _step("work", _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S), work),
-            _step(
-                "cooldown",
-                _end_condition(structure, "cooldown_end", "cooldown_min", TEMPO_COOLDOWN_S),
-                _NO_TARGET,
-            ),
-        ]
+        return _expand_tempo(structure, _threshold_target(request, zones, warnings))
     if session_type == "quality":
-        work = _threshold_target(request, zones, warnings)
-        interval = {
-            "kind": "repeat",
-            "reps": int(structure.get("reps", QUALITY_REPS)),
-            "steps": [
-                _step(
-                    "work", _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S), work
-                ),
-                _step(
-                    "recovery",
-                    _end_condition(structure, "recovery_end", "recovery_min", QUALITY_RECOVERY_S),
-                    _NO_TARGET,
-                ),
-            ],
-        }
-        return [
-            _step(
-                "warmup",
-                _end_condition(structure, "warmup_end", "warmup_min", QUALITY_WARMUP_S),
-                _NO_TARGET,
-            ),
-            interval,
-            _step(
-                "cooldown",
-                _end_condition(structure, "cooldown_end", "cooldown_min", QUALITY_COOLDOWN_S),
-                _NO_TARGET,
-            ),
-        ]
+        return _expand_quality(structure, _threshold_target(request, zones, warnings))
     raise ValueError(f"unsupported session type: {session_type}")
 
 
+def _expand_tempo(structure: dict[str, Any], work: dict[str, Any]) -> list[dict[str, Any]]:
+    """Warmup + a continuous threshold block + cooldown."""
+    return [
+        _step(
+            "warmup",
+            _end_condition(structure, "warmup_end", "warmup_min", TEMPO_WARMUP_S),
+            _NO_TARGET,
+        ),
+        _step("work", _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S), work),
+        _step(
+            "cooldown",
+            _end_condition(structure, "cooldown_end", "cooldown_min", TEMPO_COOLDOWN_S),
+            _NO_TARGET,
+        ),
+    ]
+
+
+def _expand_quality(structure: dict[str, Any], work: dict[str, Any]) -> list[dict[str, Any]]:
+    """Warmup + a homogeneous repeat block of work + recovery + cooldown."""
+    interval = {
+        "kind": "repeat",
+        "reps": int(structure.get("reps", QUALITY_REPS)),
+        "steps": [
+            _step("work", _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S), work),
+            _step(
+                "recovery",
+                _end_condition(structure, "recovery_end", "recovery_min", QUALITY_RECOVERY_S),
+                _NO_TARGET,
+            ),
+        ],
+    }
+    return [
+        _step(
+            "warmup",
+            _end_condition(structure, "warmup_end", "warmup_min", QUALITY_WARMUP_S),
+            _NO_TARGET,
+        ),
+        interval,
+        _step(
+            "cooldown",
+            _end_condition(structure, "cooldown_end", "cooldown_min", QUALITY_COOLDOWN_S),
+            _NO_TARGET,
+        ),
+    ]
+
+
 def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
-    """Validate a structure override's per-role end conditions.
+    """Validate a structure override's keys and per-role end conditions.
 
     Raises:
-        ValueError: If a role sets two ends at once, an end is malformed or out of
-            range, or a work step is asked to end on the lap button.
+        ValueError: If a key is not valid for the session type, a role sets two ends at
+            once, an end is malformed or out of range, or a work step ends on the lap button.
     """
     if not structure:
         return
+    unknown = set(structure) - _allowed_structure_keys(session_type)
+    if unknown:
+        raise ValueError(f"unknown structure keys for {session_type}: {', '.join(sorted(unknown))}")
     for end_key, min_key in _STRUCTURE_ROLES.get(session_type, ()):
         end = structure.get(end_key)
         if end is None:
@@ -325,6 +341,16 @@ def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
             raise ValueError(f"structure sets both {end_key} and {min_key}; give only one")
         _validate_end(end, end_key)
     _validate_pace_band(structure)
+
+
+def _allowed_structure_keys(session_type: str) -> set[str]:
+    """The structure keys a session type accepts (its role ends/mins, plus band and reps)."""
+    keys = {"work_pace_band"}
+    if session_type == "quality":
+        keys.add("reps")
+    for end_key, min_key in _STRUCTURE_ROLES.get(session_type, ()):
+        keys.update((end_key, min_key))
+    return keys
 
 
 def _validate_pace_band(structure: dict[str, Any]) -> None:

@@ -158,6 +158,18 @@ def _movement_coverage(conn: sqlite3.Connection) -> dict | None:
     return cov if cov["sets_total"] else None
 
 
+def _read_rated_sessions(conn: sqlite3.Connection, to_date: str) -> list[dict]:
+    """Read rated sessions (``session_rpe`` joined to ``activities``) on ``to_date``."""
+    cur = conn.execute(
+        "SELECT a.activity_id, r.rpe, a.date FROM session_rpe r "
+        "JOIN activities a ON a.activity_id = r.activity_id "
+        "WHERE a.date = ? ORDER BY a.activity_id",
+        (to_date,),
+    )
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def _read_overlap(conn: sqlite3.Connection, to_date: str) -> list[dict]:
     """Read pattern_overlap rows on/before ``to_date``; the signal picks the latest day."""
     cur = conn.execute(
@@ -243,11 +255,12 @@ def build_digest(
         if to_date is not None else None
     )
     overlap_rows = _read_overlap(conn, to_date) if to_date is not None else []
-    niggle = pattern = muscle = None
+    niggle = pattern = muscle = hard_rpe = None
     if to_date is not None:
         niggle = _signals.niggle_reduced_mode(_read_niggles(conn, to_date), thr, to_date)
         pattern = _signals.pattern_stack(overlap_rows, thr, to_date)
         muscle = _signals.muscle_overlap(overlap_rows, thr, to_date)
+        hard_rpe = _signals.hard_rpe_yesterday(_read_rated_sessions(conn, to_date), thr)
     movement = _movement_coverage(conn)
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
@@ -255,7 +268,7 @@ def build_digest(
             "window": {"from": from_date, "to": to_date, "days": 0},
             "headline": _headline([], [], thr),
             "signals": [
-                s for s in (deload, niggle, pattern, muscle, taper, proximity)
+                s for s in (deload, niggle, pattern, muscle, hard_rpe, taper, proximity)
                 if s is not None
             ],
             "weekly": weekly_section,
@@ -285,6 +298,7 @@ def build_digest(
         niggle,
         pattern,
         muscle,
+        hard_rpe,
         taper,
         proximity,
     )

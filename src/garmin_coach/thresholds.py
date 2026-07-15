@@ -34,6 +34,7 @@ DEFAULTS: dict[str, float] = {
     "snapshot_trend_min_span_days": 7,
     "srpe_load_scale": 0.3,
     "sila_default_rpe": 7,
+    "hard_rpe": 8,
     "niggle_active_days": 7,
     "niggle_reduced_mode_severity": 3,
     "pattern_load_floor": 20,

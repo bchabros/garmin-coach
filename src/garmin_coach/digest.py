@@ -13,6 +13,7 @@ import sqlite3
 from . import db as _db
 from . import overlap as _overlap
 from . import periodize as _periodize
+from . import recommend as _recommend
 from . import signals as _signals
 from . import thresholds as _thresholds
 from . import weekly as _weekly
@@ -306,7 +307,7 @@ def build_digest(
         (s for s in candidates if s is not None),
         key=lambda s: _SEVERITY_ORDER[s["severity"]],
     )
-    return {
+    result = {
         "window": window,
         "headline": headline,
         "signals": signals,
@@ -316,6 +317,19 @@ def build_digest(
         "movement": movement,
         "disclaimer": DISCLAIMER,
     }
+    result["recommendation"] = _recommend.recommend(
+        result, _planned_intent(conn, to_date), thr
+    )
+    return result
+
+
+def _planned_intent(conn: sqlite3.Connection, to_date: str) -> str | None:
+    """Tomorrow's ``plan_template`` intent - the recommendation's starting point."""
+    tomorrow = _dt.date.fromisoformat(to_date) + _dt.timedelta(days=1)
+    row = conn.execute(
+        "SELECT intent FROM plan_template WHERE dow = ?", (tomorrow.weekday(),)
+    ).fetchone()
+    return row[0] if row else None
 
 
 def _plan_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:

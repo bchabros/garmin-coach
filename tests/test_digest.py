@@ -7,6 +7,7 @@ returned digest dict - never on internal helpers. Mirrors test_features.py.
 
 from __future__ import annotations
 
+import datetime as _dt
 import pathlib
 
 from garmin_coach import db, weekly
@@ -642,3 +643,24 @@ def test_hard_rpe_yesterday_silent_when_hard_session_is_not_on_to_date(conn):
     assert "HARD_RPE_YESTERDAY" not in _codes(
         build_digest(conn, from_date="2026-06-13", to_date="2026-06-14")
     )
+
+
+# --- Phase 10: recommendation block through the digest ------------------------
+
+def test_recommendation_rides_in_digest_for_tomorrow(conn):
+    _mart(conn, date="2026-06-14", load_day=100)
+    dg = build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
+    rec = dg["recommendation"]
+    assert rec["target_date"] == "2026-06-15"
+    expected = conn.execute(
+        "SELECT intent FROM plan_template WHERE dow = ?",
+        (_dt.date(2026, 6, 15).weekday(),),
+    ).fetchone()[0]
+    assert rec["planned_intent"] == expected
+    assert rec["avoid"] == []
+    assert rec["replan"] is None
+
+
+def test_no_recommendation_without_a_horizon(conn):
+    dg = build_digest(conn)  # empty mart -> to_date is None
+    assert "recommendation" not in dg

@@ -167,6 +167,67 @@ code, docstrings, PRDs, and ADRs.
   (`vo2max_span_days`, ...); it can be shorter than the configured lookback while
   history is still accruing, letting the coach hedge ("over the last 24 days").
 
+## Periodization terms (core + mart -> plan_block)
+
+- **goal event** - a target race the athlete is training toward (`goal_event` core
+  table): a date, a `type` (`hyrox | run_race`), a `priority` (A/B/C), and a target
+  time in seconds. Manually entered ground truth, never from Garmin.
+- **status (goal event)** - *whether the athlete will start*: `confirmed | tentative`.
+  Only a `confirmed` event can anchor blocks or fire `TAPER_ACTIVE` - the system never
+  tapers for a race the athlete may skip.
+- **date_precision (goal event)** - *whether the exact day is known*: `exact | approx`.
+  Orthogonal to `status`: a race can be certain with a fuzzy date, or dated but
+  uncommitted. An `approx` date still drives every block; it only makes the report ask
+  for the date to be pinned as the taper window approaches.
+- **anchor event** - the goal event a *week* counts back from: the nearest `confirmed`
+  priority-A race **on or after that week**. A function of the week, not of today, so a
+  race keeps labelling the weeks that led up to it after it has been run - "what am I
+  training for now" and "what block was that week in" are different questions, and only
+  the first goes blank once the race is over. Weeks with no race ahead of them get no
+  `plan_block` row, and `block` / `weeks_to_event` read NULL: the system says it does not
+  know what is being trained for rather than inventing a phase.
+- **current anchor** - the nearest *upcoming* confirmed priority-A race, i.e. what the
+  athlete is training for **right now**. What `event list` marks and what goes blank the
+  day after the goal race. Distinct from a past week's anchor.
+- **block** - the phase of the training cycle a week sits in: `base | build | peak |
+  taper`. A pure countdown from the anchor event's date. `taper`, `peak`, and `build`
+  have fixed lengths; `base` absorbs everything earlier (bounded left by `data_start`),
+  so the athlete is always in some block.
+- **weeks_to_event** - whole weeks from a week's Monday to the anchor event's race week;
+  0 in the race week itself.
+- **planned deload** - the `is_deload` flag on a `plan_block` week: a recovery week the
+  *plan* prescribes, placed every `deload_every_n_weeks` counted back from the end of
+  its block and only inside `base` / `build` (never `peak` or `taper`, which are
+  downshifts already). Anchoring to the block's end means the athlete always enters the
+  next block fresh. A block never opens with a deload - its first week is for ramping up.
+- **planned deload vs deload advised** - two answers to one question, deliberately kept
+  apart. `is_deload` is what the plan intended; `DELOAD_ADVISED` is what the actual load
+  did. Neither overrides the other; the divergence between them is itself the finding -
+  the same plan-vs-actual shape as `weekly plan-vs-actual fact`.
+- **plan_block** - the periodization mart, one row per week keyed by `week_start`,
+  spanning the whole plan horizon *including future weeks* (unlike `weekly_metrics`,
+  which only holds weeks that already happened). The single source of truth for `block`,
+  `weeks_to_event`, and `is_deload`.
+- **TAPER_ACTIVE** - the signal that the current week's `block` is `taper` *and the race
+  has not yet been run*. The race week keeps its `taper` label afterwards (a fact about
+  the week), but the taper itself ends at the gun. In the coaching layer it is the cue to
+  suppress intensity; Phase 9 only states the fact.
+- **RACE_PROXIMITY** - the signal that the nearest upcoming goal event (any priority,
+  any status) falls inside `race_proximity_weeks`. Carries the event's type, priority,
+  status, and `weeks_to_event`; asks for a `tentative` event to be decided and an
+  `approx` date to be pinned.
+- **intent** - reserved for the *daily* `plan_template` category (`rest | quality |
+  easy | ...`). A week is described by its `block`, never by a competing "week intent";
+  what a block means for training is policy in code, not a stored column.
+- **race plan (Phase 9b)** - the per-segment pacing and effort targets for race day.
+  Deferred out of Phase 9: in HYROX Doubles the runs are shared and the stations are
+  split with a partner, so a race plan needs inputs the DB does not hold. See the
+  athlete-not-team rule below.
+- **athlete, not team** - the coaching model optimizes *this athlete*, never the pair.
+  There is no partner load, no shared readiness, no partner threshold pace. The partner
+  exists only inside a race plan, because race day is paired by physics while training
+  is solo by choice.
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier

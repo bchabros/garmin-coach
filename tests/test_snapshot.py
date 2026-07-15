@@ -199,3 +199,50 @@ def test_rollup_is_idempotent(conn):
     snapshot.rollup(conn, through_date="2026-07-08")
     snapshot.rollup(conn, through_date="2026-07-08")
     assert conn.execute("SELECT COUNT(*) FROM athlete_status").fetchone()[0] == 1
+
+
+# --- Phase 9: the block fields stop being placeholders ---
+
+
+def _anchor(conn, status="confirmed"):
+    from garmin_coach import db
+
+    db.insert_goal_event(conn, {
+        "date": "2026-10-17", "type": "hyrox", "priority": "A", "status": status,
+        "date_precision": "approx", "target_s": 3600, "note": None,
+    })
+
+
+def test_snapshot_carries_the_block_countdown_and_taper_flag(conn):
+    from garmin_coach import periodize
+
+    _anchor(conn)
+    periodize.rollup(conn, data_start_date="2026-06-08")
+
+    status = snapshot.build(conn, through_date="2026-07-14")
+
+    assert status["block"] == "base"
+    assert status["weeks_to_event"] == 13
+    assert status["taper_active"] == 0
+
+
+def test_snapshot_taper_active_is_one_inside_the_taper(conn):
+    from garmin_coach import periodize
+
+    _anchor(conn)
+    periodize.rollup(conn, data_start_date="2026-06-08")
+
+    status = snapshot.build(conn, through_date="2026-10-07")
+
+    assert status["block"] == "taper"
+    assert status["taper_active"] == 1
+
+
+def test_snapshot_block_fields_stay_null_without_an_anchor(conn):
+    _anchor(conn, status="tentative")
+
+    status = snapshot.build(conn, through_date="2026-07-14")
+
+    assert status["block"] is None
+    assert status["weeks_to_event"] is None
+    assert status["taper_active"] is None

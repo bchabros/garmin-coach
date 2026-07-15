@@ -6,6 +6,7 @@ mirroring the other functions in signals.py. No DB, no Garmin.
 
 from __future__ import annotations
 
+from garmin_coach import signals, thresholds
 from garmin_coach.signals import deload_advised
 
 THRESHOLDS = {
@@ -98,3 +99,75 @@ def test_overlap_silent_below_threshold():
 def test_overlap_silent_when_stack_not_on_latest_day():
     rows = [_ov("2026-07-10", "pattern", "hinge", 63.0)]  # cleared by a rest day
     assert pattern_stack(rows, OVERLAP_THR, "2026-07-11") is None
+
+
+# --- Phase 9: TAPER_ACTIVE + RACE_PROXIMITY ---
+
+TH9 = thresholds.merge()
+
+
+def _plan_row(block="taper", weeks_to_event=1, is_deload=0):
+    """Mirrors periodize.current_plan, which derives taper_active for its consumers."""
+    return {
+        "week_start": "2026-10-05", "block": block,
+        "weeks_to_event": weeks_to_event, "is_deload": is_deload,
+        "taper_active": 1 if block == "taper" else 0,
+        "race_date": "2026-10-17", "race_type": "hyrox",
+        "race_status": "confirmed", "race_date_precision": "approx",
+    }
+
+
+def _goal(date, *, priority="A", status="confirmed", date_precision="exact", type="hyrox"):
+    return {
+        "id": 1, "date": date, "type": type, "priority": priority,
+        "status": status, "date_precision": date_precision, "target_s": 3600, "note": None,
+    }
+
+
+def test_taper_active_fires_in_a_taper_week():
+    signal = signals.taper_active(_plan_row())
+
+    assert signal["code"] == "TAPER_ACTIVE"
+    assert signal["facts"]["weeks_to_event"] == 1
+    assert signal["facts"]["race_date"] == "2026-10-17"
+
+
+def test_taper_active_is_silent_outside_the_taper():
+    assert signals.taper_active(_plan_row(block="build", weeks_to_event=6)) is None
+
+
+def test_taper_active_is_silent_without_a_plan():
+    assert signals.taper_active(None) is None
+
+
+def test_race_proximity_fires_inside_the_window():
+    signal = signals.race_proximity([_goal("2026-10-17")], TH9, "2026-10-05")
+
+    assert signal["code"] == "RACE_PROXIMITY"
+    assert signal["facts"]["weeks_to_event"] == 1
+    assert signal["facts"]["type"] == "hyrox"
+
+
+def test_race_proximity_is_silent_outside_the_window():
+    assert signals.race_proximity([_goal("2026-10-17")], TH9, "2026-07-14") is None
+
+
+def test_race_proximity_fires_for_a_nearer_tentative_b_race():
+    """Any priority, any status - proximity is information, not anchoring."""
+    events = [_goal("2026-10-17"), _goal("2026-09-05", priority="B", status="tentative")]
+
+    signal = signals.race_proximity(events, TH9, "2026-08-24")
+
+    assert signal["facts"]["priority"] == "B"
+    assert signal["facts"]["needs_decision"] is True
+
+
+def test_race_proximity_asks_to_pin_an_approx_date():
+    signal = signals.race_proximity([_goal("2026-10-17", date_precision="approx")], TH9, "2026-10-05")
+
+    assert signal["facts"]["needs_date_pinned"] is True
+    assert signal["facts"]["needs_decision"] is False
+
+
+def test_race_proximity_ignores_a_race_already_run():
+    assert signals.race_proximity([_goal("2026-06-20")], TH9, "2026-07-14") is None

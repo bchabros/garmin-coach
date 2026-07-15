@@ -84,3 +84,137 @@ def test_log_niggle_writes_row(conn):
 def test_log_niggle_validates_severity_range(conn):
     with pytest.raises(ValueError, match="severity"):
         cli.log_niggle(conn, body_part="kolano", severity=6, date="2026-06-14")
+
+
+# --- `event` command (Phase 9): record what the athlete is training for ---
+
+
+def test_parser_accepts_event_add_with_both_uncertainty_axes():
+    args = build_parser().parse_args([
+        "event", "add", "--date", "2026-10-17", "--type", "hyrox", "--priority", "A",
+        "--status", "confirmed", "--date-precision", "approx", "--target", "1:00:00",
+    ])
+
+    assert args.command == "event"
+    assert args.event_command == "add"
+    assert args.status == "confirmed"
+    assert args.date_precision == "approx"
+
+
+def test_parser_rejects_an_unknown_event_status():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([
+            "event", "add", "--date", "2026-10-17", "--type", "hyrox",
+            "--priority", "A", "--status", "maybe",
+        ])
+
+
+def test_parse_target_s_reads_hours_minutes_seconds():
+    assert cli.parse_target_s("1:00:00") == 3600
+    assert cli.parse_target_s("1:30:00") == 5400
+
+
+def test_parse_target_s_reads_minutes_seconds_and_bare_seconds():
+    assert cli.parse_target_s("61:46") == 3706
+    assert cli.parse_target_s("3600") == 3600
+
+
+def test_parse_target_s_rejects_nonsense():
+    with pytest.raises(ValueError, match="target"):
+        cli.parse_target_s("under an hour")
+
+
+def test_add_goal_event_records_the_race(conn):
+    cli.add_goal_event(
+        conn, date="2026-10-17", type="hyrox", priority="A",
+        status="confirmed", date_precision="approx", target="1:00:00",
+    )
+
+    events = db.list_goal_events(conn)
+    assert len(events) == 1
+    assert events[0]["target_s"] == 3600
+
+
+def test_parse_target_s_rejects_out_of_range_minutes_and_seconds():
+    with pytest.raises(ValueError, match="target"):
+        cli.parse_target_s("1:99")
+    with pytest.raises(ValueError, match="target"):
+        cli.parse_target_s("0:0:75")
+
+
+def test_add_goal_event_rejects_a_malformed_date(conn):
+    """A date typo must be refused at entry: it would otherwise poison every later read."""
+    with pytest.raises(ValueError, match="date"):
+        cli.add_goal_event(
+            conn, date="17/10/2026", type="run_race", priority="B",
+            status="tentative", date_precision="exact",
+        )
+
+    assert db.list_goal_events(conn) == []
+
+
+def test_update_goal_event_rejects_a_malformed_date(conn):
+    cli.add_goal_event(
+        conn, date="2026-10-17", type="hyrox", priority="A",
+        status="confirmed", date_precision="approx",
+    )
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    with pytest.raises(ValueError, match="date"):
+        cli.update_goal_event(conn, event_id, date="24.10.2026")
+
+    assert db.list_goal_events(conn)[0]["date"] == "2026-10-17"
+
+
+def test_update_goal_event_rejects_an_unknown_id(conn):
+    with pytest.raises(ValueError, match="999"):
+        cli.update_goal_event(conn, 999, status="confirmed")
+
+
+def test_update_goal_event_rejects_an_empty_update(conn):
+    cli.add_goal_event(
+        conn, date="2026-10-17", type="hyrox", priority="A",
+        status="confirmed", date_precision="approx",
+    )
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    with pytest.raises(ValueError, match="nothing to update"):
+        cli.update_goal_event(conn, event_id)
+
+
+def test_update_goal_event_commits_a_tentative_race(conn):
+    cli.add_goal_event(
+        conn, date="2026-09-05", type="run_race", priority="B",
+        status="tentative", date_precision="exact",
+    )
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    cli.update_goal_event(conn, event_id, status="confirmed")
+
+    assert db.list_goal_events(conn)[0]["status"] == "confirmed"
+
+
+def test_add_goal_event_rejects_an_unknown_type(conn):
+    with pytest.raises(ValueError, match="type"):
+        cli.add_goal_event(
+            conn, date="2026-10-17", type="triathlon", priority="A",
+            status="confirmed", date_precision="approx",
+        )
+
+
+def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
+    """Re-adding without --target/--note would silently erase them; it must fail instead."""
+    cli.add_goal_event(
+        conn, date="2026-10-17", type="hyrox", priority="A",
+        status="confirmed", date_precision="approx", target="1:00:00", note="PB 1:01:46",
+    )
+
+    with pytest.raises(ValueError, match="already recorded"):
+        cli.add_goal_event(
+            conn, date="2026-10-17", type="hyrox", priority="A",
+            status="confirmed", date_precision="approx",
+        )
+
+    stored = db.list_goal_events(conn)[0]
+    assert stored["target_s"] == 3600
+    assert stored["note"] == "PB 1:01:46"

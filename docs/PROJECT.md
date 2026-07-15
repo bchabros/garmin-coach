@@ -40,7 +40,8 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 6b | Athlete snapshot (`athlete_status` mart + `snapshot`) | Done | [section](#phase-6b-athlete-snapshot) · [PRD](prd/phase-6b/PRD.md) |
 | 7 | Session-RPE load model for strength/Hyrox + niggle log | Done | [section](#phase-7-strength-and-hyrox-load-model) · [PRD](prd/phase-7/PRD.md) |
 | 8 | Per-set capture + movement-pattern overlap | Done | [section](#phase-8-per-set-capture-and-overlap) · [PRD](prd/phase-8-movement-overlap/PRD.md) |
-| 9 | Race-date periodization + race-day pacing | Planned | [section](#phase-9-race-date-periodization) |
+| 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done | [section](#phase-9-race-date-periodization) · [PRD](prd/phase-9-periodization/PRD.md) |
+| 9b | Race-day pacing (`race_plan`) | Planned | [section](#phase-9b-race-day-pacing) |
 | 10 | Prospective session recommender (re-planning-aware) | Planned | [section](#phase-10-prospective-recommender) |
 | 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
 | read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
@@ -578,7 +579,8 @@ INT = Intervals.icu, XRT = Xert, STR = Stryd.
 | 6b — snapshot | Humango Goal Readiness, Intervals.icu athlete page, Garmin dashboard | Validated as the recommender's input surface; add Training Readiness + acclimation + sleep debt |
 | 7 — sRPE load | Foster sRPE is the scientific standard; JOIN/Athletica/enduco/Humango all collect RPE; Athletica asks Hyrox athletes to log sets/reps/RPE | Strongly validated; add niggle log; RPE also becomes an adaptation trigger (Phase 10) |
 | 8 — per-set + overlap | Garmin Strength Coach push/pull days; Athletica push/pull/hinge/squat/carry | Validated *and differentiating* — nobody models cross-session overlap |
-| 9 — periodization (new) | Universal: TrainerRoad, Runna, Athletica, Stryd, Garmin Coach, TrainAsONE | Was the roadmap's biggest gap; promoted from a "maybe Phase 11" note |
+| 9 — periodization | Universal: TrainerRoad, Runna, Athletica, Stryd, Garmin Coach, TrainAsONE | Was the roadmap's biggest gap; **shipped**. Race-day pacing split out as 9b (ADR 0012) |
+| 9b — race-day pacing | Garmin PacePro, ROXFIT "PaceMe" | Deferred: HYROX Doubles needs a partner model + station split the DB cannot hold |
 | 10 — recommender | Garmin DSW, Xert XATA, TrainerRoad TrainNow, WHOOP strain target | Most validated phase; needs block/goal input from Phase 9 + re-planning rules |
 | 11 — authoring & push | Runna/Athletica/Stryd/TrainAsONE push structured workouts; Garmin Training API exists for this | Run-push verified in garminconnect 0.3.6; strength-push must be spiked first |
 | read-MCP | Intervals.icu open REST API over the athlete's own data | Validated pattern: deterministic engine + thin read surface |
@@ -590,9 +592,15 @@ INT = Intervals.icu, XRT = Xert, STR = Stryd.
 7 load  ──┤         ▲                ▲                  ▲                  ▲
 8 sets/overlap ─────┴────────────────┴──────────────────┘                  │
 6 zones (pace targets) ────────────────────────────────────────────────────┘
+                       │
+6 zones + 6b snapshot ─┴──► 9b race-day pacing   (a leaf: nothing depends on it)
 
 read-MCP (conversational read layer) ── wraps 6/6b/7/8/9 marts + digest, built last
 ```
+
+Note the shape of **9b**: it hangs off 6 (threshold pace) and 6b (snapshot), and *nothing*
+depends on it. Phase 10 gates on Phase 9's `block`, not on `race_plan` — which is what let
+the two be split (ADR 0012).
 
 Rationale: **6 (zones)** and **7 (load)** are foundational corrections everything
 downstream trusts — 6 is lighter and unblocks pace advice + Phase 11; 7 is the biggest
@@ -783,45 +791,104 @@ hand.
 
 ## Phase 9: race-date periodization
 
-> **Race-date periodization + race-day pacing (new, promoted by the survey).**
+> **Race-date periodization.** Status: **DONE** — see [PRD](prd/phase-9-periodization/PRD.md)
+> and [ADR 0012](adr/0012-phase-9-race-date-periodization.md). Race-day pacing was split
+> out into [Phase 9b](#phase-9b-race-day-pacing); the design record below is the shipped
+> shape.
 
-**Goal.** Give the system a goal: an event date, training blocks counted back from it,
-taper awareness, and a deterministic race-day pacing plan. Without this, Phase 10
-recommends sessions with no notion of "3 weeks out vs 20 weeks out".
+**Goal.** Give the system a goal: a race date, training blocks counted back from it, and
+taper awareness. Without this, Phase 10 recommends sessions with no notion of "3 weeks out
+vs 20 weeks out".
 
 **Why (survey).** The single most universal industry capability: TrainerRoad Plan
 Builder (Base -> Build -> Specialty with automatic tapers and openers around A/B/C
 events), Stryd (plans timed to finish on race day), Athletica (race date + weekly hours
--> adaptive HYROX plan), Runna, Garmin Coach, TrainAsONE. The repo's `plan_template` is
+-> adaptive HYROX plan), Runna, Garmin Coach, TrainAsONE. The repo's `plan_template` was
 a static weekly pattern with no concept of race date, block, or taper.
 
-**Data.** New core table `goal_event(date, type 'hyrox'|'run_race', priority A/B/C,
-target, note)`. Extend `plan_template` into a date-anchored `plan_block`
-(base/build/peak/taper/deload weeks counted **back from the event date**; deload
-cadence reuses Phase 5's `DELOAD_ADVISED` thresholds). Weekly rollup gains
-`weeks_to_event` and `block`.
+**Data.** Core `goal_event` carries the race with **two orthogonal uncertainty axes** —
+`status` (`confirmed`|`tentative`: *will I start*) and `date_precision` (`exact`|`approx`:
+*do I know the day*) — plus `target_s` in seconds. Only a `confirmed` priority-A race
+**anchors** the plan. The `plan_block` mart holds one row per week (`block`,
+`weeks_to_event`, `is_deload`), and is the only mart that **spans future weeks** — out to
+race week — which is why it is not two columns on `weekly_metrics`. `plan_template` is
+untouched: blocks annotate the athlete's template, they never replace it.
 
-**Signals.** `TAPER_ACTIVE` (suppresses intensity recommendations), `RACE_PROXIMITY`
-facts in the digest.
+**Blocks.** `base | build | peak | taper` — a pure countdown. `taper`/`peak`/`build` take
+fixed lengths from thresholds; `base` absorbs everything earlier (bounded by `data_start`),
+so the athlete is always in *some* block. **Deload is not a block**: `is_deload` is what
+the *plan* prescribed, `DELOAD_ADVISED` (Phase 5) is what the *actual load* did, and the
+divergence between them is the finding — there is deliberately no arbitration rule.
+Planned deloads anchor to each block's **end** (never a modulo counter), so the athlete
+enters the next block fresh, and a block never opens with a deload.
 
-**Race-day pacing (survey).** Deterministic `race_plan(event, athlete_status) ->
-per-segment targets`: for Hyrox, 8×1 km run paces + station effort caps from current
-threshold pace/HR (Garmin PacePro / ROXFIT "PaceMe" analogue); output into
-`reports/{race_date}/`. Include a one-paragraph fueling note here — that covers ~90% of
-nutrition's value without building any nutrition feature. Optionally authored as a
-Phase-11 multisport workout later.
+**Signals.** `TAPER_ACTIVE` and `RACE_PROXIMITY` are **facts** in the digest. Suppressing
+intensity on their basis is Phase 10's decision, deliberately not taken here.
+`RACE_PROXIMITY` fires for the nearest upcoming race of any priority and status, and asks
+for a `tentative` race to be decided and an `approx` date to be pinned.
 
-**Seam & tests.** Pure `periodize(event, today, history) -> block + week intent`; golden
-tests over fixed dates (deep in base, peak week, taper week, race week, no event).
-`race_plan` golden test from a fixture snapshot.
+**Command.** `garmin-coach event add | list | update` — because `status` and
+`date_precision` are *designed to change*.
 
-**DoD.** Digest carries `block`/`weeks_to_event`; `TAPER_ACTIVE` fires in a constructed
-taper; `race_plan` renders per-segment targets; green.
+**Seam & tests.** Pure `periodize(event, data_start, thresholds) -> list[WeekPlan]` (no
+`history`, no wall clock — blocks are a countdown, so history would only cost determinism);
+golden tests over frozen dates. Materialized by `periodize.rollup` **first** in the
+`features` tail, ahead of `weekly.rollup`, which copies each week's block from it.
 
-**Deps.** 6 (threshold pace for race targets), 6b (snapshot as `race_plan` input).
+**DoD (met).** Digest carries `block`/`weeks_to_event`; `TAPER_ACTIVE` fires in a
+constructed taper; `athlete_status` fills the NULL placeholders Phase 6b left "until
+Phase 9"; green.
 
-**Risk.** Don't over-model: blocks are labels + week intents, not a generated day-by-day
-plan — the weekly template stays the athlete's, the engine annotates it.
+**Deps.** None beyond a recorded race.
+
+**Risk (respected).** Blocks are week labels, not a generated day-by-day plan — the weekly
+template stays the athlete's, the engine annotates it.
+
+## Phase 9b: race-day pacing
+
+> **Deterministic race-day pacing plan (`race_plan`). Split out of Phase 9 — see
+> [ADR 0012](adr/0012-phase-9-race-date-periodization.md).**
+
+**Goal.** `race_plan(event, athlete_status) -> per-segment targets`: for Hyrox, 8×1 km run
+paces + station effort caps from current threshold pace/HR (Garmin PacePro / ROXFIT
+"PaceMe" analogue); output into `reports/{race_date}/`. Include a one-paragraph fueling
+note — that covers ~90% of nutrition's value without building any nutrition feature.
+
+**Why it was split off (important).** The athlete's A race is HYROX **Doubles**, and the
+original Phase 9 sketch's `race_plan(event, athlete_status)` signature cannot express it.
+In Doubles the 8 km of running is **shared** (pace is bounded by the slower partner) and
+the stations are **split** by a strategy the database has no way to know; `athlete_status`
+holds no partner threshold pace and never will, because the partner wears no watch we read.
+The partner is therefore the *only* input in the whole system that the DB cannot hold —
+which is exactly the argument for this being its own seam. Building it early would mean
+inventing a partner model, a station-split policy, and baseline station times all at once,
+producing a confidently wrong plan for the athlete's only A race.
+
+**The rule this must respect.** The coach optimizes **the athlete, not the team** — no
+partner load, no shared readiness. Training is solo by choice; race day is paired by
+physics. The partner exists here and nowhere else.
+
+**Blockers to clear first.**
+- **Regression-backed zones.** At design time `athlete_zones.source` was still
+  `threshold_pace_fallback+lthr` (one qualifying run short of `zones_regression_min_runs`),
+  so the threshold pace every race target derives from was a multiplier, not a measurement.
+- **The pair's station split.** Who does which half of the wall balls is a decision, not a
+  measurement — it must be an *input*.
+- **Baseline station times.** The athlete's 1:01:46 reference race predates `data_start`,
+  so no station splits exist anywhere in the DB. Sub-60 needs 106 s found somewhere, and
+  nothing in the system currently knows *where*.
+
+**Design question left open.** Does `race_plan` work *forward* from current fitness
+(predict a finish time) or *backward* from the goal time (allocate 3600 s across segments
+and report whether it is reachable)? The backward form is the falsifiable one and is the
+likely answer, but it is gated on the baseline station times above.
+
+**Seam & tests.** Pure; golden test from a fixture snapshot.
+
+**Deps.** 6 (threshold pace), 6b (snapshot). Nothing depends on 9b — it is a leaf, which is
+what made splitting it free.
+
+**Timing.** Scoped to run close to race day, when the information actually exists.
 
 ## Phase 10: prospective recommender
 
@@ -868,7 +935,8 @@ advised, taper week, missed-week re-plan, active niggle).
 **DoD.** Report renders a cited recommendation; missed-week fixture produces the three
 cited options; golden green.
 
-**Deps.** 6 (pace caps), 7 (honest load + RPE/niggles), 9 (block awareness).
+**Deps.** 6 (pace caps), 7 (honest load + RPE/niggles), 9 (block awareness — `block`,
+`weeks_to_event`, `is_deload`, `TAPER_ACTIVE`; **not** 9b, which nothing depends on).
 
 **Risk.** Stays a "reading + suggestion", never a prescription — keep the disclaimer.
 

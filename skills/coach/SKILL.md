@@ -41,8 +41,9 @@ only.
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
    `signals` list already ordered alert > warn > info, a `zones` block (personal
-   training zones; may be null), a `movement` block (per-set map coverage; may be null),
-   and a `disclaimer`. Do not open the mart or recompute anything.
+   training zones; may be null), a `plan` block (the periodization standing; may be
+   null), a `movement` block (per-set map coverage; may be null), and a `disclaimer`.
+   Do not open the mart or recompute anything.
 
    Also read `reports/{today}/snapshot.json` (may be absent if the mart was never
    materialized). It is the current standing: `computed_at`, `vo2max` (+ `vo2max_delta`
@@ -106,6 +107,23 @@ only.
      naming the direction (e.g. "pt: plan quality, było rest"). If `was_deload` is true,
      say so - a deliberate deload is not lost fitness. Skip this block entirely when
      `weekly` is null.
+   - **Blok i odliczanie** - only if the digest has a non-null `plan` block. State the
+     training block (`block`: base/build/peak/taper) and the countdown
+     (`weeks_to_event`) to `race_date` (`race_type`), and say whether the plan calls
+     this week a deload (`is_deload`). Interpret the block, do not just name it: base is
+     volume, build is specific work, peak is sharpening, taper is cutting load.
+     **Never invent a phase when `plan` is null** - say plainly that no goal race is
+     recorded, so the system does not know what is being trained for.
+     - `TAPER_ACTIVE` -> the taper has started; do not add load. This phase only states
+       the fact - do not turn it into a prescription beyond that.
+     - `RACE_PROXIMITY` -> a race is `facts.weeks_to_event` weeks out. When
+       `facts.needs_decision` is true, ask the athlete to commit or drop it; when
+       `facts.needs_date_pinned` is true, ask them to pin the exact date, because the
+       taper is planned off it.
+     - When the `plan` says `is_deload` but the `weekly` block shows no drop in
+       `load_total` (and no `DELOAD_ADVISED`), name the divergence - the plan asked for
+       a recovery week and it did not happen. Plan and reality are tracked separately on
+       purpose; the gap is the finding.
    - **Wykresy** - embed both: `![HRV](hrv_band.png)` and `![ACWR](acwr.png)`.
    - **Zastrzeżenie** - end with the digest `disclaimer` verbatim.
 

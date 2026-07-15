@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import db, load, overlap, snapshot, thresholds, weekly, zones
+from . import db, load, overlap, periodize, snapshot, thresholds, weekly, zones
 
 HRV_WINDOW_NIGHTS = 60
 
@@ -219,6 +219,10 @@ def features(
         }
         db.upsert_daily(conn, "daily_metrics", row)
     conn.commit()
+
+    # Rebuild the block calendar first: it depends only on the goal events, and the
+    # weekly rollup copies each week's block from it.
+    periodize.rollup(conn, data_start_date=data_start_date)
 
     # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
     weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)

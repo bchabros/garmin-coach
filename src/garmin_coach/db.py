@@ -34,6 +34,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "weekly_metrics": {  # Phase 7: weekly strength load + its share
         "load_strength": "REAL",
         "strength_share": "REAL",
+        # Phase 9: the week's block, copied from plan_block
+        "block": "TEXT",
+        "weeks_to_event": "INTEGER",
     },
 }
 
@@ -169,6 +172,69 @@ def upsert_niggle(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     )
 
 
+_GOAL_EVENT_COLUMNS = (
+    "id", "date", "type", "priority", "status", "date_precision", "target_s", "note",
+)
+
+_GOAL_EVENT_UPDATABLE = frozenset(_GOAL_EVENT_COLUMNS) - {"id"}
+
+
+def insert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
+    """Insert a `goal_event` row.
+
+    Deliberately not an upsert: adding a race that already exists must fail rather
+    than overwrite it, because `add` omits the flags the athlete did not retype and
+    would otherwise silently erase the stored `target_s` / `note`. Corrections go
+    through `update_goal_event`, which touches only the fields it is given.
+
+    Raises:
+        sqlite3.IntegrityError: If a race with the same (date, type) is recorded.
+    """
+    conn.execute(
+        "INSERT INTO goal_event(date, type, priority, status, date_precision, target_s, note) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            row["date"], row["type"], row["priority"], row["status"],
+            row["date_precision"], row.get("target_s"), row.get("note"),
+        ),
+    )
+
+
+def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: Any) -> None:
+    """Partially update one `goal_event` row (e.g. pin a date, confirm a start).
+
+    Args:
+        conn: Open SQLite connection.
+        event_id: The event's `id`.
+        **fields: Any of the goal-event columns except `id`; omitted ones keep
+            their stored value.
+
+    Raises:
+        ValueError: If a field is not an updatable goal-event column, or if no event
+            has that id (a typo'd id must not read as a successful no-op).
+    """
+    unknown = set(fields) - _GOAL_EVENT_UPDATABLE
+    if unknown:
+        raise ValueError(f"unknown goal_event field(s): {','.join(sorted(unknown))}")
+    if not fields:
+        return
+    assignments = ",".join(f"{name}=?" for name in fields)
+    cursor = conn.execute(
+        f"UPDATE goal_event SET {assignments} WHERE id=?",
+        [*fields.values(), event_id],
+    )
+    if cursor.rowcount == 0:
+        raise ValueError(f"no goal event with id {event_id}; run `garmin-coach event list`")
+
+
+def list_goal_events(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Return every recorded goal event, soonest first."""
+    rows = conn.execute(
+        f"SELECT {','.join(_GOAL_EVENT_COLUMNS)} FROM goal_event ORDER BY date"
+    ).fetchall()
+    return [dict(zip(_GOAL_EVENT_COLUMNS, row, strict=True)) for row in rows]
+
+
 def upsert_zones(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert the singleton `athlete_zones` mart row (id=1)."""
     _upsert(conn, "athlete_zones", row, pk="id")
@@ -182,6 +248,12 @@ def upsert_status(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
 def upsert_weekly(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert a `weekly_metrics` row by week_start (the Monday)."""
     _upsert(conn, "weekly_metrics", row, pk="week_start")
+
+
+def replace_plan_block(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Rebuild the `plan_block` mart wholesale; an empty plan clears it."""
+    conn.execute("DELETE FROM plan_block")
+    _insert_rows(conn, "plan_block", rows)
 
 
 def replace_pattern_overlap(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:

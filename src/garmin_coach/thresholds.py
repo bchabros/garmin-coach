@@ -38,6 +38,11 @@ DEFAULTS: dict[str, float] = {
     "niggle_reduced_mode_severity": 3,
     "pattern_load_floor": 20,
     "pattern_overlap_high": 40,
+    "taper_weeks": 2,
+    "peak_weeks": 3,
+    "build_weeks": 5,
+    "deload_every_n_weeks": 4,
+    "race_proximity_weeks": 3,
 }
 
 

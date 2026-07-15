@@ -16,7 +16,7 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from . import db, signals as _signals, thresholds as _thresholds
+from . import db, periodize as _periodize, signals as _signals, thresholds as _thresholds
 
 LOAD_WINDOW_DAYS = 7
 
@@ -279,15 +279,21 @@ def _zones_mirror(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _plan(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
-    """Today's planned intent from plan_template; block fields are Phase 9 placeholders."""
+    """Today's planned intent from plan_template, plus this week's periodization block.
+
+    The block fields mirror the ``plan_block`` week containing ``through_date``. All
+    three stay NULL when there is no anchor race: the system says it does not know
+    what the athlete is training for rather than inventing a phase.
+    """
     dow = _dt.date.fromisoformat(through_date).weekday()
     row = conn.execute(
         "SELECT planned, intent FROM plan_template WHERE dow = ?", (dow,)
     ).fetchone()
+    block = _periodize.current_plan(conn, through_date)
     return {
-        "block": None,
-        "weeks_to_event": None,
-        "taper_active": None,
+        "block": block["block"] if block else None,
+        "weeks_to_event": block["weeks_to_event"] if block else None,
+        "taper_active": block["taper_active"] if block else None,
         "planned_label_today": row[0] if row else None,
         "planned_intent_today": row[1] if row else None,
     }

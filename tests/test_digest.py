@@ -558,3 +558,51 @@ def test_digest_reports_movement_coverage(conn):
 def test_digest_movement_none_without_sets(conn):
     _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
     assert build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["movement"] is None
+
+
+# --- Phase 9: the plan section + TAPER_ACTIVE / RACE_PROXIMITY ---
+
+
+def _goal(conn, date="2026-10-17", status="confirmed", priority="A", type="hyrox"):
+    from garmin_coach import db
+
+    db.insert_goal_event(conn, {
+        "date": date, "type": type, "priority": priority, "status": status,
+        "date_precision": "approx", "target_s": 3600, "note": None,
+    })
+
+
+def test_digest_carries_the_current_block_and_countdown(conn):
+    from garmin_coach import periodize
+
+    _mart(conn, date="2026-07-14", load_day=50)
+    _goal(conn)
+    periodize.rollup(conn, data_start_date="2026-06-08")
+
+    digest = build_digest(conn, from_date="2026-07-14", to_date="2026-07-14")
+
+    assert digest["plan"]["block"] == "base"
+    assert digest["plan"]["weeks_to_event"] == 13
+    assert not _codes(digest) & {"TAPER_ACTIVE", "RACE_PROXIMITY"}
+
+
+def test_digest_fires_taper_active_and_race_proximity_in_the_taper(conn):
+    from garmin_coach import periodize
+
+    _mart(conn, date="2026-10-07", load_day=50)
+    _goal(conn)
+    periodize.rollup(conn, data_start_date="2026-06-08")
+
+    digest = build_digest(conn, from_date="2026-10-07", to_date="2026-10-07")
+
+    assert digest["plan"]["block"] == "taper"
+    assert {"TAPER_ACTIVE", "RACE_PROXIMITY"} <= _codes(digest)
+
+
+def test_digest_plan_is_none_without_an_anchor(conn):
+    _mart(conn, date="2026-07-14", load_day=50)
+
+    digest = build_digest(conn, from_date="2026-07-14", to_date="2026-07-14")
+
+    assert digest["plan"] is None
+    assert "TAPER_ACTIVE" not in _codes(digest)

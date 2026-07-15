@@ -12,6 +12,7 @@ import sqlite3
 import statistics as _stats
 
 from . import db
+from . import periodize as _periodize
 from . import thresholds as _thresholds
 
 
@@ -149,11 +150,16 @@ def rollup(
     hard = _thresholds.read(conn)["hard_te_load"]
     plan = _plan_intents(conn)
     daily = _daily_rows(conn)
+    blocks = _periodize.blocks_by_week(conn)
     prev_hrv_mean: float | None = None
     for monday in _complete_weeks(data_start_date, end):
         week_rows = _week_grid(monday, daily)
         intent_rows = _intent_rows(monday, week_rows, plan, hard)
         row = _week_row(monday, week_rows, intent_rows, hard)
+        # Same-run copy of the week's plan_block row; NULL when there is no anchor race.
+        block = blocks.get(row["week_start"], {"block": None, "weeks_to_event": None})
+        row["block"] = block["block"]
+        row["weeks_to_event"] = block["weeks_to_event"]
         hrv_mean = row["hrv_mean"]
         row["hrv_trend"] = (
             hrv_mean - prev_hrv_mean

@@ -37,6 +37,10 @@ def _request(session_type="easy", date="2026-07-17", pace=330, cap="Z2", origin=
     }
 
 
+def _kinds(steps):
+    return [s["kind"] for s in steps]
+
+
 _UNSET = object()
 
 
@@ -115,6 +119,62 @@ def test_today_is_allowed_with_a_warning():
 
 def test_rest_produces_no_spec():
     assert author(_request(session_type="rest"), _context()) is None
+
+
+# --- tempo structure --------------------------------------------------------
+
+
+def test_tempo_expands_to_warmup_work_cooldown():
+    spec = author(_request(session_type="tempo", pace=270), _context())
+    assert _kinds(spec["steps"]) == ["warmup", "work", "cooldown"]
+    warmup, work, cooldown = spec["steps"]
+    assert warmup["target"] == {"type": "none"}
+    assert cooldown["target"] == {"type": "none"}
+    # work targets a band around threshold pace
+    assert work["target"]["type"] == "pace_band"
+    assert work["target"]["fast_s_per_km"] == 265
+    assert work["target"]["slow_s_per_km"] == 275
+
+
+def test_tempo_degrades_to_z4_hr_band_without_measured_pace():
+    spec = author(
+        _request(session_type="tempo", pace=None, cap=None),
+        _context(zones=_zones(source="threshold_pace_fallback")),
+    )
+    work = spec["steps"][1]
+    assert work["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178}
+    assert any("heart rate" in w for w in spec["warnings"])
+
+
+# --- quality intervals ------------------------------------------------------
+
+
+def test_quality_expands_to_warmup_repeat_cooldown():
+    spec = author(_request(session_type="quality", pace=270), _context())
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+    repeat = spec["steps"][1]
+    assert repeat["reps"] == 4
+    assert _kinds(repeat["steps"]) == ["work", "recovery"]
+    assert repeat["steps"][0]["target"]["type"] == "pace_band"
+    assert repeat["steps"][1]["target"] == {"type": "none"}
+
+
+def test_to_garmin_translates_a_repeat_group():
+    spec = author(_request(session_type="quality", pace=270), _context())
+    payload = to_garmin(spec)
+    steps = payload["workoutSegments"][0]["workoutSteps"]
+    assert steps[1]["type"] == "RepeatGroupDTO"
+    assert steps[1]["numberOfIterations"] == 4
+    nested = steps[1]["workoutSteps"]
+    assert nested[0]["stepType"]["stepTypeKey"] == "interval"
+    assert nested[1]["stepType"]["stepTypeKey"] == "recovery"
+
+
+def test_to_garmin_estimated_duration_counts_repeat_iterations():
+    spec = author(_request(session_type="quality", pace=270), _context())
+    payload = to_garmin(spec)
+    # warmup 600 + 4 * (work 180 + recovery 120) + cooldown 600 = 2400
+    assert payload["estimatedDurationInSecs"] == 2400
 
 
 # --- request_from_recommendation --------------------------------------------

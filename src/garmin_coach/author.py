@@ -17,6 +17,7 @@ requests, and hybrid validation arrive in later tickets.
 
 from __future__ import annotations
 
+from itertools import count
 from typing import Any
 
 from garminconnect.workout import (
@@ -28,6 +29,7 @@ from garminconnect.workout import (
     create_cooldown_step,
     create_interval_step,
     create_recovery_step,
+    create_repeat_group,
     create_warmup_step,
 )
 
@@ -38,6 +40,21 @@ GC_PREFIX = "GC"
 # Default easy duration and how much slower than the Z2 ceiling the easy band runs.
 EASY_DEFAULT_S = 45 * 60
 EASY_PACE_SLOW_MARGIN_S = 40
+
+# Threshold work is a symmetric window around threshold pace (seconds per km).
+THRESHOLD_PACE_MARGIN_S = 5
+
+# Default tempo structure: an easy warmup, a continuous threshold block, an easy cooldown.
+TEMPO_WARMUP_S = 10 * 60
+TEMPO_WORK_S = 20 * 60
+TEMPO_COOLDOWN_S = 10 * 60
+
+# Default quality structure: warmup, a conservative interval set, cooldown.
+QUALITY_WARMUP_S = 10 * 60
+QUALITY_COOLDOWN_S = 10 * 60
+QUALITY_REPS = 4
+QUALITY_WORK_S = 3 * 60
+QUALITY_RECOVERY_S = 2 * 60
 
 # Spec step kind -> garminconnect step builder (all take duration + order + target).
 _STEP_BUILDERS = {
@@ -120,11 +137,41 @@ def _expand(
     zones: dict[str, Any] | None,
     warnings: list[str],
 ) -> list[dict[str, Any]]:
-    """Expand a session type into ordered spec steps (easy only for now)."""
+    """Expand a session type into ordered spec steps."""
     if session_type == "easy":
         target = _easy_target(request, zones, warnings)
-        return [{"kind": "work", "end": {"type": "time", "seconds": EASY_DEFAULT_S}, "target": target}]
+        return [_step("work", EASY_DEFAULT_S, target)]
+    if session_type == "tempo":
+        work = _threshold_target(request, zones, warnings)
+        return [
+            _step("warmup", TEMPO_WARMUP_S, _NO_TARGET),
+            _step("work", TEMPO_WORK_S, work),
+            _step("cooldown", TEMPO_COOLDOWN_S, _NO_TARGET),
+        ]
+    if session_type == "quality":
+        work = _threshold_target(request, zones, warnings)
+        interval = {
+            "kind": "repeat",
+            "reps": QUALITY_REPS,
+            "steps": [
+                _step("work", QUALITY_WORK_S, work),
+                _step("recovery", QUALITY_RECOVERY_S, _NO_TARGET),
+            ],
+        }
+        return [
+            _step("warmup", QUALITY_WARMUP_S, _NO_TARGET),
+            interval,
+            _step("cooldown", QUALITY_COOLDOWN_S, _NO_TARGET),
+        ]
     raise ValueError(f"unsupported session type: {session_type}")
+
+
+_NO_TARGET = {"type": "none"}
+
+
+def _step(kind: str, seconds: int, target: dict[str, Any]) -> dict[str, Any]:
+    """A time-ended spec step."""
+    return {"kind": kind, "end": {"type": "time", "seconds": seconds}, "target": target}
 
 
 def _easy_target(
@@ -149,6 +196,24 @@ def _easy_target(
     return {"type": "none"}
 
 
+def _threshold_target(
+    request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
+) -> dict[str, Any]:
+    """A threshold work target: a band around threshold pace, degrading to Z4 HR -> none."""
+    pace = request.get("pace_target_s_per_km")
+    if pace is not None:
+        return {
+            "type": "pace_band",
+            "fast_s_per_km": pace - THRESHOLD_PACE_MARGIN_S,
+            "slow_s_per_km": pace + THRESHOLD_PACE_MARGIN_S,
+        }
+    if zones and zones.get("z4_hi_bpm") is not None:
+        warnings.append("no measured pace; targeting threshold by heart rate (Z4 band)")
+        return {"type": "hr_band", "low_bpm": zones["z3_hi_bpm"], "high_bpm": zones["z4_hi_bpm"]}
+    warnings.append("no target: no measured pace or heart-rate band; time only")
+    return {"type": "none"}
+
+
 def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     """Translate a workout spec into a Garmin ``RunningWorkout`` JSON payload.
 
@@ -158,11 +223,12 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     Returns:
         The Garmin workout dict ready for ``upload_workout``.
     """
-    steps = [_garmin_step(step, order) for order, step in enumerate(spec["steps"], start=1)]
+    order = count(1)
+    nodes = [_garmin_node(node, order) for node in spec["steps"]]
     segment = WorkoutSegment(
         segmentOrder=1,
         sportType={"sportTypeId": SportType.RUNNING, "sportTypeKey": "running", "displayOrder": 1},
-        workoutSteps=steps,
+        workoutSteps=nodes,
     )
     workout = RunningWorkout(
         workoutName=spec["name"],
@@ -172,14 +238,20 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     return workout.to_dict()
 
 
+def _garmin_node(node: dict[str, Any], order: count[int]) -> Any:
+    """Build one garminconnect node (executable step or repeat group) from a spec node."""
+    if node["kind"] == "repeat":
+        group_order = next(order)
+        children = [_garmin_node(child, order) for child in node["steps"]]
+        return create_repeat_group(node["reps"], children, group_order)
+    return _garmin_step(node, next(order))
+
+
 def _garmin_step(step: dict[str, Any], order: int) -> Any:
     """Build one garminconnect executable step from a spec step."""
     builder = _STEP_BUILDERS[step["kind"]]
     target_type = _garmin_target_type(step["target"])
-    if step["kind"] == "warmup":
-        executable = builder(step["end"]["seconds"], step_order=order, target_type=target_type)
-    else:
-        executable = builder(step["end"]["seconds"], order, target_type=target_type)
+    executable = builder(step["end"]["seconds"], step_order=order, target_type=target_type)
     _apply_end_condition(executable, step["end"])
     _apply_target_values(executable, step["target"])
     return executable
@@ -224,6 +296,12 @@ def _apply_end_condition(executable: Any, end: dict[str, Any]) -> None:
         executable.endConditionValue = float(end["metres"])
 
 
-def _estimated_duration(steps: list[dict[str, Any]]) -> int:
-    """Sum the time-ended steps' seconds for the workout's duration estimate."""
-    return int(sum(s["end"]["seconds"] for s in steps if s["end"]["type"] == "time"))
+def _estimated_duration(nodes: list[dict[str, Any]]) -> int:
+    """Sum the time-ended steps' seconds, counting repeat iterations, for the estimate."""
+    total = 0
+    for node in nodes:
+        if node["kind"] == "repeat":
+            total += node["reps"] * _estimated_duration(node["steps"])
+        elif node["end"]["type"] == "time":
+            total += node["end"]["seconds"]
+    return total

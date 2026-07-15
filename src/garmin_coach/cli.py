@@ -328,14 +328,25 @@ def _cmd_author(args: argparse.Namespace) -> int:
     conn.close()
 
     recommendation = dg.get("recommendation")
-    if recommendation is None:
-        print(f"author: no recommendation for {args.date}; run `garmin-coach features` first")
-        return 1
+    if args.request:
+        request = json.loads(pathlib.Path(args.request).read_text())
+        request["date"] = args.date
+    else:
+        if recommendation is None:
+            print(f"author: no recommendation for {args.date}; run `garmin-coach features` first")
+            return 1
+        request = _author.request_from_recommendation(recommendation, sport=args.sport)
 
-    request = _author.request_from_recommendation(recommendation, sport=args.sport)
-    context = {"zones": dg.get("zones"), "today": _dt.date.today().isoformat()}
+    context = {
+        "zones": dg.get("zones"),
+        "today": _dt.date.today().isoformat(),
+        "recommendation": recommendation,
+    }
     try:
         spec = _author.author(request, context)
+    except (_author.DeferredSportError, _author.HyroxSplitRequired) as exc:
+        print(f"author: {exc}")
+        return 0
     except ValueError as exc:
         print(f"author failed: {exc}")
         return 1
@@ -543,13 +554,18 @@ def build_parser() -> argparse.ArgumentParser:
         "author", help="Turn a recommendation into a workout spec in reports/{date}/ (no network)."
     )
     au.add_argument("--date", dest="date", required=True, help="Target date YYYY-MM-DD.")
-    au.add_argument(
+    au_src = au.add_mutually_exclusive_group(required=True)
+    au_src.add_argument(
         "--from-recommendation", dest="from_recommendation", action="store_true",
         help="Author from the Phase 10 recommendation for the target date.",
     )
+    au_src.add_argument(
+        "--request", dest="request", default=None,
+        help="Author from an athlete-authored workout_request JSON file.",
+    )
     au.add_argument(
         "--sport", dest="sport", default="run", choices=["run"],
-        help="Authoring family (only run is authored in this phase).",
+        help="Authoring family for --from-recommendation (only run is authored in this phase).",
     )
     au.add_argument(
         "--reports-dir", dest="reports_dir", default="./reports",

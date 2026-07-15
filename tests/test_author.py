@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from garmin_coach.author import author, request_from_recommendation, to_garmin
+from garmin_coach.author import (
+    DeferredSportError,
+    HyroxSplitRequired,
+    author,
+    request_from_recommendation,
+    to_garmin,
+)
 
 
 def _zones(source="regression+lthr", z2_ceiling=330, thr=270, z1_hi=140, z2_hi=155):
@@ -196,6 +202,94 @@ def test_request_from_recommendation_maps_the_block():
     # a recommendation-built request authors end to end
     spec = author(req, _context())
     assert spec["name"] == "GC 2026-07-17 easy"
+
+
+# --- athlete request: schema validation -------------------------------------
+
+
+def test_athlete_request_authors_like_any_other():
+    spec = author(_request(session_type="tempo", pace=270, origin="athlete"), _context())
+    assert _kinds(spec["steps"]) == ["warmup", "work", "cooldown"]
+    assert spec["origin"] == "athlete"
+
+
+def test_malformed_request_is_rejected():
+    bad = _request()
+    del bad["session_type"]
+    with pytest.raises(ValueError, match="session_type"):
+        author(bad, _context())
+
+
+def test_unknown_sport_is_rejected():
+    with pytest.raises(ValueError, match="sport"):
+        author(_request() | {"sport": "swim"}, _context())
+
+
+# --- sport gating -----------------------------------------------------------
+
+
+def test_hiit_sport_defers_to_the_spike():
+    with pytest.raises(DeferredSportError, match="hiit"):
+        author(_request(origin="athlete") | {"sport": "hiit"}, _context())
+
+
+def test_strength_sport_defers_to_the_spike():
+    with pytest.raises(DeferredSportError, match="strength"):
+        author(_request(origin="athlete") | {"sport": "strength"}, _context())
+
+
+def test_hyrox_session_requires_a_split_decision():
+    with pytest.raises(HyroxSplitRequired):
+        author(_request(session_type="hyrox"), _context())
+
+
+# --- hybrid validation ------------------------------------------------------
+
+
+def _context_with_rec(intended_type, rationale, **kw):
+    ctx = _context(**kw)
+    ctx["recommendation"] = {"intended_type": intended_type, "rationale": rationale}
+    return ctx
+
+
+def test_athlete_overriding_advice_gets_a_cited_warning():
+    ctx = _context_with_rec("easy", ["HRV_LOW_MORNING", "ACWR_OUT_OF_RANGE"])
+    spec = author(_request(session_type="tempo", pace=270, origin="athlete"), ctx)
+    warning = next(w for w in spec["warnings"] if "recommender" in w)
+    assert "tempo" in warning and "easy" in warning
+    assert "HRV_LOW_MORNING" in warning
+
+
+def test_athlete_matching_advice_gets_no_override_warning():
+    ctx = _context_with_rec("tempo", [])
+    spec = author(_request(session_type="tempo", pace=270, origin="athlete"), ctx)
+    assert not any("recommender advises" in w for w in spec["warnings"])
+
+
+def test_recommender_origin_is_never_hybrid_validated():
+    ctx = _context_with_rec("easy", ["HRV_LOW_MORNING"])
+    spec = author(_request(session_type="tempo", pace=270, origin="recommender"), ctx)
+    assert not any("recommender advises" in w for w in spec["warnings"])
+
+
+# --- structure override -----------------------------------------------------
+
+
+def test_structure_override_sets_quality_reps_and_durations():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"reps": 6, "work_min": 4, "recovery_min": 1}
+    spec = author(req, _context())
+    repeat = spec["steps"][1]
+    assert repeat["reps"] == 6
+    assert repeat["steps"][0]["end"]["seconds"] == 240
+    assert repeat["steps"][1]["end"]["seconds"] == 60
+
+
+def test_structure_override_sets_easy_duration():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"duration_min": 60}
+    spec = author(req, _context())
+    assert spec["steps"][0]["end"]["seconds"] == 3600
 
 
 # --- to_garmin --------------------------------------------------------------

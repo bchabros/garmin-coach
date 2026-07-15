@@ -64,6 +64,34 @@ _STEP_BUILDERS = {
     "cooldown": create_cooldown_step,
 }
 
+# Allowed request enumerations and the run session types this phase authors.
+_SPORTS = ("run", "hiit", "strength")
+_ORIGINS = ("recommender", "athlete")
+_SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox")
+_AUTHORABLE_TYPES = ("rest", "easy", "tempo", "quality")
+
+# Session-type hardness, for spotting an athlete request that exceeds the
+# recommender's advice. Mirrors the recommender's intent ranking.
+_HARDNESS = {"rest": 0, "easy": 1, "tempo": 2, "quality": 3, "hyrox": 3}
+
+
+class DeferredSportError(Exception):
+    """Raised when a request's sport (``hiit``/``strength``) awaits the push spike."""
+
+    def __init__(self, sport: str) -> None:
+        super().__init__(f"sport '{sport}' is not authored in this phase; awaits the push spike")
+        self.sport = sport
+
+
+class HyroxSplitRequired(Exception):
+    """Raised when a Hyrox recommendation needs the athlete to choose run vs station."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "hyrox is run-dominant or station-based; specify a run request with explicit "
+            "structure, or treat it as a hiit (station) session (deferred)"
+        )
+
 
 def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] | None:
     """Build a workout spec from a request and the finished-mart context.
@@ -80,13 +108,23 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         author is a correct, quiet outcome).
 
     Raises:
-        ValueError: If the target date is in the past.
+        ValueError: If the request is malformed or the target date is in the past.
+        DeferredSportError: If the sport awaits the push spike (``hiit``/``strength``).
+        HyroxSplitRequired: If a Hyrox session needs the athlete to choose its kind.
     """
+    _validate_request(request)
+    if request["sport"] != "run":
+        raise DeferredSportError(request["sport"])
+
     session_type = request["session_type"]
+    if session_type == "hyrox":
+        raise HyroxSplitRequired
+
     warnings = _date_guard(request["date"], context["today"])
     if session_type == "rest":
         return None
 
+    warnings.extend(_hybrid_warnings(request, context))
     steps = _expand(session_type, request, context.get("zones"), warnings)
     return {
         "sport": request["sport"],
@@ -97,6 +135,44 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         "steps": steps,
         "warnings": warnings,
     }
+
+
+def _validate_request(request: dict[str, Any]) -> None:
+    """Check a request carries the required, well-formed fields.
+
+    Raises:
+        ValueError: If a required field is missing or an enum value is unknown.
+    """
+    for field in ("sport", "origin", "date", "session_type"):
+        if request.get(field) is None:
+            raise ValueError(f"workout request is missing {field}")
+    if request["sport"] not in _SPORTS:
+        raise ValueError(f"unknown sport: {request['sport']}")
+    if request["origin"] not in _ORIGINS:
+        raise ValueError(f"unknown origin: {request['origin']}")
+    if request["session_type"] not in _SESSION_TYPES:
+        raise ValueError(f"unknown session_type: {request['session_type']}")
+
+
+def _hybrid_warnings(request: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    """Warn (never block) when an athlete request exceeds the recommender's advice.
+
+    Only athlete-origin requests are validated, and only when the context carries a
+    recommendation to compare against. The warning cites the recommender's own
+    rationale codes so the athlete sees exactly which signals they are overriding.
+    """
+    if request["origin"] != "athlete":
+        return []
+    recommendation = context.get("recommendation")
+    if not recommendation:
+        return []
+    advised = recommendation.get("intended_type")
+    requested = request["session_type"]
+    if advised is None or _HARDNESS.get(requested, 0) <= _HARDNESS.get(advised, 0):
+        return []
+    codes = recommendation.get("rationale") or []
+    cite = f" ({', '.join(codes)})" if codes else ""
+    return [f"you asked for {requested} but the recommender advises {advised}{cite}"]
 
 
 def request_from_recommendation(
@@ -137,33 +213,40 @@ def _expand(
     zones: dict[str, Any] | None,
     warnings: list[str],
 ) -> list[dict[str, Any]]:
-    """Expand a session type into ordered spec steps."""
+    """Expand a session type into ordered spec steps, honouring any structure override."""
+    structure = request.get("structure") or {}
     if session_type == "easy":
         target = _easy_target(request, zones, warnings)
-        return [_step("work", EASY_DEFAULT_S, target)]
+        return [_step("work", _mins(structure, "duration_min", EASY_DEFAULT_S), target)]
     if session_type == "tempo":
         work = _threshold_target(request, zones, warnings)
         return [
-            _step("warmup", TEMPO_WARMUP_S, _NO_TARGET),
-            _step("work", TEMPO_WORK_S, work),
-            _step("cooldown", TEMPO_COOLDOWN_S, _NO_TARGET),
+            _step("warmup", _mins(structure, "warmup_min", TEMPO_WARMUP_S), _NO_TARGET),
+            _step("work", _mins(structure, "work_min", TEMPO_WORK_S), work),
+            _step("cooldown", _mins(structure, "cooldown_min", TEMPO_COOLDOWN_S), _NO_TARGET),
         ]
     if session_type == "quality":
         work = _threshold_target(request, zones, warnings)
         interval = {
             "kind": "repeat",
-            "reps": QUALITY_REPS,
+            "reps": int(structure.get("reps", QUALITY_REPS)),
             "steps": [
-                _step("work", QUALITY_WORK_S, work),
-                _step("recovery", QUALITY_RECOVERY_S, _NO_TARGET),
+                _step("work", _mins(structure, "work_min", QUALITY_WORK_S), work),
+                _step("recovery", _mins(structure, "recovery_min", QUALITY_RECOVERY_S), _NO_TARGET),
             ],
         }
         return [
-            _step("warmup", QUALITY_WARMUP_S, _NO_TARGET),
+            _step("warmup", _mins(structure, "warmup_min", QUALITY_WARMUP_S), _NO_TARGET),
             interval,
-            _step("cooldown", QUALITY_COOLDOWN_S, _NO_TARGET),
+            _step("cooldown", _mins(structure, "cooldown_min", QUALITY_COOLDOWN_S), _NO_TARGET),
         ]
     raise ValueError(f"unsupported session type: {session_type}")
+
+
+def _mins(structure: dict[str, Any], key: str, default_s: int) -> int:
+    """Override a default duration (seconds) with a request's minutes value, if given."""
+    minutes = structure.get(key)
+    return default_s if minutes is None else int(minutes) * 60
 
 
 _NO_TARGET = {"type": "none"}

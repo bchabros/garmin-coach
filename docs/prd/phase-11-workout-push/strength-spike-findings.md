@@ -28,10 +28,24 @@ hand-building a raw payload against the private create endpoint.
 The probe script `scratch/phase11_strength_push_probe.py` hand-builds a
 `STRENGTH_TRAINING` payload (a rep-ended squat step) and, with `--confirm`, uploads
 it via `upload_workout` and deletes it. It is a manual, operator-run step (it writes
-to the live account) and has not been run in this branch.
+to the live account).
 
 - **Dry-run verified**: the script builds and prints the payload offline.
-- **Live outcome**: pending an operator `--confirm` run.
+- **Live outcome (2026-07-15)**: **ENDPOINT ACCEPTED.** The `--confirm` run uploaded
+  the raw `STRENGTH_TRAINING` payload, Garmin created it (`workoutId` returned), and
+  the probe deleted it via `delete_workout`. The create surface accepts a
+  hand-built strength workout despite the library having no typed class for it.
+
+What round-tripped in the create response (the accepted schema for Phase 11b):
+
+- `sportType.sportTypeId = 5` (`strength_training`).
+- A step with `stepType = interval (3)`, `endCondition = reps (10)`,
+  `endConditionValue = 10.0`.
+- Per-exercise `category` + `exerciseName` (here `"SQUAT"` / `"BARBELL_BACK_SQUAT"`)
+  are preserved verbatim on the returned step.
+- Garmin enriched the step with `stepId`, and null-but-present `weightValue` /
+  `weightUnit`, `strokeType`, `equipmentType` fields -- i.e. weight is a first-class
+  step field the accepted schema carries.
 
 ## Decision
 
@@ -52,3 +66,8 @@ Flip only if the probe confirms the endpoint:
   behaviour rather than a placeholder.
 
 Either way, the run-workout deliverable is complete and unaffected.
+
+**Settled (2026-07-15):** the probe accepted the payload, so the **accept** branch is
+active. Production strength/HIIT authoring + push is tracked in GitHub issue
+[#16](https://github.com/bchabros/garmin-coach/issues/16) (per the tracker transition,
+work items now land as GitHub issues rather than new roadmap phases).

@@ -921,8 +921,9 @@ cited options; golden green.
 > [ADR 0013](adr/0013-phase-11-workout-authoring-and-push.md). Strength/HIIT push stayed
 > a documented spike — no typed strength class in garminconnect, so strength execution
 > stays local pending an operator endpoint probe
-> ([findings](prd/phase-11-workout-push/strength-spike-findings.md)); a confirmed probe
-> flips it to a Phase 11b GitHub issue.
+> ([findings](prd/phase-11-workout-push/strength-spike-findings.md)). The probe ran
+> 2026-07-15 and the endpoint **accepted** the payload; strength/HIIT authoring + push is
+> now tracked in [issue #16](https://github.com/bchabros/garmin-coach/issues/16).
 
 **Goal.** Turn a recommendation into a concrete Garmin workout — tempo run with pace
 targets, or a strength session with named exercises/sets — and schedule it to the

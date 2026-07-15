@@ -160,7 +160,9 @@ def _next_date(date: str) -> dt.date:
     return dt.date.fromisoformat(date) + dt.timedelta(days=1)
 
 
-def _call_with_retry(action: Callable[[], Any], max_attempts: int, retry_base_seconds: float) -> Any:
+def _call_with_retry(
+    action: Callable[[], Any], max_attempts: int, retry_base_seconds: float
+) -> Any:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
 
@@ -314,11 +316,14 @@ def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
                 return ctx.client.get_activities(fetch_date, fetch_date)
 
             try:
-                activities = _call_with_retry(
-                    fetch_activity_day,
-                    ctx.max_attempts,
-                    ctx.retry_base_seconds,
-                ) or []
+                activities = (
+                    _call_with_retry(
+                        fetch_activity_day,
+                        ctx.max_attempts,
+                        ctx.retry_base_seconds,
+                    )
+                    or []
+                )
             except Exception as exc:
                 ctx.result.warnings.append(f"activities failed for {date}: {exc}")
                 ctx.conn.commit()
@@ -359,6 +364,48 @@ def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end
         db.set_sync_watermark(ctx.conn, stream.name, date)
         ctx.result.progressed_streams.add(stream.name)
         ctx.conn.commit()
+
+
+def refresh_day(client: GarminClient, conn: sqlite3.Connection, date: str) -> SyncResult:
+    """Pull one (possibly partial) day raw-first, with per-stream isolation.
+
+    Unlike ``sync_incremental``, no watermark is ever written: the day is
+    expected to be incomplete, and the nightly sync must re-pull it complete.
+    Used by the same-day refresh path (``daily.run_refresh_today``); single
+    attempt per stream because the call is interactive (re-run to retry).
+
+    Args:
+        client: Transport client satisfying the ``GarminClient`` protocol.
+        conn: Open SQLite connection with the schema bootstrapped.
+        date: The day to pull, normally today.
+
+    Returns:
+        A :class:`SyncResult` with per-stream progress and warnings.
+    """
+    result = SyncResult()
+
+    result.attempted_streams.add("activities")
+    try:
+        activities = client.get_activities(date, date) or []
+    except Exception as exc:  # noqa: BLE001 - stream isolation: record, keep going
+        result.warnings.append(f"activities failed for {date}: {exc}")
+    else:
+        _store_activities(conn, date, activities, client)
+        result.progressed_streams.add("activities")
+    conn.commit()
+
+    for stream in _DAY_STREAMS:
+        result.attempted_streams.add(stream.name)
+        try:
+            payload = stream.fetch(client, date)
+        except Exception as exc:  # noqa: BLE001 - stream isolation: record, keep going
+            result.warnings.append(f"{stream.name} failed for {date}: {exc}")
+        else:
+            stream.store(conn, date, payload)
+            result.progressed_streams.add(stream.name)
+        conn.commit()
+
+    return result
 
 
 def sync_incremental(

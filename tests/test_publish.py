@@ -7,9 +7,8 @@ are exercised without any live Garmin call. Prior art: ``tests/test_sync.py``.
 
 from __future__ import annotations
 
-from typing import Any
-
 from garmin_coach.publish import publish
+from tests.conftest import FakePublisher
 
 
 def _spec(date="2026-07-17", name=None, work_s=1200):
@@ -26,56 +25,14 @@ def _spec(date="2026-07-17", name=None, work_s=1200):
                 "end": {"type": "time", "seconds": work_s},
                 "target": {"type": "pace_band", "fast_s_per_km": 265, "slow_s_per_km": 275},
             },
-            {"kind": "cooldown", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
         ],
         "warnings": [],
     }
-
-
-class FakePublisher:
-    """An in-memory account: a workout library and a schedule, recording its calls."""
-
-    def __init__(self) -> None:
-        self.workouts: dict[int, dict[str, Any]] = {}
-        self.scheduled: dict[int, tuple[int, str]] = {}
-        self._next_workout = 1000
-        self._next_schedule = 5000
-        self.calls: list[str] = []
-
-    def list_workouts(self) -> list[dict[str, Any]]:
-        return [{"workoutId": wid, **w} for wid, w in self.workouts.items()]
-
-    def upload(self, payload: dict[str, Any]) -> int:
-        self.calls.append("upload")
-        wid = self._next_workout
-        self._next_workout += 1
-        self.workouts[wid] = {
-            "workoutName": payload["workoutName"],
-            "description": payload.get("description"),
-        }
-        return wid
-
-    def schedule(self, workout_id: int, date: str) -> int:
-        self.calls.append("schedule")
-        sid = self._next_schedule
-        self._next_schedule += 1
-        self.scheduled[sid] = (workout_id, date)
-        return sid
-
-    def unschedule(self, schedule_id: int) -> None:
-        self.calls.append("unschedule")
-        self.scheduled.pop(schedule_id, None)
-
-    def delete(self, workout_id: int) -> None:
-        self.calls.append("delete")
-        self.workouts.pop(workout_id, None)
-
-    def list_scheduled(self, date: str) -> list[dict[str, Any]]:
-        return [
-            {"scheduleId": sid, "workoutId": wid}
-            for sid, (wid, d) in self.scheduled.items()
-            if d == date
-        ]
 
 
 class FailingSchedulePublisher(FakePublisher):

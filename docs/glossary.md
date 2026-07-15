@@ -262,6 +262,26 @@ code, docstrings, PRDs, and ADRs.
   wins over the recommender's `pace_target_s_per_km` and suppresses the
   pace -> HR -> none degradation (it is already fully specified).
 
+## Coach MCP terms (mcp_tools -> mcp_server, epic #18)
+
+- **coach MCP** - the local `coach` stdio server (`mcp__coach__*`, registered in the
+  repo's `.mcp.json`): 14 tools in four groups (read / local write / transport read /
+  workout push), each a thin wrapper over a seam the CLI already uses. Distinct from
+  the exploratory `mcp__garmin__*` server. See ADR 0014.
+- **same-day refresh** - the opt-in pull of *today's* (partial) data plus a mart
+  rebuild through today: `garmin-coach refresh-today` on the CLI, `refresh_today`
+  over MCP. Never advances watermarks, so the nightly run re-pulls the day complete.
+- **freshness envelope** - the metadata every coach-MCP response carries:
+  `data_through` (the mart horizon), `today_included`, and `partial_fields`. How a
+  chat session knows what it may treat as final.
+- **partial fields** - the intraday-accumulating mart fields (load, ACWR, zone
+  minutes, RHR, stress, body battery) listed in the envelope when today is included.
+  Morning-complete streams (sleep, HRV, readiness) are never flagged.
+- **preview-hash handshake** - the MCP push interlock: `push_preview` returns the
+  canonical `spec_hash` alongside the payload, and `push_confirm` refuses any other
+  value without touching the account. The MCP counterpart of the CLI's `--confirm`,
+  strict enough for an agent caller.
+
 ## Process terms
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier

@@ -288,6 +288,11 @@ def _spec_hash(spec: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
+def spec_hash(spec: dict[str, Any]) -> str:
+    """Public form of the canonical-spec hash, for the MCP preview/confirm handshake."""
+    return _spec_hash(spec)
+
+
 def _message(action: str) -> str:
     """A human summary line for a resolved action."""
     return {

@@ -593,6 +593,20 @@ def _cmd_daily(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def _cmd_refresh_today(args: argparse.Namespace) -> int:
+    settings, conn, transport = _init_env()
+
+    result = daily.run_refresh_today(transport, conn, data_start_date=settings.data_start_date)
+    conn.close()
+
+    for warning in result.sync.warnings if result.sync else []:
+        print(f"warning: {warning}")
+    print(
+        f"refresh-today complete: status={result.status} (today is partial until the nightly run)"
+    )
+    return result.exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
@@ -615,6 +629,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
     )
     sc.set_defaults(func=_cmd_sync)
+
+    rf = sub.add_parser(
+        "refresh-today",
+        help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
+    )
+    rf.set_defaults(func=_cmd_refresh_today)
 
     ft = sub.add_parser("features", help="Recompute the daily_metrics mart from core data.")
     ft.add_argument(

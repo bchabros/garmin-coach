@@ -14,6 +14,7 @@ pydantic = "*"
 pydantic-settings = "*"
 python-dotenv = "*"
 matplotlib = "^3.11.0"
+mcp = "^1.28.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
@@ -23,6 +24,7 @@ pre-commit = "*"
 
 [tool.poetry.scripts]
 garmin-coach = "garmin_coach.cli:main"
+garmin-coach-mcp = "garmin_coach.mcp_server:main"
 
 [build-system]
 requires = ["poetry-core"]

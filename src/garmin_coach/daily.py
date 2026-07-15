@@ -9,6 +9,7 @@ rule); charts and ``report.md`` stay in the weekly ``report`` run.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import sqlite3
 from dataclasses import dataclass, field
@@ -141,9 +142,60 @@ def run_daily(
     for alert in result.alerts:
         level = logging.ERROR if alert["severity"] == "alert" else logging.WARNING
         logger.log(level, "daily: ALERT %s %s", alert["code"], alert.get("facts", {}))
-    logger.info(
-        "daily: run complete (status=%s alerts=%d)", result.status, len(result.alerts)
-    )
+    logger.info("daily: run complete (status=%s alerts=%d)", result.status, len(result.alerts))
+    return result
+
+
+def run_refresh_today(
+    client: sync.GarminClient,
+    conn: sqlite3.Connection,
+    *,
+    data_start_date: str,
+    today: str | None = None,
+) -> DailyResult:
+    """Run the same-day refresh: pull today (partial), rebuild the mart through today.
+
+    The opt-in counterpart to the nightly path (issue #8): the default pipeline
+    stops at yesterday, this pulls the current day so a same-day coach read can
+    see this morning's HRV/readiness. Sync watermarks are never advanced - the
+    day is partial by definition and the nightly run must re-pull it complete.
+    No alert stage: signals over a partial day would false-fire; alerts stay
+    owned by ``run_daily``.
+
+    Args:
+        client: Transport client satisfying the sync ``GarminClient`` protocol.
+        conn: Open SQLite connection with the schema bootstrapped.
+        data_start_date: First real-data date; earlier days are explicit gaps.
+        today: The day to refresh (default: the actual current date).
+
+    Returns:
+        A :class:`DailyResult` with the pull outcome and derived status.
+    """
+    date = today or dt.date.today().isoformat()
+    result = DailyResult()
+
+    logger.info("refresh: same-day pull starting (date=%s)", date)
+    try:
+        result.sync = sync.refresh_day(client, conn, date)
+    except Exception as exc:  # noqa: BLE001 - orchestrator records, never re-raises
+        logger.exception("refresh: same-day pull crashed")
+        result.errors.append(f"refresh crashed: {exc}")
+        result.fatal = True
+        return result
+    for warning in result.sync.warnings:
+        logger.warning("refresh: warning: %s", warning)
+
+    logger.info("refresh: features stage starting (to_date=%s)", date)
+    try:
+        features.features(conn, data_start_date=data_start_date, to_date=date)
+        result.features_ok = True
+    except Exception as exc:  # noqa: BLE001 - orchestrator records, never re-raises
+        logger.exception("refresh: features stage crashed")
+        result.errors.append(f"features crashed: {exc}")
+        result.fatal = True
+        return result
+
+    logger.info("refresh: run complete (status=%s)", result.status)
     return result
 
 

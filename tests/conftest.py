@@ -41,8 +41,13 @@ class FakeGarminClient:
     """
 
     def __init__(
-        self, activities=None, by_day=None, weather_by_id=None,
-        lactate=None, lactate_range=None, sets_by_id=None,
+        self,
+        activities=None,
+        by_day=None,
+        weather_by_id=None,
+        lactate=None,
+        lactate_range=None,
+        sets_by_id=None,
     ):
         # activities: list returned for the whole range
         # by_day: {endpoint: {date: payload}}
@@ -102,3 +107,54 @@ class FakeGarminClient:
 @pytest.fixture
 def fake_client():
     return FakeGarminClient
+
+
+class FakePublisher:
+    """An in-memory Garmin account: a workout library and a schedule, recording calls."""
+
+    def __init__(self) -> None:
+        self.workouts: dict = {}
+        self.scheduled: dict = {}
+        self._next_workout = 1000
+        self._next_schedule = 5000
+        self.calls: list[str] = []
+
+    def list_workouts(self):
+        return [{"workoutId": wid, **w} for wid, w in self.workouts.items()]
+
+    def upload(self, payload):
+        self.calls.append("upload")
+        wid = self._next_workout
+        self._next_workout += 1
+        self.workouts[wid] = {
+            "workoutName": payload["workoutName"],
+            "description": payload.get("description"),
+        }
+        return wid
+
+    def schedule(self, workout_id, date):
+        self.calls.append("schedule")
+        sid = self._next_schedule
+        self._next_schedule += 1
+        self.scheduled[sid] = (workout_id, date)
+        return sid
+
+    def unschedule(self, schedule_id):
+        self.calls.append("unschedule")
+        self.scheduled.pop(schedule_id, None)
+
+    def delete(self, workout_id):
+        self.calls.append("delete")
+        self.workouts.pop(workout_id, None)
+
+    def list_scheduled(self, date):
+        return [
+            {"scheduleId": sid, "workoutId": wid}
+            for sid, (wid, d) in self.scheduled.items()
+            if d == date
+        ]
+
+
+@pytest.fixture
+def fake_publisher():
+    return FakePublisher

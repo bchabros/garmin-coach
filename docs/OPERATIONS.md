@@ -120,6 +120,41 @@ never run from the nightly automation, and it bends the golden rule deliberately
    refused (needs `--replace`) or missing spec, `2` a partial push (see the `error` in
    `push.json`).
 
+**Custom run structure (Phase 11a).** An `athlete`/hybrid request may carry a `structure`
+block that shapes the run template (`warmup + reps x (work + recovery) + cooldown`, one
+homogeneous interval block) beyond its defaults. Keys:
+
+- `reps` - interval count.
+- `<role>_end` for each role (`warmup`/`work`/`recovery`/`cooldown`) - one of `"lap"` (the
+  watch lap button, "on-click"), `{"distance_m": N}` (metres), or `{"min": N}` (minutes). A
+  `work` step may not be `"lap"`. The pre-11a `<role>_min` / `duration_min` keys still work;
+  giving both a `*_end` and its `*_min` for one role is an error.
+- `work_pace_band: [fast_s_per_km, slow_s_per_km]` (faster bound first) - a custom pace
+  window on the work step. It overrides the recommender's `pace_target_s_per_km` and skips
+  the pace -> HR -> none degradation. A band clearly faster than the recommender's
+  suggestion adds a (non-blocking) cited warning.
+
+"Tempo Thursday: warm-up on-click, 8x(1km at 3:40-4:00, 2:00 jog), cool-down on-click"
+becomes (canonical fixture: `tests/fixtures/tempo_request.json`):
+
+```json
+{
+  "sport": "run", "origin": "athlete", "date": "2026-07-23",
+  "session_type": "quality", "pace_target_s_per_km": null,
+  "structure": {
+    "reps": 8,
+    "warmup_end": "lap",
+    "work_end": {"distance_m": 1000},
+    "work_pace_band": [220, 240],
+    "recovery_end": {"min": 2},
+    "cooldown_end": "lap"
+  }
+}
+```
+
+The estimated duration is approximate for distance/lap ends (a distance step with a band is
+estimated from its midpoint; lap steps count as 0) - Garmin recomputes it on the device.
+
 **Manual live-push acceptance (run once).** The live transport wrapper is validated by a
 single confirmed push, not by CI:
 

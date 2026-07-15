@@ -247,6 +247,20 @@ code, docstrings, PRDs, and ADRs.
   station/crossfit-style one is `hiit`, FBB is `strength` (both await the
   strength/HIIT push spike). The recommender's `intended_type: hyrox` never maps
   to a sport automatically - the athlete says which kind it is.
+- **structure override (workout request)** - the optional `structure` block in an
+  `athlete`/hybrid request that shapes the session type's template beyond its
+  defaults: `reps` plus, per role (`warmup | work | recovery | cooldown`), an
+  end condition and (for work) a custom pace band. The recommender never emits
+  one (`request_from_recommendation` sets `structure: None`); overrides are the
+  athlete finalizing what the recommender suggested (Phase 11a).
+- **end condition (spec step)** - how a step finishes: `time` (seconds), `distance`
+  (metres), or `lap` (the watch lap button, "on-click"). Exactly one per step.
+  `warmup`, `cooldown`, and `recovery` may use any of the three; a `work` step must
+  be `time` or `distance` (lap is refused - a work interval needs a defined end).
+- **custom pace band (spec step)** - an explicit `[fast_s_per_km, slow_s_per_km]`
+  target the athlete sets on the work step, e.g. 3:40-4:00 as `[220, 240]`. It
+  wins over the recommender's `pace_target_s_per_km` and suppresses the
+  pace -> HR -> none degradation (it is already fully specified).
 
 ## Process terms
 

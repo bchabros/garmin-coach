@@ -31,6 +31,10 @@ _EASY_Z2_CODES = (
 # Signals that cap tomorrow to easy but set no HR ceiling of their own.
 _EASY_ONLY_CODES = ("TWO_HARD_DAYS", "HARD_RPE_YESTERDAY")
 
+# Phase 8 stack signals whose keys become tomorrow's avoid-list (real, measured
+# stacks - never a niggle mapped to a fabricated pattern).
+_STACK_CODES = ("PATTERN_STACK", "MUSCLE_OVERLAP")
+
 
 def recommend(
     digest: dict[str, Any],
@@ -71,7 +75,7 @@ def recommend(
         "rationale": _rationale(
             digest["signals"], fired, downgraded, intended_type, intensity_cap, pace
         ),
-        "avoid": [],
+        "avoid": _avoid(fired),
         "replan": None,
     }
 
@@ -160,6 +164,16 @@ def _rationale(
         elif code == "TAPER_ACTIVE" and intensity_cap == "Z4":
             cited.append(code)
     return cited
+
+
+def _avoid(fired: dict[str, dict[str, Any]]) -> list[str]:
+    """The movement patterns / muscles stacked on the latest day, sorted and de-duplicated."""
+    keys: set[str] = set()
+    for code in _STACK_CODES:
+        signal = fired.get(code)
+        if signal is not None:
+            keys.update(k for k in signal["facts"]["keys"].split(",") if k)
+    return sorted(keys)
 
 
 def _tomorrow(to_date: str) -> str:

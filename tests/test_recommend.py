@@ -159,6 +159,32 @@ def test_niggle_reduced_mode_caps_to_easy_z2():
     assert rec["rationale"] == ["NIGGLE_REDUCED_MODE"]
 
 
+def test_avoid_lists_the_stacked_movement_patterns():
+    signals = [_sig("PATTERN_STACK", keys="hinge,squat", overlap_max=63.0)]
+    rec = recommend(_digest(signals=signals), "quality", THRESHOLDS)
+    assert rec["avoid"] == ["hinge", "squat"]
+
+
+def test_avoid_merges_patterns_and_muscles_deduped_and_sorted():
+    signals = [
+        _sig("PATTERN_STACK", keys="squat,hinge"),
+        _sig("MUSCLE_OVERLAP", keys="grip,posterior"),
+    ]
+    rec = recommend(_digest(signals=signals), "quality", THRESHOLDS)
+    assert rec["avoid"] == ["grip", "hinge", "posterior", "squat"]
+
+
+def test_avoid_is_empty_without_a_stack_signal():
+    assert recommend(_digest(), "quality", THRESHOLDS)["avoid"] == []
+
+
+def test_niggle_downgrades_without_fabricating_an_avoid_pattern():
+    signals = [_sig("NIGGLE_REDUCED_MODE", body_part="kolano", severity=4)]
+    rec = recommend(_digest(signals=signals, zones=_zones()), "quality", THRESHOLDS)
+    assert rec["intended_type"] == "easy"  # niggle still softens the session
+    assert rec["avoid"] == []  # but invents no movement pattern
+
+
 def test_downgrade_never_disturbs_a_rest_day():
     signals = [_sig("HRV_LOW_MORNING")]
     rec = recommend(_digest(signals=signals, zones=_zones()), "rest", THRESHOLDS)

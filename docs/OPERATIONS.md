@@ -85,6 +85,59 @@ Config keys (`config.py`, overridable via env / `.env`):
 it (never the raw mart, never Garmin) -- see `skills/coach/SKILL.md` for how to invoke the
 skill and what the narrative should contain.
 
+## Authoring and pushing a workout (Phase 11)
+
+Turning a recommendation (or your own session) into a structured Garmin workout is a
+**two-command, out-of-seam** path -- the only place the system writes to Garmin. It is
+never run from the nightly automation, and it bends the golden rule deliberately (see
+`docs/adr/0013-phase-11-workout-authoring-and-push.md`).
+
+1. **Author** (pure, no network) -- writes `reports/{date}/workout.json`:
+
+   ```bash
+   garmin-coach author --date 2026-07-17 --from-recommendation   # from the Phase 10 read
+   garmin-coach author --date 2026-07-17 --request req.json       # from your own workout_request
+   ```
+
+   `rest` produces no spec; `hiit`/`strength` requests are understood but deferred to the
+   push spike; a `hyrox` recommendation asks you to say run-vs-station. Warnings (target is
+   today, no measured pace, an override of the recommender's advice) are printed and written
+   into the spec.
+
+2. **Push** -- **dry-run unless `--confirm`.** No `--confirm` prints the payload and exits
+   without touching the account; there is no `--dry-run` flag to forget:
+
+   ```bash
+   garmin-coach push --date 2026-07-17            # dry-run: shows payload + plan + warnings
+   garmin-coach push --date 2026-07-17 --confirm  # writes: upload + schedule, writes push.json
+   garmin-coach push --date 2026-07-17 --confirm --replace   # overwrite a changed same-name workout
+   ```
+
+   Idempotency uses the **account** as the source of truth (workouts are named `GC {date}
+   {type}` and carry a `gc-hash` of the spec): an identical re-push is a no-op, a changed one
+   needs `--replace`, and a push that half-fails (uploaded, not scheduled) is completed by
+   running `push` again -- it skips the upload. Exit codes: `0` success/dry-run/no-op, `1`
+   refused (needs `--replace`) or missing spec, `2` a partial push (see the `error` in
+   `push.json`).
+
+**Manual live-push acceptance (run once).** The live transport wrapper is validated by a
+single confirmed push, not by CI:
+
+1. `garmin-coach author --date <a near future date> --from-recommendation`
+2. `garmin-coach push --date <that date>` -- confirm the dry-run payload looks right.
+3. `garmin-coach push --date <that date> --confirm` -- then check Garmin Connect / the watch
+   shows exactly one scheduled run workout named `GC ...`.
+4. Re-run step 3 -- it must report `noop` and create no duplicate.
+
+If the response-field extraction in `GarminWorkoutPublisher` (workout id, schedule id,
+scheduled-list shape) does not match what the live account returns, fix it here -- that
+mapping is deliberately settled by this step, not guessed in a unit test.
+
+Passed on 2026-07-17 (a `quality` push): create scheduled exactly one `GC 2026-07-17
+quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push reported
+`noop` with no duplicate, and all four response mappings (`get_workouts`,
+`upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
+
 ## Cowork agent notes
 
 For Claude running in Cowork (pointed at this folder, commands via the Linux sandbox):

@@ -81,6 +81,17 @@ def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def _digest_for(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
+    """Build the cited digest for a horizon with the stored thresholds."""
+    thresholds = report.read_thresholds(conn)
+    return digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+
+
+def _day_before(date: str) -> str:
+    """The digest horizon for a target date: the day before it."""
+    return (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
+
+
 def get_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return the athlete_status snapshot row (None until features has run)."""
     return _wrap(conn, snapshot.read(conn))
@@ -88,17 +99,25 @@ def get_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 
 def get_digest(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
     """Build and return the cited digest for a horizon (default: latest mart day)."""
-    thresholds = report.read_thresholds(conn)
-    return _wrap(conn, digest.build_digest(conn, to_date=to_date, thresholds=thresholds))
+    return _wrap(conn, _digest_for(conn, to_date))
 
 
 def get_recent_activities(conn: sqlite3.Connection, n: int = 10) -> dict[str, Any]:
-    """Return the n most recent activities, newest first, as a compact projection."""
+    """Return the n most recent activities, newest first, as a compact projection.
+
+    An activity dated today carries ``partial_today: True`` - its training-effect
+    numbers may still settle as Garmin finishes processing, so they are not final.
+    """
     cur = conn.execute(
         f"SELECT {', '.join(_ACTIVITY_COLUMNS)} FROM activities ORDER BY start_local DESC LIMIT ?",
         (n,),
     )
-    return _wrap(conn, _rows(cur))
+    today = dt.date.today().isoformat()
+    rows = _rows(cur)
+    for row in rows:
+        if row.get("date") == today:
+            row["partial_today"] = True
+    return _wrap(conn, rows)
 
 
 def get_weekly(conn: sqlite3.Connection, week_start: str | None = None) -> dict[str, Any]:
@@ -133,11 +152,8 @@ def get_recommendation(conn: sqlite3.Connection, date: str | None = None) -> dic
     Mirrors the author path: the digest horizon is the day before the target,
     and the digest's embedded recommendation block is returned as-is.
     """
-    to_date = None
-    if date is not None:
-        to_date = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
-    thresholds = report.read_thresholds(conn)
-    dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    to_date = _day_before(date) if date is not None else None
+    dg = _digest_for(conn, to_date)
     return _wrap(conn, dg.get("recommendation"))
 
 
@@ -243,9 +259,7 @@ def author_workout(
     recommendation targeting ``date``; with one, the request dict (athlete or
     hybrid, including a custom ``structure``) is authored as-is.
     """
-    to_date = (dt.date.fromisoformat(date) - dt.timedelta(days=1)).isoformat()
-    thresholds = report.read_thresholds(conn)
-    dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    dg = _digest_for(conn, _day_before(date))
     recommendation = dg.get("recommendation")
 
     if request is not None:

@@ -96,6 +96,27 @@ def test_get_recent_activities_orders_newest_first_and_limits(conn):
 
     dates = [a["date"] for a in out["data"]]
     assert dates == ["2026-07-13", "2026-07-12"]
+    assert all("partial_today" not in a for a in out["data"])
+
+
+def test_get_recent_activities_flags_a_today_activity_as_partial(conn):
+    """An activity dated today is marked partial (its TE may still settle)."""
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": 1,
+            "start_local": f"{TODAY} 08:00:00",
+            "date": TODAY,
+            "gtype": "running",
+            "discipline": "Bieganie",
+            "aero_te": 2.1,
+            "dur_s": 1800.0,
+        },
+    )
+
+    out = mcp_tools.get_recent_activities(conn, n=1)
+
+    assert out["data"][0]["partial_today"] is True
 
 
 def test_get_weekly_returns_the_requested_week(conn):

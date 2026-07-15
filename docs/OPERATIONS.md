@@ -206,7 +206,10 @@ thin layer over the same functions the CLI uses (see ADR 0014); the exploratory
 `{data_through, today_included, partial_fields}`. If `today_included` is true, any
 field listed in `partial_fields` (load, ACWR, zone minutes, RHR, stress, body
 battery) is an intraday running value — quote it as "so far today", never as final.
-Sleep, HRV, and readiness are morning-complete and safe to read all day.
+Sleep, HRV, and readiness are morning-complete and safe to read all day. In
+`get_recent_activities`, an activity dated today additionally carries
+`partial_today: true` — its training-effect numbers may still settle, so treat them
+as provisional too.
 
 ## Cowork agent notes
 

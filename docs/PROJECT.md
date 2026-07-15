@@ -42,7 +42,7 @@ Click a phase to jump to its section. Phases 0–5 are the built foundation (Par
 | 8 | Per-set capture + movement-pattern overlap | Done | [section](#phase-8-per-set-capture-and-overlap) · [PRD](prd/phase-8-movement-overlap/PRD.md) |
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done | [section](#phase-9-race-date-periodization) · [PRD](prd/phase-9-periodization/PRD.md) |
 | 10 | Prospective session recommender (re-planning-aware) | Done | [section](#phase-10-prospective-recommender) · [PRD](prd/phase-10-recommender/PRD.md) |
-| 11 | Structured workout authoring + push to Garmin | Planned | [section](#phase-11-workout-authoring-and-push) |
+| 11 | Structured workout authoring + push to Garmin (run first) | Done | [section](#phase-11-workout-authoring-and-push) · [PRD](prd/phase-11-workout-push/PRD.md) |
 | read-MCP | Read-only MCP server over the local marts | Planned | [section](#read-mcp-conversational-read-layer) |
 
 Phase 9b (race-day pacing, `race_plan`) has moved out of this roadmap to GitHub issue
@@ -914,6 +914,15 @@ cited options; golden green.
 ## Phase 11: workout authoring and push
 
 > **Structured workout authoring & push to Garmin (run first, strength spiked).**
+>
+> **Done** — run authoring + push shipped (`author.py` pure, `publish.py` out-of-seam,
+> `author`/`push` commands with the `--confirm` interlock and account-of-record
+> idempotency). See [PRD](prd/phase-11-workout-push/PRD.md) and
+> [ADR 0013](adr/0013-phase-11-workout-authoring-and-push.md). Strength/HIIT push stayed
+> a documented spike — no typed strength class in garminconnect, so strength execution
+> stays local pending an operator endpoint probe
+> ([findings](prd/phase-11-workout-push/strength-spike-findings.md)); a confirmed probe
+> flips it to a Phase 11b GitHub issue.
 
 **Goal.** Turn a recommendation into a concrete Garmin workout — tempo run with pace
 targets, or a strength session with named exercises/sets — and schedule it to the

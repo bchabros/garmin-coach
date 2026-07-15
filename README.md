@@ -16,7 +16,7 @@ and what's missing.
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
 [docs/PROJECT.md](docs/PROJECT.md) for the full brief and roadmap — the built
-phases 0-10 plus the forward plan for phase 11 + read-MCP.
+phases 0-11 plus the forward plan for read-MCP.
 
 ## Status
 
@@ -34,12 +34,14 @@ phases 0-10 plus the forward plan for phase 11 + read-MCP.
 | 8 | Per-set capture + movement-pattern overlap | Done — [docs/prd/phase-8-movement-overlap/PRD.md](docs/prd/phase-8-movement-overlap/PRD.md), [ADR 0011](docs/adr/0011-phase-8-movement-overlap.md)                  |
 | 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done — [docs/prd/phase-9-periodization/PRD.md](docs/prd/phase-9-periodization/PRD.md), [ADR 0012](docs/adr/0012-phase-9-race-date-periodization.md)                  |
 | 10 | Prospective session recommender (re-planning-aware) | Done — [docs/prd/phase-10-recommender/PRD.md](docs/prd/phase-10-recommender/PRD.md)                                                                                      |
-| 11 | Structured workout authoring + push to Garmin (run first) | Planned — [docs/PROJECT.md](docs/PROJECT.md#phase-11-workout-authoring-and-push)                                                                                      |
+| 11 | Structured workout authoring + push to Garmin (run first) | Done — [docs/prd/phase-11-workout-push/PRD.md](docs/prd/phase-11-workout-push/PRD.md), [ADR 0013](docs/adr/0013-phase-11-workout-authoring-and-push.md)                  |
 | read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/PROJECT.md](docs/PROJECT.md#read-mcp-conversational-read-layer)                                                                                      |
 
-Phases 0-10 are built and everything after is the forward plan; both live in
+Phases 0-11 are built and everything after is the forward plan; both live in
 [docs/PROJECT.md](docs/PROJECT.md), which also records the industry survey and the
-dependency ordering between the planned phases. Phase 9b (race-day pacing) has moved
+dependency ordering between the planned phases. Phase 11 ships run-workout push;
+strength/HIIT push stays a documented spike ([findings](docs/prd/phase-11-workout-push/strength-spike-findings.md)),
+so strength execution stays local for now. Phase 9b (race-day pacing) has moved
 out of the roadmap to GitHub issue [#13](https://github.com/bchabros/garmin-coach/issues/13) —
 it is deliberately scoped to run close to race day.
 

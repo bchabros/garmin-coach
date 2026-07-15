@@ -52,8 +52,8 @@ class WorkoutPublisher(Protocol):
         """Delete a workout from the library."""
         ...
 
-    def list_scheduled(self, date: str) -> list[int]:
-        """Return the workout ids scheduled on a date."""
+    def list_scheduled(self, date: str) -> list[dict[str, Any]]:
+        """Return the calendar entries on a date (each with ``scheduleId``/``workoutId``)."""
         ...
 
 
@@ -69,6 +69,7 @@ class PublishResult:
     message: str
     workout_id: int | None = None
     schedule_id: int | None = None
+    error: str | None = None
     warnings: list[str] = field(default_factory=list)
 
     def as_receipt(self) -> dict[str, Any]:
@@ -81,6 +82,7 @@ class PublishResult:
             "workout_id": self.workout_id,
             "schedule_id": self.schedule_id,
             "spec_hash": self.spec_hash,
+            "error": self.error,
             "warnings": self.warnings,
         }
 
@@ -90,6 +92,7 @@ def publish(
     publisher: WorkoutPublisher,
     *,
     confirm: bool,
+    replace: bool = False,
     activity_dates: frozenset[str] | set[str] = frozenset(),
 ) -> PublishResult:
     """Push a workout spec to Garmin, idempotently and behind a confirm interlock.
@@ -98,11 +101,13 @@ def publish(
         spec: The finished workout spec from ``author``.
         publisher: The injected Garmin write surface.
         confirm: When False (the default caller state), plan only and touch nothing.
+        replace: Overwrite a different workout of the same name (unschedule + delete +
+            upload + schedule) instead of refusing.
         activity_dates: Dates that already have a logged activity, to warn on collision.
 
     Returns:
         A ``PublishResult`` describing the resolved action and, when confirmed, the
-        ids it created.
+        ids it created (or the partial state and error when scheduling failed).
     """
     date = spec["date"]
     spec_hash = _spec_hash(spec)
@@ -114,7 +119,7 @@ def publish(
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
     existing = _find_by_name(publisher, spec["name"])
-    action = _resolve_action(existing, spec_hash, publisher, date)
+    action = _resolve_action(existing, spec_hash, publisher, date, replace)
     result = PublishResult(
         action=action,
         applied=False,
@@ -139,13 +144,15 @@ def _resolve_action(
     spec_hash: str,
     publisher: WorkoutPublisher,
     date: str,
+    replace: bool,
 ) -> str:
-    """Decide create / refuse / noop / schedule from the account's current state."""
+    """Decide create / replace / refuse / noop / schedule from the account's state."""
     if existing is None:
         return "create"
     if _existing_hash(existing) != spec_hash:
-        return "refuse"
-    if existing["workoutId"] in publisher.list_scheduled(date):
+        return "replace" if replace else "refuse"
+    scheduled_ids = {entry["workoutId"] for entry in publisher.list_scheduled(date)}
+    if existing["workoutId"] in scheduled_ids:
         return "noop"
     return "schedule"
 
@@ -157,16 +164,42 @@ def _execute(
     publisher: WorkoutPublisher,
     existing: dict[str, Any] | None,
 ) -> PublishResult:
-    """Apply the resolved create or schedule action against the account."""
-    if result.action == "create":
+    """Apply the resolved action, recording a partial state if scheduling fails.
+
+    Scheduling failure is not rolled back: the uploaded (but unscheduled) workout is a
+    harmless orphan the next idempotent push completes (see ADR 0013).
+    """
+    if result.action == "replace":
+        assert existing is not None
+        _unschedule_existing(publisher, existing["workoutId"], spec["date"])
+        publisher.delete(existing["workoutId"])
         result.workout_id = publisher.upload(payload)
-        result.schedule_id = publisher.schedule(result.workout_id, spec["date"])
+    elif result.action == "create":
+        result.workout_id = publisher.upload(payload)
     elif result.action == "schedule":
         assert existing is not None
         result.workout_id = existing["workoutId"]
+
+    assert result.workout_id is not None
+    try:
         result.schedule_id = publisher.schedule(result.workout_id, spec["date"])
+    except Exception as exc:  # noqa: BLE001 - any transport failure records a partial push
+        result.error = str(exc)
+        result.applied = False
+        result.message = (
+            f"uploaded to the library as workout {result.workout_id}, but scheduling "
+            "failed; re-run push to complete (no duplicate is created)"
+        )
+        return result
     result.applied = True
     return result
+
+
+def _unschedule_existing(publisher: WorkoutPublisher, workout_id: int, date: str) -> None:
+    """Remove any calendar entries for a workout on a date before replacing it."""
+    for entry in publisher.list_scheduled(date):
+        if entry["workoutId"] == workout_id:
+            publisher.unschedule(entry["scheduleId"])
 
 
 def _find_by_name(publisher: WorkoutPublisher, name: str) -> dict[str, Any] | None:
@@ -209,6 +242,7 @@ def _message(action: str) -> str:
     """A human summary line for a resolved action."""
     return {
         "create": "will create and schedule a new workout",
+        "replace": "a different workout with this name exists; will replace and reschedule it",
         "noop": "already scheduled with an identical workout; nothing to do",
         "schedule": "workout exists in the library; will schedule it to the date",
         "refuse": "a different workout with this name exists; re-run with --replace to overwrite",

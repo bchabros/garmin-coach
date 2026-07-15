@@ -70,8 +70,27 @@ class FakePublisher:
         self.calls.append("delete")
         self.workouts.pop(workout_id, None)
 
-    def list_scheduled(self, date: str) -> list[int]:
-        return [wid for wid, d in self.scheduled.values() if d == date]
+    def list_scheduled(self, date: str) -> list[dict[str, Any]]:
+        return [
+            {"scheduleId": sid, "workoutId": wid}
+            for sid, (wid, d) in self.scheduled.items()
+            if d == date
+        ]
+
+
+class FailingSchedulePublisher(FakePublisher):
+    """A publisher whose first schedule call fails, to model a partial push."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_next_schedule = True
+
+    def schedule(self, workout_id: int, date: str) -> int:
+        if self.fail_next_schedule:
+            self.fail_next_schedule = False
+            self.calls.append("schedule-fail")
+            raise RuntimeError("scheduling timed out")
+        return super().schedule(workout_id, date)
 
 
 # --- confirm interlock ------------------------------------------------------
@@ -139,6 +158,56 @@ def test_activity_on_the_date_warns_but_does_not_block():
     assert result.action == "create"
     assert result.applied is True
     assert any("already" in w for w in result.warnings)
+
+
+# --- replace ----------------------------------------------------------------
+
+
+def test_replace_overwrites_a_different_workout_of_the_same_name():
+    pub = FakePublisher()
+    publish(_spec(), pub, confirm=True)
+    old_id = next(iter(pub.workouts))
+    pub.calls.clear()
+    result = publish(_spec(work_s=1800), pub, confirm=True, replace=True)
+    assert result.action == "replace"
+    assert result.applied is True
+    assert pub.calls == ["unschedule", "delete", "upload", "schedule"]
+    assert old_id not in pub.workouts  # the old template is gone
+    assert result.workout_id in pub.workouts
+
+
+def test_replace_not_needed_when_payload_is_identical():
+    pub = FakePublisher()
+    publish(_spec(), pub, confirm=True)
+    pub.calls.clear()
+    result = publish(_spec(), pub, confirm=True, replace=True)
+    assert result.action == "noop"
+    assert pub.calls == []
+
+
+# --- partial-failure retry --------------------------------------------------
+
+
+def test_schedule_failure_leaves_an_orphan_and_no_rollback():
+    pub = FailingSchedulePublisher()
+    result = publish(_spec(), pub, confirm=True)
+    assert result.applied is False
+    assert result.error is not None
+    assert result.workout_id is not None  # uploaded to the library
+    assert result.schedule_id is None
+    assert "delete" not in pub.calls  # no compensating rollback
+    assert result.workout_id in pub.workouts
+
+
+def test_rerun_after_partial_failure_completes_the_schedule():
+    pub = FailingSchedulePublisher()
+    first = publish(_spec(), pub, confirm=True)  # upload ok, schedule fails
+    pub.calls.clear()
+    second = publish(_spec(), pub, confirm=True)  # retry
+    assert second.action == "schedule"
+    assert pub.calls == ["schedule"]  # skips the upload, completes the schedule
+    assert second.applied is True
+    assert second.workout_id == first.workout_id
 
 
 # --- receipt ----------------------------------------------------------------

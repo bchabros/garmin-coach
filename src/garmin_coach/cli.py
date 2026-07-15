@@ -391,20 +391,33 @@ def _cmd_push(args: argparse.Namespace) -> int:
         print(f"push: {exc}")
         return 1
 
-    result = publish.publish(spec, publisher, confirm=args.confirm, activity_dates=activity_dates)
+    result = publish.publish(
+        spec, publisher, confirm=args.confirm, replace=args.replace, activity_dates=activity_dates
+    )
     for warning in result.warnings:
         print(f"  warning: {warning}")
     print(f"push [{result.action}]: {result.message}")
-    if not result.applied and args.confirm and result.action == "refuse":
-        return 1
+
+    if result.error is not None:
+        _write_receipt(result, spec_path.parent)
+        print(f"push failed: {result.error}")
+        return 2
     if result.applied:
-        receipt = result.as_receipt()
-        receipt["pushed_at"] = _dt.datetime.now().isoformat(timespec="seconds")
-        (spec_path.parent / "push.json").write_text(json.dumps(receipt, indent=2))
+        _write_receipt(result, spec_path.parent)
         print(f"push complete: {spec_path.parent / 'push.json'}")
-    elif not args.confirm:
+        return 0
+    if args.confirm and result.action == "refuse":
+        return 1
+    if not args.confirm:
         print("push: dry-run (re-run with --confirm to write to your Garmin account)")
     return 0
+
+
+def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None:
+    """Write the push.json receipt, stamped with the push time."""
+    receipt = result.as_receipt()
+    receipt["pushed_at"] = _dt.datetime.now().isoformat(timespec="seconds")
+    (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
@@ -623,6 +636,10 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument(
         "--confirm", dest="confirm", action="store_true",
         help="Actually write to the Garmin account (default: dry-run, shows the payload).",
+    )
+    pu.add_argument(
+        "--replace", dest="replace", action="store_true",
+        help="Overwrite a different workout of the same name (unschedule + delete + re-push).",
     )
     pu.add_argument(
         "--reports-dir", dest="reports_dir", default="./reports",

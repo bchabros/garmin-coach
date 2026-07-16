@@ -92,6 +92,19 @@ Config keys (`config.py`, overridable via env / `.env`):
 it (never the raw mart, never Garmin) -- see `skills/coach/SKILL.md` for how to invoke the
 skill and what the narrative should contain.
 
+### Keeping the uploaded coach skill in sync
+
+`skills/coach/SKILL.md` in this repo is the source of truth, but Claude Code is the only
+surface that reads it from disk. Cowork and claude.ai chat run the copy **uploaded to
+your Claude account** (claude.ai -> Settings -> Capabilities -> Skills), which is synced
+*down* to Claude Desktop, never up from this repo. There is no supported path to push it
+up, so **editing the repo copy does not update the one Cowork and chat run** -- re-upload
+is manual, and the drift is otherwise silent.
+
+`task claude:check` catches that: it diffs the repo copy against the copy Claude last
+synced to this machine and tells you when the uploaded skill has gone stale. Run it after
+changing `SKILL.md`.
+
 ## Authoring and pushing a workout (Phase 11)
 
 Turning a recommendation (or your own session) into a structured Garmin workout is a
@@ -251,16 +264,32 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
   still cannot find its runtime, add an `env` block with a `PATH` that includes your
   Python/poetry bin dirs. Quit Claude Desktop fully (Cmd+Q) and reopen it to pick up
   the config change.
-- **Claude Cowork / claude.ai** — **not supported.** A local stdio server like this
-  one cannot run here. Per Anthropic's docs, Cowork/claude.ai custom connectors are
-  **remote MCP only** (a server URL added under Settings -> Connectors): "Local MCP
-  servers configured in Claude Desktop via `claude_desktop_config.json` ... aren't
-  available in Cowork or claude.ai." Using the coach tools from Cowork would mean
-  exposing this server behind a public URL as a remote connector -- a different
-  deployment from this local, single-athlete design, and out of scope. For an
-  agent/chat workflow, use Claude Code (above), which is the sanctioned surface. In a
-  Cowork sandbox, keep to the read-side CLI path described in "Cowork agent notes"
-  below.
+
+  `task claude:register` writes exactly that entry for you (idempotent; backs the
+  config up first, and refuses to write while Desktop is running because Desktop
+  rewrites the file as it runs). This is a **per-machine, one-time** step: the entry
+  invokes the `garmin-coach-mcp` console script by name, so code changes -- including
+  moving the module -- never require re-running it. `task claude:check` reports
+  whether the entry is present and current without writing anything.
+- **Claude Cowork** — **works, via the device bridge** (verified 2026-07-16: Cowork
+  listed the `coach` tools and reported them as reaching this machine by bridge).
+  Cowork does not read `claude_desktop_config.json` itself; it relays tool calls to
+  the server Claude Desktop already runs on the paired device. The pairing shows up
+  as `preferences.remoteToolsDeviceName` in the Desktop config (here:
+  `macbookpro-home`). So the Desktop registration above is what makes the tools
+  reachable from Cowork too -- no public URL, no separate deployment. Consequences
+  worth knowing: the bridge only works while that machine is up and Claude Desktop is
+  running, and the server still reads the **local** `data/garmin.db`, so Cowork sees
+  whatever this machine has synced.
+
+  This corrects an earlier claim in this file that Cowork was "not supported" and
+  needed a remote MCP connector. Adding a **custom connector** in Cowork settings is
+  indeed remote-URL-only; the bridge is a separate mechanism, and it is the one in
+  use here.
+- **claude.ai in a browser** — untested here. The bridge is a Claude Desktop feature,
+  so a browser session on a machine that is not running Desktop has no path to this
+  server. If you need it there, check whether the same device bridge covers your
+  session before assuming it does.
 
 **Running the server without poetry.** On any host where poetry is unavailable (it
 needs Python 3.13), launch the module directly after installing the deps once, and
@@ -275,6 +304,13 @@ PYTHONPATH=src python3 -m garmin_coach.mcp.server
 `charts`, even though the MCP tools never render a chart.)
 
 ## Cowork agent notes
+
+**Prefer the `mcp__coach__*` tools if they are present.** When the device bridge is up
+(see "Registering the server in a client"), Cowork reaches the coach server on the
+paired machine and the one-call read tools are the sanctioned surface -- no sandbox
+setup, no dependency install. The notes below are the fallback for when the bridge is
+unavailable (that machine is off, Desktop is closed) and Cowork is working against a
+copy of the folder in its Linux sandbox instead.
 
 For Claude running in Cowork (pointed at this folder, commands via the Linux sandbox):
 

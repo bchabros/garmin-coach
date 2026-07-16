@@ -1,7 +1,12 @@
 # garmin-coach — build brief and roadmap
 
-Single source of truth for the whole project: what was built (Phases 0–5, the
-original executable brief) and what comes next (Phases 6+, the forward plan and
+> **Status: historical.** The phased roadmap ended with Phase 11 and the coach MCP
+> server (2026-07); new work is tracked as GitHub issues
+> (see `docs/agents/issue-tracker.md`). This file is kept as-is as the build
+> history — the brief, the per-phase sections, and the industry survey.
+
+Single source of truth for how the project was built: the original executable
+brief (Phases 0–5) and the forward plan that followed (Phases 6–11 and the
 industry survey). This file merges the former `garmin-coach-BUILD.md` and
 `ROADMAP.md`.
 

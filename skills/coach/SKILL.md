@@ -15,14 +15,23 @@ only.
 1. **Generate the digest and charts.** Run:
 
    ```bash
+   poetry run garmin-coach plan import       # cache plans/<monday>_week.md (transport-free)
    poetry run garmin-coach report            # or: --from YYYY-MM-DD --to YYYY-MM-DD
    ```
 
-   This writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`, and
+   `plan import` first, because the report reads the plan of record from the DB cache,
+   not from `plans/` - without it a plan the athlete edited since the last nightly run
+   is invisible and the report scores adherence against a stale week. It is idempotent
+   and never touches Garmin. If it fails, the plan file is malformed: say so and stop
+   rather than reporting against the fallback template.
+
+   `report` writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`, and
    `snapshot.json` (the current standing). If it fails because the mart is empty, run
-   `poetry run garmin-coach features` first, then retry. Never run `sync`/`backfill`
-   yourself - that would call Garmin live, which the golden rule forbids from the coach
-   layer; tell the operator to run it instead.
+   `poetry run garmin-coach features` first, then retry. Run `features` too when
+   `plan import` actually changed a week: `planned_intent_today` and the weekly
+   adherence are materialized, so they only catch up when the marts are rebuilt. Never
+   run `sync`/`backfill` yourself - that would call Garmin live, which the golden rule
+   forbids from the coach layer; tell the operator to run it instead.
 
    **If `poetry` is missing or fails** (the Cowork sandbox ships Python 3.10, not the
    3.13 that poetry needs), do NOT build a venv or install a new Python - the code runs
@@ -31,12 +40,13 @@ only.
 
    ```bash
    pip install matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
+   PYTHONPATH=src python3 -m garmin_coach.cli plan import
    PYTHONPATH=src python3 -m garmin_coach.cli report     # or: features, if the mart is empty
    ```
 
-   Only ever run **read-side** commands (`report`, `features`) this way - the same
-   golden-rule limit applies. See `docs/OPERATIONS.md` ("For Claude running in Cowork")
-   for the full note.
+   Only ever run **read-side** commands (`plan import`, `report`, `features`) this way -
+   the same golden-rule limit applies. See `docs/OPERATIONS.md` ("For Claude running in
+   Cowork") for the full note.
 
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
@@ -52,8 +62,13 @@ only.
    / `hrv_span_days`), race predictions (`t_5k_s`..`t_marathon_s`), `acwr` +
    `acwr_reliable`, `load_7d` + shares, `readiness_score`/`readiness_level`,
    `sleep_debt_h`, heat/altitude acclimation, the personal zones (mirrored), and
-   `planned_intent_today`/`planned_label_today`. Every field may be null; never invent
-   a number a null field does not provide.
+   `planned_intent_today`/`planned_label_today` + `plan_source_today`. Every field may
+   be null; never invent a number a null field does not provide.
+
+   `plan_source_today` says where today's plan came from: `plan_week` is the week the
+   athlete authored (the plan of record), `plan_template` is the repeating fallback
+   shape - a default, never something they agreed to. Never present a `plan_template`
+   day as "your plan"; say the week is unplanned and the template is standing in.
 
 3. **Write `reports/{today}/report.md`.** Structure:
    - **Twoje aktualne staty** - only when `snapshot.json` is present. One compact block
@@ -65,7 +80,8 @@ only.
      `acwr_reliable` - call it *orientacyjny* when false - plus `load_7d` and the
      `low_share`/`high_share`/`anaero_share` split), the zones headline (`z2_hi_bpm` HR
      ceiling and `z2_pace_ceiling_s_per_km` as min:sec - "easy pod X:XX/km"; note
-     `zones_stale` when 1), and today's plan (`planned_label_today`). Skip any sub-item
+     `zones_stale` when 1), and today's plan (`planned_label_today`, flagged as the
+     fallback template when `plan_source_today` is `plan_template`). Skip any sub-item
      whose value is null. Skip the whole block when `snapshot.json` is absent.
    - **Nagłówek** - one line on the window and the headline numbers (ACWR + reliability,
      latest HRV vs baseline, 7-day load split). When the `zones` block is present, add
@@ -100,6 +116,10 @@ only.
      - `HARD_RPE_YESTERDAY` -> yesterday's session was subjectively very hard
        (`facts.rpe` on Borg CR10); the next day should back off. This feeds tomorrow's
        recommendation below.
+     - `PLAN_MISSING` -> the week starting `facts.week_start` has no authored plan, so
+       the repeating template is standing in and every planned-intent read for it is a
+       default, not the athlete's intent. Offer to plan the week (see "Planning the
+       week" below); do not treat the template days as agreed sessions.
    - **Movement coverage** - when the digest's `movement` block is present and
      `sets_unmapped` > 0, add one brief line that the overlap read is partial: N of
      `sets_total` sets are unmapped (`unmapped` names), so those exercises need adding to
@@ -111,6 +131,13 @@ only.
      naming the direction (e.g. "pt: plan quality, było rest"). If `was_deload` is true,
      say so - a deliberate deload is not lost fitness. Skip this block entirely when
      `weekly` is null.
+
+     `planned` and `actual` are recorded at different granularities on purpose, so trust
+     `match` over your own comparison of the two strings. `planned` is what the athlete
+     meant (any of the seven intents); `actual` is only what the load can show
+     (`rest`/`easy`/`strength`/`quality`), because load numbers cannot tell a crossfit
+     session from a hyrox one. So `planned: crossfit` with `actual: quality` is a
+     **match** - do not report it as a divergence.
    - **Blok i odliczanie** - only if the digest has a non-null `plan` block. State the
      training block (`block`: base/build/peak/taper) and the countdown
      (`weeks_to_event`) to `race_date` (`race_type`), and say whether the plan calls
@@ -130,10 +157,14 @@ only.
        purpose; the gap is the finding.
    - **Rekomendacja na dziś** - only when the digest has a non-null `recommendation`
      block. It advises the *next* session (`target_date`, i.e. tomorrow relative to the
-     window) and only ever softens what the weekly template planned. Render:
-     - The session: `intended_type` (rest/easy/tempo/hyrox/quality) with the
-       `intensity_cap` when non-null (Z2/Z3/Z4 HR ceiling) and `pace_target_s_per_km` as
-       min:sec/km when non-null. If `pace_target_s_per_km` is null, do not invent a pace
+     window) and only ever softens what the plan of record planned - it can never raise
+     an easy day into a hard one. Render:
+     - The session: `intended_type` (rest/easy/tempo/strength/hyrox/crossfit/quality)
+       with the `intensity_cap` when non-null (Z2/Z3/Z4 HR ceiling) and
+       `pace_target_s_per_km` as min:sec/km when non-null. A `strength` session never
+       carries a pace - a running threshold pace is meaningless for lifting, so its
+       absence there is by design, not missing data.
+       If `pace_target_s_per_km` is null, do not invent a pace
        (the zones are still on a fallback multiplier). If `downgraded` is true, say it is
        a step down from the planned `planned_intent` and give the reason; if false, tell
        the athlete to keep the planned session.
@@ -155,6 +186,39 @@ only.
      Skip the entire block when `recommendation` is absent.
    - **Wykresy** - embed both: `![HRV](hrv_band.png)` and `![ACWR](acwr.png)`.
    - **Zastrzeżenie** - end with the digest `disclaimer` verbatim.
+
+## Planning the week
+
+The athlete's plan of record is `plans/<monday>_week.md`, one file per week, authored by
+hand and revised mid-week when signals warrant. It drives today's planned intent, the
+recommendation's starting point, and weekly adherence. A week with no file falls back to
+the repeating `plan_template` - a default shape, never an agreed plan.
+
+**Read it** with `mcp__coach__get_plan(week_start)` when the tools are present (defaults
+to the current week). `has_plan: false`, every day sourced `plan_template`, or a
+`PLAN_MISSING` signal all mean the same thing: that week is unplanned. Say so plainly.
+
+**Propose one** when the athlete asks, or when you spot an unplanned week - offer, never
+write unasked. Compose the seven days yourself from what you already read (`get_weekly`
+for the recent shape and adherence, `get_digest` for form and signals, `get_events` for
+what they are training for); the deterministic layer only validates and stores. Each day
+is `{planned, intent}`:
+
+- **`planned`** - the free-text session, in the athlete's own style ("bieg easy 10 km,
+  Zone 2 (HR <145)"). It carries the detail the engine cannot hold: paces, HR caps,
+  distances. It cannot contain `|` or a line break - both break the plan file's table
+  row, and the tool will reject the proposal rather than corrupt it. Rephrase instead.
+- **`intent`** - exactly one of `rest | easy | tempo | strength | hyrox | crossfit |
+  quality`. This is what the engine reads: it names how hard the day is, not the
+  exercises. `crossfit` and `hyrox` both mean a hard mixed session; the discipline lives
+  in `planned`.
+
+Then `plan_preview(week_start, days)` to validate, **show the athlete the table**, and
+only on their explicit go-ahead `plan_confirm(week_start, days)`, which writes the file
+and caches it. Confirm refuses a week that already has a file - revisions are the
+athlete's own edit plus `garmin-coach plan import`, so their prose and revision log are
+never overwritten by a tool that cannot read them. Without the MCP tools, write the file
+in the same table format by hand and run `plan import`.
 
 ## Authoring a custom workout
 

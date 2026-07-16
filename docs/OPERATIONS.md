@@ -225,26 +225,32 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
 - **Claude Desktop** — does **not** read `.mcp.json`. Add the server to
   `claude_desktop_config.json` (macOS:
   `~/Library/Application Support/Claude/claude_desktop_config.json`). Desktop launches
-  the command from its own working directory, so pin the project with poetry's
-  `-C <dir>` flag rather than relying on a `cwd` key (which is community-documented,
-  not part of an official schema):
+  the command from its own working directory, and the server resolves `.env`,
+  `./data/garmin.db`, and `./reports` **relative to its cwd** — so the command must
+  `cd` into the repo first. Poetry's `-C <dir>` flag is not enough: it points poetry
+  at the project but leaves the server's cwd unchanged (verified — the subprocess
+  keeps the caller's cwd), which would silently bootstrap an empty DB elsewhere.
+  Wrap the launch in a shell instead:
 
   ```json
   {
     "mcpServers": {
       "coach": {
-        "command": "/Users/Chabi/.local/bin/poetry",
-        "args": ["-C", "/Users/Chabi/garmin-coach", "run", "garmin-coach-mcp"]
+        "command": "/bin/zsh",
+        "args": [
+          "-c",
+          "cd /Users/Chabi/garmin-coach && /Users/Chabi/.local/bin/poetry run garmin-coach-mcp"
+        ]
       }
     }
   }
   ```
 
   Use poetry's **absolute path** (a GUI app does not inherit your shell `PATH`, so a
-  bare `poetry` often fails to resolve); `which poetry` prints it. This exact command
-  is verified to launch the server from an unrelated working directory. If the
-  launcher still cannot find its runtime, add an `env` block with a `PATH` that
-  includes your Python/poetry bin dirs.
+  bare `poetry` often fails to resolve); `which poetry` prints it. If the launcher
+  still cannot find its runtime, add an `env` block with a `PATH` that includes your
+  Python/poetry bin dirs. Quit Claude Desktop fully (Cmd+Q) and reopen it to pick up
+  the config change.
 - **Claude Cowork / claude.ai** — **not supported.** A local stdio server like this
   one cannot run here. Per Anthropic's docs, Cowork/claude.ai custom connectors are
   **remote MCP only** (a server URL added under Settings -> Connectors): "Local MCP

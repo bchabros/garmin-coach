@@ -15,11 +15,25 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-# Intent hardness, from the ``plan_template.intent`` vocabulary. ``hyrox`` and
-# ``quality`` share the top rank; a cap names a maximum allowable type and the
-# recommendation is the minimum of the planned intent and every cap that fired.
-_INTENT_RANK = {"rest": 0, "easy": 1, "tempo": 2, "hyrox": 3, "quality": 3}
-_QUALITY_TYPES = ("tempo", "hyrox", "quality")
+# Intent hardness over the plan vocabulary (``core.plan.INTENTS``; a test pins the
+# two together, because ``_downgrade`` indexes this map directly). ``hyrox``,
+# ``crossfit`` and ``quality`` share the top rank; a cap names a maximum allowable
+# type and the recommendation is the minimum of the planned intent and every cap
+# that fired.
+_INTENT_RANK = {
+    "rest": 0,
+    "easy": 1,
+    "tempo": 2,
+    "strength": 2,
+    "hyrox": 3,
+    "crossfit": 3,
+    "quality": 3,
+}
+# The quality types are the *running* hard sessions: they take the taper's Z4
+# ceiling and a threshold pace target. ``strength`` is deliberately absent - it is
+# hard work, but a pace target is meaningless for lifting and Garmin is HR-blind
+# to it anyway (see marts/load.py).
+_QUALITY_TYPES = ("tempo", "hyrox", "crossfit", "quality")
 
 # Signals that cap tomorrow to easy AND pin an explicit Z2 heart-rate ceiling.
 _EASY_Z2_CODES = (
@@ -45,7 +59,7 @@ def recommend(
 
     Args:
         digest: The digest dict (its ``signals``, ``zones``, and ``window`` are read).
-        planned_intent: Tomorrow's ``plan_template`` intent, the starting point.
+        planned_intent: Tomorrow's intent from the plan of record, the starting point.
         thresholds: Effective coach thresholds (unused here; reserved for later rules).
 
     Returns:
@@ -179,7 +193,8 @@ def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, A
 
     A menu the athlete chooses from - never an executed re-plan. ``extend`` and
     ``continue`` are cited by the current block; ``rebuild`` is always offered but is a
-    manual suggestion, because ``plan_template`` has no session priority to rebuild from.
+    manual suggestion, because the plan of record ranks hardness, not session priority,
+    so there is nothing to rebuild an ordering from.
     """
     weekly = digest.get("weekly")
     if not weekly or not weekly.get("plan_vs_actual"):
@@ -201,7 +216,7 @@ def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, A
         "recommended": "extend" if block in ("base", "build") else "continue",
         "options": [
             {"id": "extend", "cite": block_cite},
-            {"id": "rebuild", "cite": "manual: no session priorities in plan_template"},
+            {"id": "rebuild", "cite": "manual: the plan of record carries no session priorities"},
             {"id": "continue", "cite": block_cite},
         ],
     }

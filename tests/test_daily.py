@@ -133,3 +133,61 @@ def test_daily_parser_accepts_to_date():
     args = build_parser().parse_args(["daily", "--to", "2026-06-11"])
     assert args.command == "daily"
     assert args.to_date == "2026-06-11"
+
+
+def _plan_file_text(bad_intent: bool = False) -> str:
+    intent = "luz" if bad_intent else "easy"
+    rows = "\n".join(
+        f"| {d} | {date} | sesja | {intent} | plan |"
+        for d, date in zip(
+            ("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"),
+            ("08.06", "09.06", "10.06", "11.06", "12.06", "13.06", "14.06"),
+        )
+    )
+    return (
+        "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
+        "|---|---|---|---|---|\n" + rows + "\n"
+    )
+
+
+def test_daily_run_imports_plans_before_the_pipeline(conn, fake_client, tmp_path):
+    """The plans stage caches every authored week so the digest reads the plan of record."""
+    (tmp_path / "2026-06-08_week.md").write_text(_plan_file_text(), encoding="utf-8")
+
+    result = daily.run_daily(
+        fake_client(),
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-10",
+        plans_dir=tmp_path,
+    )
+
+    assert result.plans_imported == ["2026-06-08"]
+    assert result.status == "ok"
+    n = conn.execute("SELECT COUNT(*) FROM plan_week WHERE week_start='2026-06-08'").fetchone()[0]
+    assert n == 7
+
+
+def test_daily_run_degrades_loudly_on_a_bad_plan_file(conn, fake_client, tmp_path):
+    """A parse error never falls back silently: the run degrades and names the file."""
+    (tmp_path / "2026-06-08_week.md").write_text(_plan_file_text(bad_intent=True), encoding="utf-8")
+
+    result = daily.run_daily(
+        fake_client(),
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-10",
+        plans_dir=tmp_path,
+    )
+
+    assert result.plans_imported == []
+    assert result.status == "degraded"
+    assert result.exit_code == 1
+    assert any("plan import failed" in e for e in result.errors)
+    assert result.features_ok is True  # the pipeline still ran
+
+
+def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client):
+    result = daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+    assert result.plans_imported == []
+    assert result.status == "ok"

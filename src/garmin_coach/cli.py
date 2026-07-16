@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import daily
 from .coach import digest, report
-from .core import db
+from .core import db, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -460,6 +460,27 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_plan(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    conn = _bootstrap_db(settings)
+    plans_dir = args.plans_dir or settings.plans_dir
+
+    try:
+        imported = _plan.import_dir(conn, plans_dir, week=args.week)
+    except _plan.PlanParseError as exc:
+        conn.close()
+        print(f"plan import failed: {exc}")
+        return 1
+    conn.close()
+
+    if not imported:
+        target = args.week or "any week"
+        print(f"plan import: no plan file for {target} in {plans_dir}")
+        return 1
+    print(f"plan import complete: {', '.join(imported)} ({len(imported)} week(s) from {plans_dir})")
+    return 0
+
+
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
     settings = get_settings()
     os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
@@ -589,7 +610,11 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         return 2
 
     result = daily.run_daily(
-        transport, conn, data_start_date=settings.data_start_date, to_date=args.to_date
+        transport,
+        conn,
+        data_start_date=settings.data_start_date,
+        to_date=args.to_date,
+        plans_dir=settings.plans_dir,
     )
     conn.close()
     warnings = len(result.sync.warnings) if result.sync else 0
@@ -766,6 +791,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
     lr.set_defaults(func=_cmd_log_rpe)
+
+    pl = sub.add_parser("plan", help="Ingest the authored weekly plans of record (transport-free).")
+    pl_sub = pl.add_subparsers(dest="plan_command", required=True)
+
+    pl_imp = pl_sub.add_parser("import", help="Cache plans/<monday>_week.md into plan_week.")
+    pl_imp.add_argument(
+        "--week",
+        default=None,
+        help="Monday YYYY-MM-DD of a single week (default: every plan file).",
+    )
+    pl_imp.add_argument(
+        "--plans-dir",
+        dest="plans_dir",
+        default=None,
+        help="Directory of plan files (default: the configured plans_dir).",
+    )
+    pl_imp.set_defaults(func=_cmd_plan)
 
     ev = sub.add_parser("event", help="Record the races you are training for (transport-free).")
     ev_sub = ev.add_subparsers(dest="event_command", required=True)

@@ -53,7 +53,10 @@ Databricks secret scope `mira-secrets`; local/dev runs fall back to environment 
 **Language** — all code, comments, docstrings, log messages, argparse help strings,
 error messages, and print statements must be in English. Exceptions: LLM prompt
 strings and Pydantic field descriptions may be in Polish when the downstream model
-or user-facing output requires it.
+or user-facing output requires it. Likewise the literals that reproduce a
+Polish-language file format the athlete authors by hand — the `plans/<monday>_week.md`
+table headers and day abbreviations in `core/plan.py`: the parser and the writer must
+match the athlete's own files byte-for-byte, so the format dictates the language.
 
 **Emojis** — never use emojis anywhere in code, comments, docstrings, log messages,
 or print statements.

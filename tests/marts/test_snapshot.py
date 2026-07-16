@@ -332,3 +332,49 @@ def test_snapshot_block_fields_stay_null_without_an_anchor(conn):
     assert status["block"] is None
     assert status["weeks_to_event"] is None
     assert status["taper_active"] is None
+
+
+# --- issue #21: today's plan comes from the resolved plan of record -----------
+
+
+def _seed_plan_week(conn, week_start: str, days: list[tuple[str, str]]) -> None:
+    """Seed a plan_week override: days is 7 (planned, intent) pairs, Mon-Sun."""
+    conn.executemany(
+        "INSERT INTO plan_week(week_start, dow, planned, intent) VALUES (?,?,?,?)",
+        [(week_start, dow, planned, intent) for dow, (planned, intent) in enumerate(days)],
+    )
+    conn.commit()
+
+
+def test_planned_today_prefers_the_authored_week_over_the_template(conn):
+    """The golden case from issue #21: Thu 2026-07-16 is quality, not template rest."""
+    _seed_plan_week(
+        conn,
+        "2026-07-13",
+        [
+            ("bieg easy 10 km, Zone 2", "easy"),
+            ("FBB + Hyrox", "quality"),
+            ("rest", "rest"),
+            ("tempo: 8x1 km", "quality"),
+            ("bieg easy 10 km, HR <145", "easy"),
+            ("rest", "rest"),
+            ("Crossfit + Hyrox", "quality"),
+        ],
+    )
+
+    thu = snapshot.build(conn, through_date="2026-07-16")
+    assert thu["planned_intent_today"] == "quality"
+    assert thu["planned_label_today"] == "tempo: 8x1 km"
+    assert thu["plan_source_today"] == "plan_week"
+
+    # Friday: the template says quality, but the athlete downgraded it mid-week.
+    fri = snapshot.build(conn, through_date="2026-07-17")
+    assert fri["planned_intent_today"] == "easy"
+    assert fri["plan_source_today"] == "plan_week"
+
+
+def test_planned_today_falls_back_to_the_template_for_an_unplanned_week(conn):
+    s = snapshot.build(conn, through_date="2026-07-16")  # Thursday, no plan file
+
+    assert s["planned_intent_today"] == "rest"  # template dow=3
+    assert s["plan_source_today"] == "plan_template"

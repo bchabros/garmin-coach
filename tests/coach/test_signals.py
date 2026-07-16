@@ -215,3 +215,22 @@ def test_hard_rpe_picks_the_max_rpe_of_the_day():
 
 def test_hard_rpe_silent_without_any_rated_session():
     assert hard_rpe_yesterday([], HARD_RPE_THR) is None
+
+
+# --- issue #21: PLAN_MISSING -------------------------------------------------
+
+
+def test_plan_missing_fires_when_the_week_runs_on_the_template():
+    signal = signals.plan_missing(has_plan=False, week_start="2026-07-13")
+
+    assert signal["code"] == "PLAN_MISSING"
+    assert signal["severity"] == "info"
+    assert signal["facts"] == {"week_start": "2026-07-13", "source": "plan_template"}
+
+
+def test_plan_missing_is_silent_once_the_week_is_authored():
+    assert signals.plan_missing(has_plan=True, week_start="2026-07-13") is None
+
+
+def test_plan_missing_needs_a_week():
+    assert signals.plan_missing(has_plan=False, week_start=None) is None

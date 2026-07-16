@@ -22,6 +22,9 @@ __pycache__/
 .ruff_cache/
 poetry.lock.bak
 
+# Claude Code per-machine settings (grows with every approved command)
+.claude/settings.local.json
+
 # IDEs
 .idea/
 *.diff

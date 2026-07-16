@@ -1,4 +1,4 @@
-cho# Development guide
+# Development guide
 
 For coding agents (Claude Code, Codex) and humans **changing the code**. The
 always-loaded core is `CLAUDE.md`; this guide is read on demand when you touch the
@@ -7,10 +7,9 @@ definitions live in `docs/glossary.md`.
 
 ## Workflow
 
-Build phase-by-phase (0 -> 6); each phase has a Definition of Done (the BUILD doc for
-phases 0-5, the phase PRD for 6+) -- don't advance until it's met. Forward plan for
-everything after Phase 5 is `docs/PROJECT.md` (Part II). The established loop for a new feature is
-a chain of skills:
+Work is tracked as GitHub issues (see `docs/agents/issue-tracker.md`); each issue
+carries its Definition of Done in the spec -- don't close it until that's met. The
+established loop for a new feature is a chain of skills:
 
 **`/grill-with-docs` -> `/to-spec` -> `/to-tickets` -> `/implement` -> `/code-review`**
 
@@ -19,8 +18,9 @@ a chain of skills:
   very complex tasks use `/wayfinder` instead -- a heavier, map-driven alternative
   (`docs/prd/<feature>/map.md`; see the wayfinding section in
   `docs/agents/issue-tracker.md`).
-- **`/to-spec`** -- write the spec to `docs/prd/<feature>/PRD.md`.
-- **`/to-tickets`** -- break the spec into `docs/prd/<feature>/issues/NN-<slug>.md`
+- **`/to-spec`** -- publish the spec as a GitHub issue (title = the capability gap,
+  body = problem/solution/decisions; see `docs/agents/issue-tracker.md`).
+- **`/to-tickets`** -- break the spec into the issue's task-list checklist
   (see `docs/agents/issue-tracker.md`).
 - **`/implement`** -- build a ticket test-first (TDD, red -> green).
 - **`/code-review`** -- review the branch before merge.
@@ -56,7 +56,7 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess
 without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
-`daily_metrics`/`weekly_metrics`/`athlete_zones` (recomputed; phase 2+). Derived values
+`daily_metrics`/`weekly_metrics`/`athlete_zones` (recomputed, never edited). Derived values
 live only in marts/views, never mixed into core. Full vocabulary in `docs/glossary.md`.
 
 ## Testing seams
@@ -104,9 +104,9 @@ Operational gotchas (rate limits, backfill window, idempotency) live in
 
 ## Deferred / TODO
 
-Not-yet-done work carried forward. Completed phases are recorded in the `README.md`
-status table plus each phase's PRD (`docs/prd/`) and ADR (`docs/adr/`); the forward plan
-(Phases 6+) is in `docs/PROJECT.md` (Part II).
+Not-yet-done work carried forward. The finished build is recorded in
+`docs/PROJECT.md` plus each feature's PRD (`docs/prd/`) and ADR (`docs/adr/`); new
+work is tracked as GitHub issues (`docs/agents/issue-tracker.md`).
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) -- committed
   in the Phase 0 PRD (D9) but not yet implemented.

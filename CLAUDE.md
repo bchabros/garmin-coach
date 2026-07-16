@@ -8,7 +8,8 @@ byte-for-byte mirror (the mirror rule is in `docs/DEVELOPMENT.md`).
 
 Local ETL + coaching system for one athlete's Garmin Connect data. Pulls daily,
 stores in SQLite as system-of-record, computes training metrics, feeds a coach
-skill. Full brief and roadmap: `docs/PROJECT.md`. Per-phase PRDs: `docs/prd/`.
+skill. New work is tracked as GitHub issues (see below); the phased build history
+lives in `docs/PROJECT.md` (brief) and `docs/prd/` (per-phase PRDs), both frozen.
 
 **Golden rule -- separate transport from intelligence.** The deterministic ETL uses
 the `garminconnect` library. The metrics/coach layer only ever reads the finished

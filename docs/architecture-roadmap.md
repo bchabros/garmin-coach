@@ -1,6 +1,7 @@
 # Architecture Roadmap After Phase 5
 
-Status: completed
+Status: completed (historical — new work is tracked as GitHub issues,
+see `docs/agents/issue-tracker.md`)
 
 This roadmap turns the post-Phase-5 architecture review into testable slices. The
 goal is to deepen shallow modules without changing the core project decisions:

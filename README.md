@@ -15,35 +15,28 @@ and what's missing.
 
 One repo, several work surfaces: Claude Code and Codex build/maintain it, while
 Claude Cowork points at the same DB and runs the coach skill. See
-[docs/PROJECT.md](docs/PROJECT.md) for the full brief and roadmap — the built
-phases 0-11 plus the forward plan for read-MCP.
+[docs/PROJECT.md](docs/PROJECT.md) for the full brief — the phased build history
+that got the system here. New work is tracked as GitHub issues.
 
-## Status
+## How work is tracked
 
-| Phase | Scope | State                                                                                                                                   |
-|-------|-------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| 0 | Raw capture + idempotent backfill | Done — [docs/prd/phase-0.md](docs/prd/phase-0.md)                                                                                       |
-| 1 | Incremental sync + resilience (watermark, retry, per-day fallback) | Done — [docs/prd/phase-1.md](docs/prd/phase-1.md), [ADR 0001](docs/adr/0001-phase-1-incremental-sync.md)                                |
-| 2 | Metrics mart (`features.py` → `daily_metrics`) | Done — [docs/prd/phase-2.md](docs/prd/phase-2.md), [ADR 0002](docs/adr/0002-phase-2-metrics-semantics.md)                               |
-| 3 | Coach skill (digest + charts + `report.md`) | Done — [docs/prd/phase-3.md](docs/prd/phase-3.md), [ADR 0003](docs/adr/0003-phase-3-coach-signals.md)                                   |
-| 4 | Automation (nightly orchestrator, alerts, launchd/cron) | Done — [docs/prd/phase-4.md](docs/prd/phase-4.md), [ADR 0004](docs/adr/0004-phase-4-automation.md)                                      |
-| 5 | Weekly rollups, plan-vs-actual, deload detection | Done — [docs/prd/phase-5.md](docs/prd/phase-5.md), [ADR 0005](docs/adr/0005-phase-5-weekly-rollups-and-plan-vs-actual.md), [ADR 0006](docs/adr/0006-post-phase-5-architecture-deepening.md) |
-| 6 | Personal training zones (`athlete_zones` mart, LTHR anchor) | Done — [docs/prd/phase-6.md](docs/prd/phase-6.md), [ADR 0007](docs/adr/0007-phase-6-personal-zones.md)                              |
-| 6b | Athlete snapshot (`athlete_status` mart + `snapshot` command) | Done — [docs/prd/phase-6b/PRD.md](docs/prd/phase-6b/PRD.md), [ADR 0009](docs/adr/0009-phase-6b-athlete-snapshot.md)                                      |
-| 7 | Session-RPE load model for strength/Hyrox + niggle log | Done — [docs/prd/phase-7/PRD.md](docs/prd/phase-7/PRD.md), [ADR 0010](docs/adr/0010-phase-7-strength-load-and-niggle.md)                                      |
-| 8 | Per-set capture + movement-pattern overlap | Done — [docs/prd/phase-8-movement-overlap/PRD.md](docs/prd/phase-8-movement-overlap/PRD.md), [ADR 0011](docs/adr/0011-phase-8-movement-overlap.md)                  |
-| 9 | Race-date periodization (`goal_event` + `plan_block` marts) | Done — [docs/prd/phase-9-periodization/PRD.md](docs/prd/phase-9-periodization/PRD.md), [ADR 0012](docs/adr/0012-phase-9-race-date-periodization.md)                  |
-| 10 | Prospective session recommender (re-planning-aware) | Done — [docs/prd/phase-10-recommender/PRD.md](docs/prd/phase-10-recommender/PRD.md)                                                                                      |
-| 11 | Structured workout authoring + push to Garmin (run first) | Done — [docs/prd/phase-11-workout-push/PRD.md](docs/prd/phase-11-workout-push/PRD.md), [ADR 0013](docs/adr/0013-phase-11-workout-authoring-and-push.md)                  |
-| read-MCP | Read-only MCP server over the local marts (tooling, built last) | Planned — [docs/PROJECT.md](docs/PROJECT.md#read-mcp-conversational-read-layer)                                                                                      |
+New work lives as [GitHub issues](https://github.com/bchabros/garmin-coach/issues),
+titled by the capability gap they close: the spec sits in the issue body, tickets
+are a task-list checklist, and the closing PR squash-merges. Conventions in
+[docs/agents/issue-tracker.md](docs/agents/issue-tracker.md); architecture
+decisions still land in [docs/adr/](docs/adr/).
 
-Phases 0-11 are built and everything after is the forward plan; both live in
-[docs/PROJECT.md](docs/PROJECT.md), which also records the industry survey and the
-dependency ordering between the planned phases. Phase 11 ships run-workout push;
-strength/HIIT push stays a documented spike ([findings](docs/prd/phase-11-workout-push/strength-spike-findings.md)),
-so strength execution stays local for now. Phase 9b (race-day pacing) has moved
-out of the roadmap to GitHub issue [#13](https://github.com/bchabros/garmin-coach/issues/13) —
-it is deliberately scoped to run close to race day.
+The system was originally built as a phased roadmap (phases 0-11: raw capture,
+resilient sync, metrics marts, the coach skill, automation, weekly rollups,
+personal zones, the athlete snapshot, strength load, movement overlap,
+periodization, the recommender, and workout push), capped by the coach MCP server
+([ADR 0014](docs/adr/0014-coach-mcp-server.md)). That history is preserved as-is:
+the brief and per-phase sections in [docs/PROJECT.md](docs/PROJECT.md), per-phase
+PRDs in [docs/prd/](docs/prd/), and decisions in [docs/adr/](docs/adr/). Known
+open threads already live as issues — race-day pacing
+([#13](https://github.com/bchabros/garmin-coach/issues/13)) and strength/HIIT
+authoring + push ([#16](https://github.com/bchabros/garmin-coach/issues/16),
+spike [findings](docs/prd/phase-11-workout-push/strength-spike-findings.md)).
 
 ## Layout
 
@@ -57,14 +50,14 @@ garmin-coach/
 ├── .codex/                   # Codex local notes and companion files
 ├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
 ├── docs/
-│   ├── PROJECT.md            # build brief + roadmap: phases 0–10 (built) and 11 + read-MCP
-│   ├── architecture-roadmap.md # post-Phase-5 architecture review (completed)
+│   ├── PROJECT.md            # build history: the phased brief (0–11), kept as-is (historical)
+│   ├── architecture-roadmap.md # architecture review after the weekly rollups (historical)
 │   ├── DEVELOPMENT.md        # coding guide: workflow, module map, conventions, seams
 │   ├── OPERATIONS.md         # operator runbook: pipeline, exit codes, logs, reports
 │   ├── schema.sql            # DB schema snapshot (source of truth: the package copy)
 │   ├── glossary.md           # domain vocabulary (single source of truth)
-│   ├── adr/                  # decision records (0001–0012; one per phase + architecture/docs)
-│   └── prd/                  # per-phase PRDs (phase-0 .. phase-10) + docs-layering
+│   ├── adr/                  # decision records (living — the tracker holds work, the repo holds decisions)
+│   └── prd/                  # historical per-phase PRDs (frozen; new specs live in GitHub issues)
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
@@ -151,7 +144,7 @@ so your edits survive re-runs) and are meant to be edited to fit the athlete:
   after your own backfill, review them (each row's `note` says what it means).
 - **`plan_template`** — your intended weekly pattern, one row per day of week
   (`dow` 0 = Monday) with a free-text label and an intent (`rest | quality |
-  easy`). Phase 5's plan-vs-actual and `plan_adherence` are measured against
+  easy`). Weekly plan-vs-actual and `plan_adherence` are measured against
   this table, so it should reflect *your* plan, not the seeded one.
 
 Edit both with plain SQL (`sqlite3 data/garmin.db`), then re-run
@@ -221,7 +214,7 @@ the latest `digest.json` + charts into a narrated `report.md`. Coach sessions al
 keep qualitative context outside the DB: `memory/` holds the long-term athlete
 profile (goals, tendencies, coaching decisions — the DB holds the numbers, this
 folder holds the narrative) and `plans/` holds the weekly training plans that
-Phase 5 plan-vs-actual is later checked against. Both are personal data and
+weekly plan-vs-actual is later checked against. Both are personal data and
 gitignored.
 
 ## Automation
@@ -321,6 +314,6 @@ health concerns.
 ## Credits
 
 Built with [Claude Code](https://claude.com/claude-code) (and Codex) driving the
-phase workflow described in `docs/DEVELOPMENT.md` (grill the design, write a PRD, then TDD).
+feature workflow described in `docs/DEVELOPMENT.md` (grill the design, spec the issue, then TDD).
 The agent skills used along the way are adapted from
 [Matt Pocock's skills collection](https://github.com/mattpocock/skills).

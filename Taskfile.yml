@@ -84,6 +84,16 @@ tasks:
     cmds:
       - poetry run pytest tests/test_schema_sync.py -p no:cacheprovider
 
+  claude:check:
+    desc: Report whether Claude Desktop has the coach MCP server and an up-to-date coach skill.
+    cmds:
+      - python3 scripts/claude_desktop.py check
+
+  claude:register:
+    desc: Register the coach MCP server in Claude Desktop (idempotent; backs the config up first).
+    cmds:
+      - python3 scripts/claude_desktop.py register
+
   clean:
     desc: Remove local Python and tool caches.
     cmds:

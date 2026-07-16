@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Wire this repo into Claude Desktop: register the coach MCP server, check skill drift.
+
+Two separate problems, only one of which can be automated:
+
+- **The MCP server** is registered by adding one entry to Claude Desktop's config
+  JSON. This script does that idempotently, preserving every other key in the file.
+  The entry invokes the ``garmin-coach-mcp`` console script by name, so it is
+  written once per machine and never needs updating when the code changes.
+
+- **The coach skill** lives on the user's Claude account (it is synced *down* to
+  Claude Desktop, not read from this repo), which is what makes it visible to
+  Cowork and to claude.ai chat. There is no supported local or API path to push it
+  up, so this script cannot upload it -- it only reports whether the copy Claude
+  last synced still matches ``skills/coach/SKILL.md``, turning a silent staleness
+  problem into a loud one. Re-uploading stays manual.
+
+Usage::
+
+    python3 scripts/claude_desktop.py check      # report only, never writes
+    python3 scripts/claude_desktop.py register   # add/update the MCP entry
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+from typing import Any
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+SERVER_NAME = "coach"
+SKILL_NAME = "coach"
+REPO_SKILL = REPO_ROOT / "skills" / SKILL_NAME / "SKILL.md"
+
+CONFIG_PATH = (
+    pathlib.Path.home()
+    / "Library"
+    / "Application Support"
+    / "Claude"
+    / "claude_desktop_config.json"
+)
+SKILL_CACHE_GLOB = (
+    "Library/Application Support/Claude/local-agent-mode-sessions/"
+    f"skills-plugin/*/*/skills/{SKILL_NAME}/SKILL.md"
+)
+
+
+class RegistrationError(RuntimeError):
+    """Raised when the Desktop config cannot be read or safely updated."""
+
+
+def _poetry_path() -> str:
+    """Return an absolute path to the poetry executable.
+
+    Raises:
+        RegistrationError: If poetry is not on PATH.
+    """
+    found = shutil.which("poetry")
+    if found is None:
+        raise RegistrationError("poetry not found on PATH; install it or run `task install` first")
+    return found
+
+
+def desired_entry() -> dict[str, Any]:
+    """Build the MCP server entry for this repo.
+
+    The command cds into the repo first: the server resolves ``.env``, the SQLite
+    file, and ``reports/`` relative to its working directory, and Claude Desktop
+    spawns the command from its own cwd.
+    """
+    return {
+        "command": "/bin/zsh",
+        "args": ["-c", f"cd {REPO_ROOT} && {_poetry_path()} run garmin-coach-mcp"],
+    }
+
+
+def load_config() -> dict[str, Any]:
+    """Read and parse the Claude Desktop config.
+
+    Raises:
+        RegistrationError: If the file is missing or is not valid JSON. Both are
+            refusals to guess: overwriting an unparseable config would discard
+            whatever the user has in it.
+    """
+    if not CONFIG_PATH.exists():
+        raise RegistrationError(
+            f"no Claude Desktop config at {CONFIG_PATH}; open Claude Desktop once to create it"
+        )
+    try:
+        parsed = json.loads(CONFIG_PATH.read_text())
+    except json.JSONDecodeError as exc:
+        raise RegistrationError(f"{CONFIG_PATH} is not valid JSON ({exc}); refusing to overwrite")
+    if not isinstance(parsed, dict):
+        raise RegistrationError(f"{CONFIG_PATH} is not a JSON object; refusing to overwrite")
+    return parsed
+
+
+def desktop_is_running() -> bool:
+    """Return True if Claude Desktop appears to be running.
+
+    Claude Desktop holds the config in memory and rewrites it (preferences and
+    window state) as it runs, so a write landing now can be clobbered when it
+    next saves.
+    """
+    result = subprocess.run(["pgrep", "-x", "Claude"], capture_output=True, check=False)
+    return result.returncode == 0
+
+
+def _backup(path: pathlib.Path) -> pathlib.Path:
+    """Copy path alongside itself with a timestamped suffix and return the copy."""
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = path.with_suffix(f".json.bak-{stamp}")
+    shutil.copy2(path, target)
+    return target
+
+
+def register(force: bool = False) -> int:
+    """Add or update this repo's MCP entry in the Desktop config.
+
+    Every other key in the file -- other servers, preferences, window state -- is
+    read and written back untouched.
+
+    Args:
+        force: Write even when Claude Desktop is running (it may clobber the write).
+
+    Returns:
+        A process exit code.
+    """
+    config = load_config()
+    entry = desired_entry()
+    servers = config.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        raise RegistrationError(
+            "`mcpServers` in the config is not an object; refusing to overwrite"
+        )
+
+    if servers.get(SERVER_NAME) == entry:
+        print(f"[claude-desktop] '{SERVER_NAME}' is already registered and current; nothing to do")
+        return 0
+
+    if desktop_is_running() and not force:
+        print(
+            "[claude-desktop] Claude Desktop is running. It rewrites this config as it runs, so a\n"
+            "                 write now may be silently clobbered. Quit Claude Desktop and re-run,\n"
+            "                 or pass --force to write anyway.",
+            file=sys.stderr,
+        )
+        return 2
+
+    was = "updating" if SERVER_NAME in servers else "adding"
+    servers[SERVER_NAME] = entry
+    backup = _backup(CONFIG_PATH)
+    CONFIG_PATH.write_text(json.dumps(config, indent=2) + "\n")
+    print(f"[claude-desktop] {was} '{SERVER_NAME}' in {CONFIG_PATH}")
+    print(f"[claude-desktop] backup written to {backup}")
+    print("[claude-desktop] restart Claude Desktop for the change to take effect")
+    return 0
+
+
+def check_mcp() -> bool:
+    """Report whether the Desktop config holds a current entry for this repo.
+
+    Returns:
+        True if the registration is present and current.
+    """
+    try:
+        servers = load_config().get("mcpServers", {})
+    except RegistrationError as exc:
+        print(f"[mcp]   cannot check: {exc}")
+        return False
+
+    current = servers.get(SERVER_NAME) if isinstance(servers, dict) else None
+    if current is None:
+        print(f"[mcp]   '{SERVER_NAME}' is NOT registered in Claude Desktop")
+        print("[mcp]   fix: task claude:register")
+        return False
+    if current != desired_entry():
+        print(f"[mcp]   '{SERVER_NAME}' is registered but points somewhere else:")
+        print(f"[mcp]     found:  {json.dumps(current)}")
+        print(f"[mcp]     expect: {json.dumps(desired_entry())}")
+        print("[mcp]   fix: task claude:register")
+        return False
+    print(f"[mcp]   '{SERVER_NAME}' is registered and current")
+    return True
+
+
+def check_skill() -> bool:
+    """Report whether the coach skill Claude last synced matches this repo.
+
+    The cached copy under Application Support is synced down from the user's Claude
+    account, so it stands in for "what Cowork and claude.ai chat are actually
+    running" -- as of the last sync.
+
+    Returns:
+        True if the synced copy matches the repo.
+    """
+    if not REPO_SKILL.exists():
+        print(f"[skill] no skill in this repo at {REPO_SKILL}")
+        return False
+
+    cached = sorted(pathlib.Path.home().glob(SKILL_CACHE_GLOB))
+    if not cached:
+        print(f"[skill] '{SKILL_NAME}' has never synced to this machine")
+        print("[skill] Claude has no copy of it, or Claude Desktop has not synced yet.")
+        print(
+            "[skill] fix: upload skills/coach/ at claude.ai -> Settings -> Capabilities -> Skills"
+        )
+        return False
+
+    stale = [p for p in cached if p.read_text() != REPO_SKILL.read_text()]
+    if stale:
+        print(
+            f"[skill] '{SKILL_NAME}' on your Claude account is STALE -- it differs from this repo"
+        )
+        for path in stale:
+            print(f"[skill]   synced copy: {path}")
+        print(f"[skill]   diff: diff '{stale[0]}' {REPO_SKILL}")
+        print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
+        print(
+            "[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/"
+        )
+        return False
+
+    print(f"[skill] '{SKILL_NAME}' on your Claude account matches this repo (as of last sync)")
+    return True
+
+
+def check() -> int:
+    """Report MCP registration and skill freshness without writing anything.
+
+    Returns:
+        0 if both are current, 1 otherwise.
+    """
+    print(f"[claude-desktop] repo: {REPO_ROOT}")
+    mcp_ok = check_mcp()
+    skill_ok = check_skill()
+    return 0 if (mcp_ok and skill_ok) else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to check or register.
+
+    Returns:
+        A process exit code.
+    """
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("check", help="Report MCP registration and skill freshness; never writes.")
+    register_parser = sub.add_parser(
+        "register", help="Add or update this repo's coach MCP entry in Claude Desktop."
+    )
+    register_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Write even while Claude Desktop is running (it may clobber the write).",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "register":
+            return register(force=args.force)
+        return check()
+    except RegistrationError as exc:
+        print(f"[claude-desktop] {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

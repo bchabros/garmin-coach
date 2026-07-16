@@ -70,35 +70,44 @@ garmin-coach/
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
 ├── skills/coach/SKILL.md     # narrative layer: reads digest.json, writes report.md
 ├── src/garmin_coach/
-│   ├── config.py             # pydantic-settings: .env + paths + logging config
-│   ├── client.py             # transport: login (+MFA), garminconnect method map
-│   ├── db.py                 # connect, schema bootstrap, idempotent upserts
-│   ├── models.py             # pure normalizers payload→row + discipline mapping
-│   ├── sync.py               # backfill + incremental sync: raw-first, upsert core,
+│   ├── core/                 # shared foundation
+│   │   ├── config.py         # pydantic-settings: .env + paths + logging config
+│   │   ├── db.py             # connect, schema bootstrap, idempotent upserts
+│   │   ├── models.py         # pure normalizers payload→row + discipline mapping
+│   │   ├── weeks.py          # leaf: Monday-anchored week arithmetic
+│   │   └── schema.sql        # runtime schema (loaded via importlib.resources)
+│   ├── etl/                  # read transport (the only garminconnect importer)
+│   │   ├── client.py         # login (+MFA), garminconnect method map
+│   │   └── sync.py           # backfill + incremental sync: raw-first, upsert core,
 │   │                          #   retry/backoff, per-day fallback, isolated streams
-│   ├── features.py           # mart: daily_metrics (HRV baseline/SD, ACWR, load buckets)
-│   ├── load.py               # per-activity sRPE load blend (strength/Hyrox) shared by marts
-│   ├── weekly.py             # mart: weekly_metrics + weekly_plan_actual (run by features)
-│   ├── zones.py              # mart: athlete_zones (LTHR anchor → %LTHR HR bands + Z2 pace ceiling)
-│   ├── overlap.py            # mart: pattern_overlap (same movement pattern/muscle on adjacent days)
-│   ├── periodize.py          # mart: plan_block (training blocks counted back from the goal race)
-│   ├── weeks.py              # leaf: Monday-anchored week arithmetic
-│   ├── snapshot.py           # mart: athlete_status (the single current-standing snapshot)
-│   ├── thresholds.py         # coach threshold policy: defaults + DB overrides
-│   ├── digest.py             # headline + coach signals + weekly/zones/plan sections (build_digest)
-│   ├── signals.py            # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED, TAPER_ACTIVE)
-│   ├── recommend.py          # tomorrow's session recommendation composed from the digest (Phase 10)
-│   ├── charts.py             # HRV band + ACWR matplotlib charts
-│   ├── report.py             # orchestrates digest + charts → reports/{date}/
+│   ├── marts/                # recomputable mart builders over core tables
+│   │   ├── features.py       # daily_metrics (HRV baseline/SD, ACWR, load buckets)
+│   │   ├── load.py           # per-activity sRPE load blend (strength/Hyrox) shared by marts
+│   │   ├── weekly.py         # weekly_metrics + weekly_plan_actual (run by features)
+│   │   ├── zones.py          # athlete_zones (LTHR anchor → %LTHR HR bands + Z2 pace ceiling)
+│   │   ├── overlap.py        # pattern_overlap (same movement pattern/muscle on adjacent days)
+│   │   ├── periodize.py      # plan_block (training blocks counted back from the goal race)
+│   │   └── snapshot.py       # athlete_status (the single current-standing snapshot)
+│   ├── coach/                # coach intelligence: reads the finished marts only
+│   │   ├── digest.py         # headline + coach signals + weekly/zones/plan sections (build_digest)
+│   │   ├── signals.py        # pure signal rules invoked by digest.py (incl. DELOAD_ADVISED, TAPER_ACTIVE)
+│   │   ├── thresholds.py     # coach threshold policy: defaults + DB overrides
+│   │   ├── recommend.py      # tomorrow's session recommendation composed from the digest
+│   │   ├── charts.py         # HRV band + ACWR matplotlib charts
+│   │   └── report.py         # orchestrates digest + charts → reports/{date}/
+│   ├── workouts/             # structured workout authoring + push (the only Garmin write)
+│   │   ├── author.py         # workout request → deterministic workout spec (pure)
+│   │   └── publish.py        # idempotent push orchestration behind the confirm interlock
+│   ├── mcp/                  # coach MCP server (sanctioned tool surface, ADR 0014)
+│   │   ├── server.py         # FastMCP wiring: tools, confirm interlock, live client
+│   │   └── tools.py          # one-call read/refresh/push tool implementations
 │   ├── daily.py              # nightly orchestrator: sync → features → alerts
-│   ├── cli.py                # argparse entry point (backfill/sync/features/report/snapshot/event/log-rpe/daily)
-│   └── schema.sql            # runtime schema (loaded via importlib.resources)
-├── tests/
+│   └── cli.py                # argparse entry point (backfill/sync/features/report/snapshot/event/log-rpe/daily)
+├── tests/                    # mirrors the src packages (core/, etl/, marts/, coach/, workouts/, mcp/)
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader
 │   ├── fixtures/             # anonymized real Garmin payloads + golden fixtures
-│   └── test_*.py             # one module per seam (models, db, sync, features, weekly,
-│                              #   zones, signals, digest, daily, thresholds, config, cli,
-│                              #   schema-sync guard)
+│   └── <pkg>/test_*.py       # one module per seam; cross-cutting guards at the top
+│                              #   (cli, daily, refresh, agents-mirror, schema-sync)
 ├── memory/                   # coach long-term memory: athlete profile, goals, coaching
 │                              #   decisions (Polish, gitignored — numbers stay in the DB)
 ├── plans/                    # weekly training plans written in coach sessions (gitignored)

@@ -25,7 +25,7 @@ def fixture():
 @pytest.fixture
 def conn():
     """A fresh in-memory SQLite connection with the package schema applied."""
-    from garmin_coach import db
+    from garmin_coach.core import db
 
     c = db.connect(":memory:")
     db.bootstrap(c)

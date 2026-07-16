@@ -268,7 +268,7 @@ register *that* command wherever a stdio command is accepted:
 
 ```bash
 pip install mcp matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
-PYTHONPATH=src python3 -m garmin_coach.mcp_server
+PYTHONPATH=src python3 -m garmin_coach.mcp.server
 ```
 
 (`matplotlib` is needed because the server's import chain reaches `report` ->

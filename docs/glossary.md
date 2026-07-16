@@ -262,7 +262,7 @@ code, docstrings, PRDs, and ADRs.
   wins over the recommender's `pace_target_s_per_km` and suppresses the
   pace -> HR -> none degradation (it is already fully specified).
 
-## Coach MCP terms (mcp_tools -> mcp_server, epic #18)
+## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 
 - **coach MCP** - the local `coach` stdio server (`mcp__coach__*`, registered in the
   repo's `.mcp.json`): 14 tools in four groups (read / local write / transport read /

@@ -1,4 +1,4 @@
-"""Command-line entry point. Phase 0 exposes only `backfill`."""
+"""Command-line entry point: pipeline runs, marts, reports, and workout push."""
 
 from __future__ import annotations
 
@@ -10,12 +10,16 @@ import pathlib
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import author as _author
-from . import client, daily, db, digest, features, periodize, publish, report, snapshot, sync
-from .config import get_settings
+from . import daily
+from .coach import digest, report
+from .core import db
+from .core.config import get_settings
+from .etl import client, sync
+from .marts import features, periodize, snapshot
+from .workouts import author as _author, publish
 
 if TYPE_CHECKING:
-    from .config import Settings
+    from .core.config import Settings
 
 
 def _bootstrap_db(settings: Settings) -> sqlite3.Connection:
@@ -660,7 +664,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--from-recommendation",
         dest="from_recommendation",
         action="store_true",
-        help="Author from the Phase 10 recommendation for the target date.",
+        help="Author from the stored recommendation for the target date.",
     )
     au_src.add_argument(
         "--request",
@@ -673,7 +677,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="sport",
         default="run",
         choices=["run"],
-        help="Authoring family for --from-recommendation (only run is authored in this phase).",
+        help="Authoring family for --from-recommendation (only run is authored for now).",
     )
     au.add_argument(
         "--reports-dir",

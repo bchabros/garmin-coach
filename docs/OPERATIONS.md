@@ -14,8 +14,10 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
 - `reports/{date}/` -- deterministic coach artifacts: `digest.json`, `hrv_band.png`,
   `acwr.png`, and the narrative `report.md`. One folder per report run day.
 - `plans/` -- weekly training plans as Markdown (e.g. `2026-07-06_week.md`): the athlete's
-  intended week with session detail the DB does not store, plus notes and the plan-vs-actual
-  follow-up date. Human record; the pipeline does not read it.
+  **plan of record**, with session detail the DB does not store, plus notes and the
+  plan-vs-actual follow-up date. The `Zamiar (dla silnika)` column is ingested into
+  `plan_week` and drives every planned-intent read (issue #21, ADR 0015); the rest stays
+  prose for the human. Gitignored personal data.
 - `memory/` -- long-term athlete context. **Read `memory/athlete-profile.md` at the start of
   a coaching session** (goals, physiology, tendencies, coaching decisions, open threads).
   Qualitative context that does not belong in the DB; numbers there only summarize the DB.
@@ -31,7 +33,8 @@ poetry run garmin-coach sync                          # pull missing data since 
 poetry run garmin-coach refresh-today                 # opt-in same-day pull + features (partial!)
 poetry run garmin-coach features                      # recompute marts (daily + weekly + zones)
 poetry run garmin-coach report [--to YYYY-MM-DD]      # build digest.json + charts for a date
-poetry run garmin-coach daily  [--to YYYY-MM-DD]      # nightly: sync -> features -> alerts
+poetry run garmin-coach plan import [--week YYYY-MM-DD]  # cache plans/*.md into plan_week
+poetry run garmin-coach daily  [--to YYYY-MM-DD]      # nightly: plans -> sync -> features -> alerts
 scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / launchd
 ```
 
@@ -39,8 +42,13 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   re-run over an already-filled range.
 - **Routine catch-up:** `sync` advances each stream from its watermark; then `features`
   rebuilds the marts.
-- **Nightly:** `daily` (or `scripts/daily.sh`) chains sync -> features -> alerts. Alerts
-  are the digest's `warn`/`alert` signals, logged; **no charts** on the nightly path.
+- **After editing a plan:** `plan import` caches `plans/*.md` immediately (idempotent;
+  re-importing a mid-week revision just overwrites). The nightly run does the same scan,
+  so an edit takes effect by morning at the latest.
+- **Nightly:** `daily` (or `scripts/daily.sh`) chains plans -> sync -> features -> alerts.
+  Alerts are the digest's `warn`/`alert` signals, logged; **no charts** on the nightly path.
+  A malformed plan file **degrades** the run (exit 1) and names the file -- it never falls
+  back silently to the template.
 - Scheduling is documented, not auto-installed: see
   `scripts/com.garmincoach.daily.plist.example` for a launchd template.
 
@@ -203,9 +211,19 @@ Which clients pick it up and how is covered in "Registering the server" below �
 
 - **Read tools** (local DB, no Garmin): `get_snapshot`, `get_digest`,
   `get_recent_activities(n)`, `get_weekly(week_start)`, `get_zones`,
-  `get_recommendation(date)`, `get_events`, `get_workout_status(date)`.
+  `get_plan(week_start)`, `get_recommendation(date)`, `get_events`,
+  `get_workout_status(date)`.
 - **Local writes** (transport-free): `log_rpe(activity_id, rpe, ...)`,
   `log_niggle(body_part, severity, ...)` — same validation as `log-rpe` in the CLI.
+- **Plan of record** — `get_plan(week_start?)` returns the resolved week with a
+  per-day `source` (`plan_week` = the athlete authored it, `plan_template` = the
+  fallback shape answered) and `has_plan`. When a week is unplanned the digest also
+  carries the `PLAN_MISSING` signal. To plan it: compose seven `{planned, intent}`
+  days from the athlete's history and standing, call `plan_preview(week_start, days)`
+  to validate and **show the table to the athlete**, then `plan_confirm(week_start,
+  days)` to write `plans/<monday>_week.md` and cache it. Confirm **refuses an
+  already-authored week** — revise that file by hand and re-import, so its paces,
+  rationale, and revision log survive (see ADR 0015).
 - **`refresh_today`** — the MCP form of `refresh-today` (see above): pulls today
   partial, rebuilds the mart, never advances watermarks. Call it at most once per
   coach read; it shares the login rate-limit exposure (429) of any transport call.

@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     data_start_date: str = "2026-06-08"
     db_path: str = "./data/garmin.db"
 
+    # Authored weekly plans of record (issue #21); gitignored personal data.
+    plans_dir: str = "./plans"
+
     # Where garminconnect caches OAuth tokens.
     garmintokens: str = "~/.garminconnect"
 

@@ -24,6 +24,7 @@ from ..workouts import publish
 server = FastMCP("coach")
 
 _REPORTS_DIR = "./reports"
+_PLANS_DIR = "./plans"
 
 
 def _open() -> sqlite3.Connection:
@@ -80,6 +81,51 @@ def get_zones() -> dict[str, Any]:
     conn = _open()
     try:
         return tools.get_zones(conn)
+    finally:
+        conn.close()
+
+
+@server.tool()
+def get_plan(week_start: str | None = None) -> dict[str, Any]:
+    """The plan of record for a week (default: this week), per-day source included.
+
+    ``source: plan_week`` means the athlete authored the day; ``plan_template``
+    means the repeating template answered for it. ``has_plan: False`` marks an
+    unplanned week - propose one with ``plan_preview``.
+    """
+    conn = _open()
+    try:
+        return tools.get_plan(conn, week_start=week_start)
+    finally:
+        conn.close()
+
+
+@server.tool()
+def plan_preview(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate a proposed week of training and show it back; nothing is written.
+
+    ``days`` is seven ``{planned, intent}`` dicts, Monday-Sunday. ``planned`` is
+    the free-text session (paces, distances, HR caps); ``intent`` must be one of
+    rest | easy | tempo | strength | hyrox | crossfit | quality. Compose it from
+    the athlete's history and standing, show the result, and only then confirm.
+    """
+    conn = _open()
+    try:
+        return tools.plan_preview(conn, week_start=week_start, days=days, plans_dir=_PLANS_DIR)
+    finally:
+        conn.close()
+
+
+@server.tool()
+def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
+    """Write the previewed week to plans/<monday>_week.md and cache it in the DB.
+
+    Refused when the week already has a plan file - revise that one by hand and
+    re-import, so its prose and revision log are never clobbered.
+    """
+    conn = _open()
+    try:
+        return tools.plan_confirm(conn, week_start=week_start, days=days, plans_dir=_PLANS_DIR)
     finally:
         conn.close()
 

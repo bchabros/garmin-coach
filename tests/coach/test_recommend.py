@@ -257,3 +257,39 @@ def test_downgrade_never_disturbs_a_rest_day():
     assert rec["pace_target_s_per_km"] is None
     assert rec["downgraded"] is False
     assert rec["rationale"] == []
+
+
+# --- issue #21: the widened plan vocabulary ----------------------------------
+
+
+def test_intent_rank_covers_the_whole_plan_vocabulary():
+    """Guard: recommend() indexes _INTENT_RANK directly, so any intent a plan file
+    may legally carry must have a rank or the recommendation KeyErrors."""
+    from garmin_coach.coach.recommend import _INTENT_RANK
+    from garmin_coach.core import plan
+
+    assert set(_INTENT_RANK) == set(plan.INTENTS)
+
+
+def test_taper_caps_a_planned_crossfit_day_like_any_other_quality_day():
+    digest = _digest(signals=[_sig("TAPER_ACTIVE")], zones=_zones())
+    rec = recommend(digest, "crossfit", THRESHOLDS)
+
+    assert rec["intended_type"] == "crossfit"
+    assert rec["intensity_cap"] == "Z4"
+
+
+def test_a_planned_strength_day_gets_no_running_pace_target():
+    """Strength is hard work, but a threshold *pace* is meaningless for lifting."""
+    rec = recommend(_digest(zones=_zones()), "strength", THRESHOLDS)
+
+    assert rec["intended_type"] == "strength"
+    assert rec["pace_target_s_per_km"] is None
+
+
+def test_a_stress_signal_still_softens_a_planned_strength_day():
+    digest = _digest(signals=[_sig("HRV_LOW_MORNING")], zones=_zones())
+    rec = recommend(digest, "strength", THRESHOLDS)
+
+    assert rec["intended_type"] == "easy"
+    assert rec["downgraded"] is True

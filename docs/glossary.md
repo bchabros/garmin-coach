@@ -123,19 +123,46 @@ code, docstrings, PRDs, and ADRs.
 - **weekly rollup** - the derivation of one `weekly_metrics` row per complete week
   purely from `daily_metrics` (a mart-from-mart step). Never touches Garmin;
   recomputable and safe to rebuild.
-- **planned intent** - the training category the user's `plan_template` assigns to a
-  day of week (`rest | quality | easy | ...`).
-- **actual intent** - the same category inferred from what actually happened that day,
-  classified by load: `quality` when the day's load reaches `hard_te_load` (or has
-  anaerobic load), `easy` for any lighter activity, `rest` for no activity. A day the
-  athlete trained without wearing the watch is invisible to the system and reads as
-  `rest` (an ETL limitation, by decision, not a bug).
+- **plan of record** - the weekly plan the athlete actually agreed to, authored as
+  `plans/<monday>_week.md`. The Markdown file is the source of record (it carries the
+  paces, HR caps, rationale, and revision log the intent vocabulary cannot hold); the
+  `plan_week` table is a derived cache of its intent column. See ADR 0015.
+- **plan week (override)** - the cached per-week rows ingested from a plan file, keyed
+  `(week_start, dow)`. Present only for weeks the athlete authored.
+- **planned-intent resolver** - the single read path for "what was planned for this
+  date": the authored `plan_week` for that week, else the `plan_template` fallback. It
+  always reports which of the two answered (`source`). No code reads `plan_template`
+  directly - that drift is exactly what issue #21 fixed.
+- **plan template (fallback)** - the static day-of-week table that answers for weeks
+  with no authored plan. A repeating *shape*, not a plan the athlete agreed to.
+- **planned intent** - the training category the plan of record assigns to a date:
+  `rest | easy | tempo | strength | hyrox | crossfit | quality`. It names the session
+  the athlete meant.
+- **actual intent** - what the day turned out to be, inferred from load alone:
+  `quality` when the day's load reaches `hard_te_load` (or has anaerobic load),
+  `strength` when strength load carries at least half a day with no anaerobic work
+  (Garmin is HR-blind to lifting, so a real session scores a tiny load and would
+  otherwise read `easy`), `easy` for any lighter activity, `rest` for no activity. A
+  day the athlete trained without wearing the watch is invisible to the system and
+  reads as `rest` (an ETL limitation, by decision, not a bug).
+- **intent class** - the measurable class a planned intent collapses to for
+  comparison: `rest`, `easy`, `strength`, or `quality` (which absorbs `tempo`,
+  `hyrox`, `crossfit`). The planned vocabulary is deliberately richer than the mart
+  can observe - load numbers cannot tell a crossfit session from a hyrox one - so
+  adherence compares classes. Without it every intent outside `rest | easy | quality`
+  would score as a permanent mismatch.
 - **plan adherence** - the fraction of the week's seven days whose actual intent
-  exactly matches the planned intent. The report also shows the *direction* of each
-  mismatch, since the DoD asks to surface divergence, not just a number.
+  matches the planned intent *at intent-class granularity*. The report also shows the
+  *direction* of each mismatch, since the DoD asks to surface divergence, not just a
+  number.
 - **weekly plan-vs-actual fact** - the per-day planned intent, actual intent, and match
-  flag materialized alongside `weekly_metrics`. The digest reads these stored weekly
-  facts instead of re-deriving mismatch direction from a later `plan_template`.
+  flag materialized alongside `weekly_metrics`. Planned and actual are stored as
+  authored/observed (not collapsed), so the grid shows what was meant next to what
+  happened; only `match` compares classes. The digest reads these stored weekly facts
+  instead of re-deriving mismatch direction from a later plan.
+- **PLAN_MISSING** - the informational signal that the current week has no authored
+  plan, so the template is answering for it. A statement of fact and the coach's cue to
+  propose a week; proposing is never automatic.
 - **monotony / strain (Foster)** - `monotony` = mean daily load / SD of daily load
   across the week (`NULL` when uncomputable, e.g. fewer than two training days);
   `strain` = weekly load x monotony. Classic overtraining flags.
@@ -216,9 +243,10 @@ code, docstrings, PRDs, and ADRs.
   any status) falls inside `race_proximity_weeks`. Carries the event's type, priority,
   status, and `weeks_to_event`; asks for a `tentative` event to be decided and an
   `approx` date to be pinned.
-- **intent** - reserved for the *daily* `plan_template` category (`rest | quality |
-  easy | ...`). A week is described by its `block`, never by a competing "week intent";
-  what a block means for training is policy in code, not a stored column.
+- **intent** - reserved for the *daily* plan-of-record category (`rest | easy | tempo |
+  strength | hyrox | crossfit | quality`). A week is described by its `block`, never by a
+  competing "week intent"; what a block means for training is policy in code, not a
+  stored column.
 - **race plan (Phase 9b)** - the per-segment pacing and effort targets for race day.
   Deferred out of Phase 9: in HYROX Doubles the runs are shared and the stations are
   split with a partner, so a race plan needs inputs the DB does not hold. See the
@@ -233,7 +261,7 @@ code, docstrings, PRDs, and ADRs.
 - **workout request** - the structured, source-agnostic ask consumed by `author`:
   session type, target date, optional explicit structure. Carries `origin:
   recommender | athlete`. Not "intent" - that word is reserved for the daily
-  `plan_template` category.
+  plan-of-record category.
 - **workout spec** - the deterministic output of `author`: a complete,
   Garmin-shaped description of one workout (steps, targets, durations), written
   to `reports/{date}/`. The only thing `publish` is allowed to send.

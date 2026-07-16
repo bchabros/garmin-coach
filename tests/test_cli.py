@@ -287,3 +287,19 @@ def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
     stored = db.list_goal_events(conn)[0]
     assert stored["target_s"] == 3600
     assert stored["note"] == "PB 1:01:46"
+
+
+def test_parser_accepts_plan_import_with_week_and_dir():
+    args = build_parser().parse_args(
+        ["plan", "import", "--week", "2026-07-13", "--plans-dir", "/tmp/plans"]
+    )
+
+    assert args.command == "plan"
+    assert args.week == "2026-07-13"
+    assert args.plans_dir == "/tmp/plans"
+
+
+def test_parser_plan_import_defaults_to_all_weeks():
+    args = build_parser().parse_args(["plan", "import"])
+
+    assert args.week is None

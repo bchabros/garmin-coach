@@ -14,6 +14,8 @@ from . import recommend as _recommend
 from . import signals as _signals
 from . import thresholds as _thresholds
 from ..core import db as _db
+from ..core import plan as _plan
+from ..core import weeks as _weeks
 from ..marts import overlap as _overlap
 from ..marts import periodize as _periodize
 from ..marts import weekly as _weekly
@@ -271,6 +273,7 @@ def build_digest(
     plan_section = _plan_section(conn, to_date)
     deload = _signals.deload_advised(weekly_rows, thr)
     taper = _signals.taper_active(plan_section)
+    plan_gap = _plan_missing_signal(conn, to_date)
     proximity = (
         _signals.race_proximity(_db.list_goal_events(conn), thr, to_date)
         if to_date is not None
@@ -291,7 +294,7 @@ def build_digest(
             "headline": _headline([], [], thr),
             "signals": [
                 s
-                for s in (deload, niggle, pattern, muscle, hard_rpe, taper, proximity)
+                for s in (deload, niggle, pattern, muscle, hard_rpe, taper, proximity, plan_gap)
                 if s is not None
             ],
             "weekly": weekly_section,
@@ -324,6 +327,7 @@ def build_digest(
         hard_rpe,
         taper,
         proximity,
+        plan_gap,
     )
     signals = sorted(
         (s for s in candidates if s is not None),
@@ -344,12 +348,24 @@ def build_digest(
 
 
 def _planned_intent(conn: sqlite3.Connection, to_date: str) -> str | None:
-    """Tomorrow's ``plan_template`` intent - the recommendation's starting point."""
-    tomorrow = _dt.date.fromisoformat(to_date) + _dt.timedelta(days=1)
-    row = conn.execute(
-        "SELECT intent FROM plan_template WHERE dow = ?", (tomorrow.weekday(),)
-    ).fetchone()
-    return row[0] if row else None
+    """Tomorrow's intent from the plan of record - the recommendation's starting point.
+
+    Resolved (issue #21), so the recommender starts from the week the athlete
+    authored rather than the repeating template. This matters because ``recommend``
+    only ever softens: a template ``rest`` could never be raised to a planned
+    ``quality``.
+    """
+    tomorrow = (_dt.date.fromisoformat(to_date) + _dt.timedelta(days=1)).isoformat()
+    day = _plan.resolve_day(conn, tomorrow)
+    return day["intent"] if day else None
+
+
+def _plan_missing_signal(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
+    """PLAN_MISSING for the week containing the horizon (issue #21)."""
+    if to_date is None:
+        return None
+    week_start = _weeks.monday(to_date).isoformat()
+    return _signals.plan_missing(_plan.has_override(conn, week_start), week_start)
 
 
 def _plan_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:

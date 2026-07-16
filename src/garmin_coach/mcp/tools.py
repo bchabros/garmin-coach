@@ -18,7 +18,7 @@ from typing import Any
 
 from .. import cli, daily
 from ..coach import digest, report
-from ..core import db
+from ..core import db, plan
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -148,6 +148,43 @@ def get_zones(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return the current athlete_zones row (anchor, bounds, paces, staleness)."""
     rows = _rows(conn.execute("SELECT * FROM athlete_zones WHERE id = 1"))
     return _wrap(conn, rows[0] if rows else None)
+
+
+def get_plan(conn: sqlite3.Connection, week_start: str | None = None) -> dict[str, Any]:
+    """Return the resolved plan of record for a week (default: the current week).
+
+    Each day carries its ``source``: ``plan_week`` when the athlete authored the
+    week, ``plan_template`` when the repeating template answered for it. A week
+    with ``has_plan: False`` is unplanned - the template is a shape, not a plan
+    the athlete agreed to (issue #21).
+    """
+    week_start = week_start or _current_monday()
+    error = _week_start_error(week_start)
+    if error is not None:
+        return _wrap(conn, {"error": error})
+    data = {
+        "week_start": week_start,
+        "has_plan": plan.has_override(conn, week_start),
+        "days": plan.resolve_week(conn, week_start),
+        "error": None,
+    }
+    return _wrap(conn, data)
+
+
+def _current_monday() -> str:
+    today = dt.date.today()
+    return (today - dt.timedelta(days=today.weekday())).isoformat()
+
+
+def _week_start_error(week_start: str) -> str | None:
+    """Explain why ``week_start`` is not a usable plan week, or None when it is."""
+    try:
+        day = dt.date.fromisoformat(week_start)
+    except ValueError:
+        return f"week_start {week_start!r} is not a date (expected YYYY-MM-DD)"
+    if day.weekday() != 0:
+        return f"week_start {week_start} is not a Monday"
+    return None
 
 
 def get_recommendation(conn: sqlite3.Connection, date: str | None = None) -> dict[str, Any]:
@@ -295,6 +332,100 @@ def author_workout(
     path = out_dir / "workout.json"
     path.write_text(json.dumps(spec, indent=2))
     return _wrap(conn, {"spec": spec, "error": None, "path": str(path)})
+
+
+def plan_preview(
+    conn: sqlite3.Connection,
+    *,
+    week_start: str,
+    days: list[dict[str, Any]],
+    plans_dir: str = "plans",
+) -> dict[str, Any]:
+    """Validate a proposed week and show it back; nothing is written.
+
+    The coach composes ``days`` (seven ``{planned, intent}`` dicts, Monday-Sunday)
+    from the reads it already has; this side only checks the deterministic
+    contract - the intent vocabulary, the Monday, seven days - and dates the rows.
+    Show the result to the athlete: ``plan_confirm`` is what writes it.
+    """
+    resolved, error = _validate_proposal(week_start, days, plans_dir)
+    if error is not None:
+        return _wrap(conn, {"week_start": week_start, "days": None, "error": error})
+    return _wrap(conn, {"week_start": week_start, "days": resolved, "error": None})
+
+
+def plan_confirm(
+    conn: sqlite3.Connection,
+    *,
+    week_start: str,
+    days: list[dict[str, Any]],
+    plans_dir: str = "plans",
+) -> dict[str, Any]:
+    """Write a previewed week to ``plans/<monday>_week.md`` and cache it.
+
+    Refuses when a plan of record for the week already exists - the file carries
+    prose the intent vocabulary cannot hold (paces, HR caps, the revision log), so
+    revising an authored week stays a manual edit + re-import (issue #21). The
+    written file goes back through the same parser as a hand-written plan, so
+    there is exactly one ingestion path.
+    """
+    resolved, error = _validate_proposal(week_start, days, plans_dir)
+    if error is not None:
+        return _wrap(conn, {"week_start": week_start, "written": False, "error": error})
+
+    try:
+        path = plan.write_week_file(plans_dir, week_start, days)
+    except FileExistsError as exc:
+        return _wrap(conn, {"week_start": week_start, "written": False, "error": str(exc)})
+
+    plan.import_dir(conn, plans_dir, week=week_start)
+    data = {
+        "week_start": week_start,
+        "written": True,
+        "path": str(path),
+        "days": resolved,
+        "error": None,
+    }
+    return _wrap(conn, data)
+
+
+def _validate_proposal(
+    week_start: str, days: list[dict[str, Any]], plans_dir: str
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Check a proposed week against the plan contract; return the dated rows or an error.
+
+    Checks the same rules the parser enforces on a hand-written file (the shared
+    ``plan.INTENTS`` vocabulary, a Monday, seven days), so ``plan_confirm`` cannot
+    write a file its own importer would then reject. An already-authored week fails
+    here too, so a preview never shows a plan that confirm would refuse.
+    """
+    error = _week_start_error(week_start)
+    if error is not None:
+        return None, error
+    path = pathlib.Path(plans_dir) / f"{week_start}_week.md"
+    if path.exists():
+        return None, f"{path} already exists; revise it manually and re-import"
+    if len(days) != 7:
+        return None, f"expected 7 days for week {week_start}, got {len(days)}"
+    missing = [i for i, d in enumerate(days) if not d.get("planned") or not d.get("intent")]
+    if missing:
+        return None, f"days {missing} are missing 'planned' or 'intent'"
+    bad = [str(d["intent"]) for d in days if d["intent"] not in plan.INTENTS]
+    if bad:
+        return None, f"intent(s) {', '.join(bad)} not in {'|'.join(plan.INTENTS)}"
+
+    monday = dt.date.fromisoformat(week_start)
+    resolved = [
+        {
+            "date": (monday + dt.timedelta(days=i)).isoformat(),
+            "dow": i,
+            "planned": d["planned"],
+            "intent": d["intent"],
+            "source": "plan_week",
+        }
+        for i, d in enumerate(days)
+    ]
+    return resolved, None
 
 
 def push_preview(

@@ -340,3 +340,159 @@ def test_push_preview_without_a_spec_is_explicit(conn, tmp_path, fake_publisher)
 
     assert out["data"]["error"] is not None
     assert "workout.json" in out["data"]["error"]
+
+
+# --- issue #21: the plan of record over MCP ---------------------------------
+
+WEEK = "2026-07-13"  # a Monday
+
+
+def _plan_file(tmp_path, week_start=WEEK, intents=None):
+    intents = intents or ["easy", "quality", "rest", "quality", "easy", "rest", "quality"]
+    monday = dt.date.fromisoformat(week_start)
+    rows = "\n".join(
+        f"| {abbr} | {(monday + dt.timedelta(days=i)).strftime('%d.%m')} | sesja {i} "
+        f"| {intent} | plan |"
+        for i, (abbr, intent) in enumerate(zip(("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"), intents))
+    )
+    text = (
+        "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
+        "|---|---|---|---|---|\n" + rows + "\n"
+    )
+    (tmp_path / f"{week_start}_week.md").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def test_get_plan_returns_the_authored_week_with_its_source(conn, tmp_path):
+    from garmin_coach.core import plan as plan_mod
+
+    plan_mod.import_dir(conn, _plan_file(tmp_path))
+
+    out = tools.get_plan(conn, week_start=WEEK)
+
+    assert out["data"]["week_start"] == WEEK
+    days = out["data"]["days"]
+    assert len(days) == 7
+    assert days[3] == {
+        "date": "2026-07-16",
+        "dow": 3,
+        "planned": "sesja 3",
+        "intent": "quality",
+        "source": "plan_week",
+    }
+    assert out["data"]["has_plan"] is True
+    assert "freshness" in out
+
+
+def test_get_plan_reports_the_template_fallback_for_an_unplanned_week(conn):
+    out = tools.get_plan(conn, week_start=WEEK)
+
+    assert out["data"]["has_plan"] is False
+    assert {d["source"] for d in out["data"]["days"]} == {"plan_template"}
+
+
+def test_get_plan_defaults_to_the_current_week(conn):
+    out = tools.get_plan(conn)
+
+    monday = (dt.date.today() - dt.timedelta(days=dt.date.today().weekday())).isoformat()
+    assert out["data"]["week_start"] == monday
+
+
+def test_get_plan_rejects_a_non_monday(conn):
+    out = tools.get_plan(conn, week_start="2026-07-14")
+
+    assert "Monday" in out["data"]["error"]
+
+
+# --- issue #21: the write path ----------------------------------------------
+
+PROPOSAL = [
+    {"planned": "bieg easy 10 km, Zone 2", "intent": "easy"},
+    {"planned": "FBB + Hyrox", "intent": "quality"},
+    {"planned": "rest", "intent": "rest"},
+    {"planned": "tempo 8x1 km", "intent": "tempo"},
+    {"planned": "bieg easy 10 km", "intent": "easy"},
+    {"planned": "rest", "intent": "rest"},
+    {"planned": "Crossfit", "intent": "crossfit"},
+]
+
+
+def test_plan_preview_validates_without_writing_anything(conn, tmp_path):
+    out = tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+
+    assert out["data"]["error"] is None
+    assert out["data"]["week_start"] == WEEK
+    assert [d["date"] for d in out["data"]["days"]][:2] == ["2026-07-13", "2026-07-14"]
+    assert out["data"]["days"][6]["intent"] == "crossfit"
+    assert list(tmp_path.iterdir()) == []  # nothing written
+    assert conn.execute("SELECT COUNT(*) FROM plan_week").fetchone()[0] == 0
+
+
+def test_plan_preview_lists_vocabulary_errors_without_side_effects(conn, tmp_path):
+    days = [dict(d) for d in PROPOSAL]
+    days[2]["intent"] = "chill"
+
+    out = tools.plan_preview(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+
+    assert "chill" in out["data"]["error"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_plan_preview_rejects_a_short_week(conn, tmp_path):
+    out = tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL[:5], plans_dir=str(tmp_path))
+
+    assert "7" in out["data"]["error"]
+
+
+def test_plan_preview_rejects_a_non_monday(conn, tmp_path):
+    out = tools.plan_preview(
+        conn, week_start="2026-07-14", days=PROPOSAL, plans_dir=str(tmp_path)
+    )
+
+    assert "Monday" in out["data"]["error"]
+
+
+def test_plan_confirm_writes_the_file_and_imports_it(conn, tmp_path):
+    tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+
+    out = tools.plan_confirm(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+
+    assert out["data"]["error"] is None
+    assert out["data"]["written"] is True
+    assert (tmp_path / f"{WEEK}_week.md").exists()
+    # Imported through the same parser as a hand-written plan.
+    from garmin_coach.core import plan as plan_mod
+
+    assert plan_mod.resolve_day(conn, "2026-07-16")["intent"] == "tempo"
+    assert plan_mod.resolve_day(conn, "2026-07-16")["source"] == "plan_week"
+
+
+def test_plan_confirm_refuses_to_clobber_an_existing_plan(conn, tmp_path):
+    _plan_file(tmp_path)
+    before = (tmp_path / f"{WEEK}_week.md").read_text(encoding="utf-8")
+
+    out = tools.plan_confirm(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+
+    assert out["data"]["written"] is False
+    assert "exists" in out["data"]["error"]
+    assert (tmp_path / f"{WEEK}_week.md").read_text(encoding="utf-8") == before
+
+
+def test_plan_confirm_rejects_an_invalid_proposal_without_writing(conn, tmp_path):
+    days = [dict(d) for d in PROPOSAL]
+    days[0]["intent"] = "sprint"
+
+    out = tools.plan_confirm(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+
+    assert out["data"]["written"] is False
+    assert "sprint" in out["data"]["error"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_plan_preview_warns_early_that_the_week_is_already_authored(conn, tmp_path):
+    """Previewing a week that confirm would refuse is a trap; say so up front."""
+    _plan_file(tmp_path)
+
+    out = tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+
+    assert "exists" in out["data"]["error"]

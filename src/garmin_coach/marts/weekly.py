@@ -13,7 +13,7 @@ import statistics as _stats
 
 from . import periodize as _periodize
 from ..coach import thresholds as _thresholds
-from ..core import db
+from ..core import db, plan as _plan
 
 
 def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
@@ -21,18 +21,33 @@ def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
     return row[0] if row and row[0] else None
 
 
-def _plan_intents(conn: sqlite3.Connection) -> dict[int, str]:
-    return {dow: intent for dow, intent in conn.execute("SELECT dow, intent FROM plan_template")}
+def _plan_intents(conn: sqlite3.Connection, monday: _dt.date) -> dict[int, str | None]:
+    """The week's planned intents by weekday, from the plan-of-record resolver.
+
+    A day reads None only when neither the authored week nor the template has it -
+    possible but not expected, since the template seeds all seven weekdays.
+    """
+    return {day["dow"]: day.get("intent") for day in _plan.resolve_week(conn, monday.isoformat())}
 
 
 def _actual_intent(row: dict | None, hard: float) -> str:
-    """Classify a day to the plan vocabulary by load (see docs/glossary.md)."""
+    """Classify a finished day into a measurable intent class (see docs/glossary.md).
+
+    Only what the load can show: ``rest``, ``strength``, ``quality``, ``easy``. The
+    strength test comes before the load test because Garmin is HR-blind to lifting -
+    a real FBB session scores a tiny load and would otherwise read as ``easy``. It
+    requires the strength load to carry at least half the day and no anaerobic work,
+    so a metcon (FBB + Hyrox) still reads as ``quality``.
+    """
     if row is None:
         return "rest"
     load = row.get("load_day") or 0
     anaerobic = row.get("load_anaerobic") or 0
+    strength = row.get("load_strength") or 0
     if load == 0 and anaerobic == 0:
         return "rest"
+    if strength > 0 and anaerobic == 0 and strength >= load - strength:
+        return "strength"
     if load >= hard or anaerobic > 0:
         return "quality"
     return "easy"
@@ -77,7 +92,7 @@ def _complete_weeks(data_start: str, end: str) -> list[_dt.date]:
 
 
 def _intent_rows(
-    monday: _dt.date, week_rows: list[dict | None], plan: dict[int, str], hard: float
+    monday: _dt.date, week_rows: list[dict | None], plan: dict[int, str | None], hard: float
 ) -> list[dict]:
     """Per-day planned and actual intent facts for one completed week."""
     out: list[dict] = []
@@ -91,7 +106,9 @@ def _intent_rows(
                 "date": date,
                 "planned": planned,
                 "actual": actual,
-                "match": planned == actual,
+                # Compare what the mart can observe, not the raw label: the planned
+                # intent names the session, the actual is only ever a load class.
+                "match": _plan.intent_class(planned) == _plan.intent_class(actual),
             }
         )
     return out
@@ -120,11 +137,10 @@ def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> li
             for dow, date, planned, actual, matched in stored
         ]
 
-    plan = _plan_intents(conn)
-    daily = _daily_rows(conn)
     monday = _dt.date.fromisoformat(week_start)
+    daily = _daily_rows(conn)
     week_rows = _week_grid(monday, daily)
-    return _intent_rows(monday, week_rows, plan, hard)
+    return _intent_rows(monday, week_rows, _plan_intents(conn, monday), hard)
 
 
 def rollup(
@@ -146,13 +162,12 @@ def rollup(
         return
 
     hard = _thresholds.read(conn)["hard_te_load"]
-    plan = _plan_intents(conn)
     daily = _daily_rows(conn)
     blocks = _periodize.blocks_by_week(conn)
     prev_hrv_mean: float | None = None
     for monday in _complete_weeks(data_start_date, end):
         week_rows = _week_grid(monday, daily)
-        intent_rows = _intent_rows(monday, week_rows, plan, hard)
+        intent_rows = _intent_rows(monday, week_rows, _plan_intents(conn, monday), hard)
         row = _week_row(monday, week_rows, intent_rows, hard)
         # Same-run copy of the week's plan_block row; NULL when there is no anchor race.
         block = blocks.get(row["week_start"], {"block": None, "weeks_to_event": None})

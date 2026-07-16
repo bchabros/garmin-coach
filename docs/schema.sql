@@ -465,6 +465,18 @@ INSERT OR IGNORE INTO plan_template(dow,planned,intent) VALUES
  (5,'Hyrox lub tempo bieg','quality'),
  (6,'czasem easy/long run','easy');
 
+-- Per-week plan override: the authored plan of record for one week, ingested from
+-- plans/<monday>_week.md (issue #21). The Markdown file stays the human-authored
+-- source of record; these rows are a derived cache. Weeks with no rows fall back
+-- to plan_template via the resolver in core/plan.py - the only sanctioned reader.
+CREATE TABLE IF NOT EXISTS plan_week (
+  week_start  TEXT NOT NULL,                 -- Monday, YYYY-MM-DD
+  dow         INTEGER NOT NULL,              -- 0=Mon
+  planned     TEXT,                          -- free text label from the plan file
+  intent      TEXT,                          -- rest|easy|tempo|hyrox|quality
+  PRIMARY KEY (week_start, dow)
+);
+
 -- =============================================================================
 -- SYNC  (incremental watermark per stream)
 -- =============================================================================
@@ -626,8 +638,9 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   block                    TEXT,
   weeks_to_event           INTEGER,
   taper_active             INTEGER,
-  planned_intent_today     TEXT,              -- plan_template[weekday(computed_at)]
-  planned_label_today      TEXT
+  planned_intent_today     TEXT,              -- resolved plan intent for weekday(computed_at)
+  planned_label_today      TEXT,
+  plan_source_today        TEXT               -- plan_week | plan_template
 );
 
 -- Periodization (mart): one row per week, the training block counted back from the

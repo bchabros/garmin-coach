@@ -1,4 +1,4 @@
-"""Nightly orchestrator: sync -> features -> alerts.
+"""Nightly orchestrator: plans -> sync -> features -> alerts.
 
 Wraps the deterministic pipeline in one testable seam, ``run_daily``, plus a
 logging setup helper. ``garmin-coach daily`` and ``scripts/daily.sh`` are the
@@ -17,6 +17,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .coach import digest, report
+from .core import plan
 from .etl import sync
 from .marts import features
 
@@ -38,6 +39,7 @@ class DailyResult:
         alerts: Digest signals with ``warn``/``alert`` severity that fired.
         errors: Human-readable messages for any stage that errored.
         fatal: Whether a core stage (sync or features) crashed.
+        plans_imported: week_start of every plan file cached by the plans stage.
     """
 
     sync: sync.SyncResult | None = None
@@ -45,6 +47,7 @@ class DailyResult:
     alerts: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     fatal: bool = False
+    plans_imported: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -66,6 +69,28 @@ class DailyResult:
         return _STATUS_EXIT[self.status]
 
 
+def _run_plans_stage(
+    conn: sqlite3.Connection, result: DailyResult, plans_dir: str | Path | None
+) -> None:
+    """Cache every authored plan file into ``plan_week`` before the mart is rebuilt.
+
+    Non-fatal by design: a malformed plan must not stop the night's data from
+    landing, but it is never swallowed either - the run degrades and names the
+    failure, so the athlete fixes the file rather than reading a template plan
+    that looks authored.
+    """
+    if plans_dir is None:
+        return
+    logger.info("daily: plans stage starting (dir=%s)", plans_dir)
+    try:
+        result.plans_imported = plan.import_dir(conn, plans_dir)
+    except plan.PlanParseError as exc:
+        logger.error("daily: plan import failed: %s", exc)
+        result.errors.append(f"plan import failed: {exc}")
+        return
+    logger.info("daily: plans stage done (imported=%d)", len(result.plans_imported))
+
+
 def run_daily(
     client: sync.GarminClient,
     conn: sqlite3.Connection,
@@ -75,8 +100,9 @@ def run_daily(
     thresholds: dict[str, float] | None = None,
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
+    plans_dir: str | Path | None = None,
 ) -> DailyResult:
-    """Run the nightly pipeline: sync -> features -> alert extraction.
+    """Run the nightly pipeline: plans -> sync -> features -> alert extraction.
 
     Sequences the deterministic stages over an injected transport client and an
     open connection. A raised exception in the sync or features stage is fatal
@@ -92,11 +118,15 @@ def run_daily(
         thresholds: Coach thresholds; read from ``coach_thresholds`` when omitted.
         max_attempts: Retry attempts per Garmin call in the sync stage.
         retry_base_seconds: Base for the sync stage's exponential backoff.
+        plans_dir: Directory of authored ``<monday>_week.md`` plans; skipped when
+            omitted. A parse error degrades the run rather than falling back
+            silently to the template (issue #21).
 
     Returns:
         A :class:`DailyResult` with the sync outcome, alerts, and derived status.
     """
     result = DailyResult()
+    _run_plans_stage(conn, result, plans_dir)
 
     logger.info("daily: sync stage starting (to_date=%s)", to_date or "yesterday")
     try:

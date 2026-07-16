@@ -18,12 +18,16 @@ EXPECTED_TOOLS = {
     "get_recent_activities",
     "get_weekly",
     "get_zones",
+    "get_plan",
     "get_recommendation",
     "get_events",
     "get_workout_status",
     # local writes
     "log_rpe",
     "log_niggle",
+    # plan of record (preview -> confirm writes plans/<monday>_week.md)
+    "plan_preview",
+    "plan_confirm",
     # transport (Garmin read)
     "refresh_today",
     # workout push (hash handshake)

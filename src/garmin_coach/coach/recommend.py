@@ -15,11 +15,25 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-# Intent hardness, from the ``plan_template.intent`` vocabulary. ``hyrox`` and
-# ``quality`` share the top rank; a cap names a maximum allowable type and the
-# recommendation is the minimum of the planned intent and every cap that fired.
-_INTENT_RANK = {"rest": 0, "easy": 1, "tempo": 2, "hyrox": 3, "quality": 3}
-_QUALITY_TYPES = ("tempo", "hyrox", "quality")
+# Intent hardness over the plan vocabulary (``core.plan.INTENTS``; a test pins the
+# two together, because ``_downgrade`` indexes this map directly). ``hyrox``,
+# ``crossfit`` and ``quality`` share the top rank; a cap names a maximum allowable
+# type and the recommendation is the minimum of the planned intent and every cap
+# that fired.
+_INTENT_RANK = {
+    "rest": 0,
+    "easy": 1,
+    "tempo": 2,
+    "strength": 2,
+    "hyrox": 3,
+    "crossfit": 3,
+    "quality": 3,
+}
+# The quality types are the *running* hard sessions: they take the taper's Z4
+# ceiling and a threshold pace target. ``strength`` is deliberately absent - it is
+# hard work, but a pace target is meaningless for lifting and Garmin is HR-blind
+# to it anyway (see marts/load.py).
+_QUALITY_TYPES = ("tempo", "hyrox", "crossfit", "quality")
 
 # Signals that cap tomorrow to easy AND pin an explicit Z2 heart-rate ceiling.
 _EASY_Z2_CODES = (

@@ -2,8 +2,8 @@
 
 Pure and total. ``build`` reads finished marts + core (``daily_metrics``,
 ``athlete_zones``, ``weight_log``, ``race_predictions``, ``training_readiness``,
-``training_status_daily``, ``plan_template``) and returns a single "where do I stand
-right now" dict; ``rollup`` upserts the singleton row. A
+``training_status_daily``, the resolved plan of record) and returns a single "where do I
+stand right now" dict; ``rollup`` upserts the singleton row. A
 same-run copy of finished data - never calls Garmin. Runs as the tail of ``features``
 after weekly + zones. See docs/prd/phase-6b/PRD.md.
 """
@@ -18,7 +18,7 @@ from typing import Any
 
 from . import periodize as _periodize
 from ..coach import signals as _signals, thresholds as _thresholds
-from ..core import db
+from ..core import db, plan as _plan_of_record
 
 LOAD_WINDOW_DAYS = 7
 
@@ -284,19 +284,22 @@ def _zones_mirror(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _plan(conn: sqlite3.Connection, through_date: str) -> dict[str, Any]:
-    """Today's planned intent from plan_template, plus this week's periodization block.
+    """Today's resolved planned intent, plus this week's periodization block.
 
-    The block fields mirror the ``plan_block`` week containing ``through_date``. All
-    three stay NULL when there is no anchor race: the system says it does not know
-    what the athlete is training for rather than inventing a phase.
+    The intent comes from the plan-of-record resolver (issue #21): the authored
+    week when the athlete has one, else the ``plan_template`` fallback, with
+    ``plan_source_today`` naming which answered. The block fields mirror the
+    ``plan_block`` week containing ``through_date``. All three stay NULL when
+    there is no anchor race: the system says it does not know what the athlete is
+    training for rather than inventing a phase.
     """
-    dow = _dt.date.fromisoformat(through_date).weekday()
-    row = conn.execute("SELECT planned, intent FROM plan_template WHERE dow = ?", (dow,)).fetchone()
+    day = _plan_of_record.resolve_day(conn, through_date)
     block = _periodize.current_plan(conn, through_date)
     return {
         "block": block["block"] if block else None,
         "weeks_to_event": block["weeks_to_event"] if block else None,
         "taper_active": block["taper_active"] if block else None,
-        "planned_label_today": row[0] if row else None,
-        "planned_intent_today": row[1] if row else None,
+        "planned_label_today": day["planned"] if day else None,
+        "planned_intent_today": day["intent"] if day else None,
+        "plan_source_today": day["source"] if day else None,
     }

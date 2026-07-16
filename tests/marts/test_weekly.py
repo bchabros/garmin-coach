@@ -328,3 +328,115 @@ def test_week_row_block_is_null_without_an_anchor(conn):
         "SELECT block, weeks_to_event FROM weekly_metrics WHERE week_start='2026-06-08'"
     ).fetchone()
     assert row == (None, None)
+
+
+# --- issue #21: adherence is scored against the plan of record ----------------
+
+
+def _seed_plan_week(conn, week_start: str, intents: list[str]) -> None:
+    conn.executemany(
+        "INSERT INTO plan_week(week_start, dow, planned, intent) VALUES (?,?,?,?)",
+        [(week_start, dow, intent, intent) for dow, intent in enumerate(intents)],
+    )
+    conn.commit()
+
+
+def test_adherence_scores_against_the_authored_week_not_the_template(conn):
+    """An authored week the athlete actually followed scores 1.0, though the
+    template (Mon rest, Tue quality, Wed easy, Thu rest, Fri quality, Sat
+    quality, Sun easy) would only score 1/7 on the same days."""
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    _seed_day(conn, "2026-06-08", load_day=50)  # Mon: easy
+    _seed_day(conn, "2026-06-11", load_day=200)  # Thu: quality
+    _seed_day(conn, "2026-06-14", load_day=50)  # Sun: easy
+    _seed_plan_week(
+        conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"]
+    )
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    assert _weeks(conn)[0]["plan_adherence"] == 1.0
+
+
+def test_each_week_resolves_its_own_plan(conn):
+    """Two rolled-up weeks: the authored one uses its override, the other the template."""
+    _seed_span(conn, "2026-06-08", "2026-06-21", load_day=0, load_anaerobic=0)
+    _seed_plan_week(conn, "2026-06-08", ["quality"] * 7)  # never followed: all rest
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    first, second = _weeks(conn)
+    assert first["plan_adherence"] == 0.0  # planned quality every day, rested every day
+    # Template week: Mon rest + Thu rest match the all-rest actual -> 2/7.
+    assert abs(second["plan_adherence"] - 2 / 7) < 1e-9
+
+
+def test_plan_vs_actual_grid_reports_the_authored_plan(conn):
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    _seed_plan_week(
+        conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"]
+    )
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+    grid = weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)
+
+    thu = next(d for d in grid if d["date"] == "2026-06-11")
+    assert thu["planned"] == "quality"
+    assert thu["actual"] == "rest"
+    assert thu["match"] is False
+
+
+def test_a_strength_dominant_day_reads_as_strength_not_easy(conn):
+    """Garmin is HR-blind to lifting, so an FBB day lands a tiny load (the athlete's
+    own 89-min FBB scored 11.8). Classified by load alone it would read `easy` and
+    a planned strength day could never match; load_strength is what makes it visible."""
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    _seed_day(conn, "2026-06-08", load_day=11.8, load_strength=11.8)  # Mon: pure FBB
+    _seed_plan_week(conn, "2026-06-08", ["strength", "rest", "rest", "rest", "rest", "rest", "rest"])
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    grid = weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)
+    assert grid[0]["actual"] == "strength"
+    assert grid[0]["match"] is True
+    assert _weeks(conn)[0]["plan_adherence"] == 1.0
+
+
+def test_a_light_lift_alongside_a_run_is_not_a_strength_day(conn):
+    """Strength must dominate the day; a bit of lifting after an easy run does not."""
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    _seed_day(conn, "2026-06-08", load_day=125, load_strength=11.8)
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    assert weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)[0]["actual"] == "easy"
+
+
+def test_a_strength_day_with_anaerobic_work_is_quality(conn):
+    """FBB + Hyrox is what the athlete plans as quality: the metcon dominates."""
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    _seed_day(conn, "2026-06-08", load_day=188, load_strength=11.8, load_anaerobic=40)
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    assert weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)[0]["actual"] == "quality"
+
+
+def test_adherence_compares_hardness_class_not_the_raw_intent(conn):
+    """A planned crossfit/hyrox/tempo day executed hard is a match: the load
+    classifier cannot see the discipline, so comparing raw strings would score
+    every one of them as a permanent divergence."""
+    _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
+    for date in ("2026-06-08", "2026-06-09", "2026-06-10"):
+        _seed_day(conn, date, load_day=200)  # all read as actual `quality`
+    _seed_plan_week(
+        conn, "2026-06-08", ["crossfit", "hyrox", "tempo", "rest", "rest", "rest", "rest"]
+    )
+
+    weekly.rollup(conn, data_start_date=DATA_START)
+
+    grid = weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)
+    assert [d["planned"] for d in grid[:3]] == ["crossfit", "hyrox", "tempo"]
+    assert [d["actual"] for d in grid[:3]] == ["quality"] * 3
+    assert all(d["match"] for d in grid[:3])
+    assert _weeks(conn)[0]["plan_adherence"] == 1.0

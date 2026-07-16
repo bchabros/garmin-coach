@@ -496,3 +496,28 @@ def test_plan_preview_warns_early_that_the_week_is_already_authored(conn, tmp_pa
     out = tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
 
     assert "exists" in out["data"]["error"]
+
+
+def test_plan_preview_rejects_a_pipe_before_anything_is_written(conn, tmp_path):
+    """A pace/HR note with a pipe would corrupt the table row it lands in."""
+    days = [dict(d) for d in PROPOSAL]
+    days[3]["planned"] = "8x1 km @ 4:00 | HR <165"
+
+    out = tools.plan_preview(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+
+    assert "|" in out["data"]["error"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_plan_confirm_with_a_pipe_reports_an_error_and_strands_nothing(conn, tmp_path):
+    """Never write a file the importer would then reject: that would leave the week
+    unconfirmable forever (file present, cache empty)."""
+    days = [dict(d) for d in PROPOSAL]
+    days[3]["planned"] = "8x1 km @ 4:00 | HR <165"
+
+    out = tools.plan_confirm(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+
+    assert out["data"]["written"] is False
+    assert out["data"]["error"] is not None
+    assert list(tmp_path.iterdir()) == []
+    assert conn.execute("SELECT COUNT(*) FROM plan_week").fetchone()[0] == 0

@@ -798,3 +798,28 @@ def test_plan_missing_clears_once_the_week_is_authored(conn):
     dg = build_digest(conn, from_date="2026-06-10", to_date="2026-06-10")
 
     assert "PLAN_MISSING" not in _codes(dg)
+
+
+def test_plan_missing_tracks_the_week_being_planned_not_the_data_horizon(conn):
+    """The Monday trap: the mart stops at yesterday, so on Monday the horizon still
+    sits in last week. The signal must follow the recommendation's target date -
+    the day being planned - or it goes silent exactly when a fresh unplanned week
+    starts and the coach most needs the cue."""
+    _mart(conn, date="2026-06-14", load_day=50)  # Sunday horizon
+    _seed_plan_week(conn, "2026-06-08", ["rest"] * 7)  # last week WAS authored
+
+    dg = build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
+
+    # The recommendation targets Monday 2026-06-15 - a new, unplanned week.
+    assert dg["recommendation"]["target_date"] == "2026-06-15"
+    signal = next(s for s in dg["signals"] if s["code"] == "PLAN_MISSING")
+    assert signal["facts"]["week_start"] == "2026-06-15"
+
+
+def test_plan_missing_is_silent_when_the_week_being_planned_is_authored(conn):
+    _mart(conn, date="2026-06-14", load_day=50)
+    _seed_plan_week(conn, "2026-06-15", ["rest"] * 7)  # next week authored
+
+    dg = build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
+
+    assert "PLAN_MISSING" not in _codes(dg)

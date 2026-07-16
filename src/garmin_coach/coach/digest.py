@@ -361,10 +361,17 @@ def _planned_intent(conn: sqlite3.Connection, to_date: str) -> str | None:
 
 
 def _plan_missing_signal(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
-    """PLAN_MISSING for the week containing the horizon (issue #21)."""
+    """PLAN_MISSING for the week being planned - the recommendation's target (issue #21).
+
+    Anchored on tomorrow, not on ``to_date``. The mart stops at yesterday by design,
+    so on a Monday the horizon still sits in last week; anchoring there would go
+    silent exactly when a fresh unplanned week starts. Tomorrow is the day the
+    digest's recommendation is for, so it is the week that needs a plan.
+    """
     if to_date is None:
         return None
-    week_start = _weeks.monday(to_date).isoformat()
+    tomorrow = (_dt.date.fromisoformat(to_date) + _dt.timedelta(days=1)).isoformat()
+    week_start = _weeks.monday(tomorrow).isoformat()
     return _signals.plan_missing(_plan.has_override(conn, week_start), week_start)
 
 

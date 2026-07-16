@@ -159,7 +159,7 @@ def get_plan(conn: sqlite3.Connection, week_start: str | None = None) -> dict[st
     the athlete agreed to (issue #21).
     """
     week_start = week_start or _current_monday()
-    error = _week_start_error(week_start)
+    error = plan.week_start_error(week_start)
     if error is not None:
         return _wrap(conn, {"error": error})
     data = {
@@ -174,17 +174,6 @@ def get_plan(conn: sqlite3.Connection, week_start: str | None = None) -> dict[st
 def _current_monday() -> str:
     today = dt.date.today()
     return (today - dt.timedelta(days=today.weekday())).isoformat()
-
-
-def _week_start_error(week_start: str) -> str | None:
-    """Explain why ``week_start`` is not a usable plan week, or None when it is."""
-    try:
-        day = dt.date.fromisoformat(week_start)
-    except ValueError:
-        return f"week_start {week_start!r} is not a date (expected YYYY-MM-DD)"
-    if day.weekday() != 0:
-        return f"week_start {week_start} is not a Monday"
-    return None
 
 
 def get_recommendation(conn: sqlite3.Connection, date: str | None = None) -> dict[str, Any]:
@@ -375,10 +364,11 @@ def plan_confirm(
 
     try:
         path = plan.write_week_file(plans_dir, week_start, days)
-    except FileExistsError as exc:
+        plan.import_dir(conn, plans_dir, week=week_start)
+    except (FileExistsError, plan.PlanParseError) as exc:
+        # A tool reports; it never raises out of the MCP call. Validation already
+        # ran, so reaching here means the plans/ directory changed under us.
         return _wrap(conn, {"week_start": week_start, "written": False, "error": str(exc)})
-
-    plan.import_dir(conn, plans_dir, week=week_start)
     data = {
         "week_start": week_start,
         "written": True,
@@ -392,27 +382,14 @@ def plan_confirm(
 def _validate_proposal(
     week_start: str, days: list[dict[str, Any]], plans_dir: str
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Check a proposed week against the plan contract; return the dated rows or an error.
+    """Validate a proposed week and date its rows for display; ``core.plan`` owns the rules.
 
-    Checks the same rules the parser enforces on a hand-written file (the shared
-    ``plan.INTENTS`` vocabulary, a Monday, seven days), so ``plan_confirm`` cannot
-    write a file its own importer would then reject. An already-authored week fails
-    here too, so a preview never shows a plan that confirm would refuse.
+    Including the already-authored check, so a preview never shows a plan that
+    confirm would refuse.
     """
-    error = _week_start_error(week_start)
+    error = plan.validate_days(week_start, days, plans_dir)
     if error is not None:
         return None, error
-    path = pathlib.Path(plans_dir) / f"{week_start}_week.md"
-    if path.exists():
-        return None, f"{path} already exists; revise it manually and re-import"
-    if len(days) != 7:
-        return None, f"expected 7 days for week {week_start}, got {len(days)}"
-    missing = [i for i, d in enumerate(days) if not d.get("planned") or not d.get("intent")]
-    if missing:
-        return None, f"days {missing} are missing 'planned' or 'intent'"
-    bad = [str(d["intent"]) for d in days if d["intent"] not in plan.INTENTS]
-    if bad:
-        return None, f"intent(s) {', '.join(bad)} not in {'|'.join(plan.INTENTS)}"
 
     monday = dt.date.fromisoformat(week_start)
     resolved = [

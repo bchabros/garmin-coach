@@ -59,7 +59,7 @@ def recommend(
 
     Args:
         digest: The digest dict (its ``signals``, ``zones``, and ``window`` are read).
-        planned_intent: Tomorrow's ``plan_template`` intent, the starting point.
+        planned_intent: Tomorrow's intent from the plan of record, the starting point.
         thresholds: Effective coach thresholds (unused here; reserved for later rules).
 
     Returns:
@@ -193,7 +193,8 @@ def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, A
 
     A menu the athlete chooses from - never an executed re-plan. ``extend`` and
     ``continue`` are cited by the current block; ``rebuild`` is always offered but is a
-    manual suggestion, because ``plan_template`` has no session priority to rebuild from.
+    manual suggestion, because the plan of record ranks hardness, not session priority,
+    so there is nothing to rebuild an ordering from.
     """
     weekly = digest.get("weekly")
     if not weekly or not weekly.get("plan_vs_actual"):
@@ -215,7 +216,7 @@ def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, A
         "recommended": "extend" if block in ("base", "build") else "continue",
         "options": [
             {"id": "extend", "cite": block_cite},
-            {"id": "rebuild", "cite": "manual: no session priorities in plan_template"},
+            {"id": "rebuild", "cite": "manual: the plan of record carries no session priorities"},
             {"id": "continue", "cite": block_cite},
         ],
     }

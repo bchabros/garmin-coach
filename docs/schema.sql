@@ -473,7 +473,8 @@ CREATE TABLE IF NOT EXISTS plan_week (
   week_start  TEXT NOT NULL,                 -- Monday, YYYY-MM-DD
   dow         INTEGER NOT NULL,              -- 0=Mon
   planned     TEXT,                          -- free text label from the plan file
-  intent      TEXT,                          -- rest|easy|tempo|hyrox|quality
+  intent      TEXT,                          -- core/plan.py INTENTS (the vocabulary of
+                                             -- record; wider than plan_template's)
   PRIMARY KEY (week_start, dow)
 );
 

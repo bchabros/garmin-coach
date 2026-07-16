@@ -440,3 +440,21 @@ def test_adherence_compares_hardness_class_not_the_raw_intent(conn):
     assert [d["actual"] for d in grid[:3]] == ["quality"] * 3
     assert all(d["match"] for d in grid[:3])
     assert _weeks(conn)[0]["plan_adherence"] == 1.0
+
+
+def test_a_template_week_that_already_scored_1_0_is_not_restated(conn):
+    """Issue #21 regression guard: 2026-06-15 scores 1.0 against the template and
+    must still score 1.0 once every read goes through the resolver. Weeks with no
+    plan file must not move."""
+    # Template: Mon rest, Tue quality, Wed easy, Thu rest, Fri quality, Sat quality, Sun easy.
+    _seed_span(conn, "2026-06-15", "2026-06-21", load_day=0, load_anaerobic=0)
+    _seed_day(conn, "2026-06-16", load_day=200)  # Tue: quality
+    _seed_day(conn, "2026-06-17", load_day=50)  # Wed: easy
+    _seed_day(conn, "2026-06-19", load_day=200)  # Fri: quality
+    _seed_day(conn, "2026-06-20", load_day=200)  # Sat: quality
+    _seed_day(conn, "2026-06-21", load_day=50)  # Sun: easy
+
+    weekly.rollup(conn, data_start_date="2026-06-15")
+
+    week = next(w for w in _weeks(conn) if w["week_start"] == "2026-06-15")
+    assert week["plan_adherence"] == 1.0

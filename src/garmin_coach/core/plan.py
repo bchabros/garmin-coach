@@ -36,6 +36,7 @@ _INTENT_CLASS = {
 
 _FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_week\.md$")
 _DAY_ABBREVS = ("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd")
+_EXISTS_MSG = "{path} already exists; revise it manually and re-import"
 
 
 def intent_class(intent: str | None) -> str | None:
@@ -193,30 +194,89 @@ def has_override(conn: sqlite3.Connection, week_start: str) -> bool:
     return row is not None
 
 
-def write_week_file(
-    plans_dir: str | pathlib.Path, week_start: str, days: list[dict]
-) -> pathlib.Path:
-    """Write a coach-proposed week as a normal plan file; never overwrites.
+def week_start_error(week_start: str) -> str | None:
+    """Explain why ``week_start`` is not a usable plan week, or None when it is."""
+    try:
+        day = _dt.date.fromisoformat(week_start)
+    except ValueError:
+        return f"week_start {week_start!r} is not a date (expected YYYY-MM-DD)"
+    if day.weekday() != 0:
+        return f"week_start {week_start} is not a Monday"
+    return None
+
+
+def validate_days(
+    week_start: str, days: list[dict], plans_dir: str | pathlib.Path | None = None
+) -> str | None:
+    """Check a proposed week against the plan contract; return an error or None.
+
+    The last check is the load-bearing one: the proposal is rendered and parsed
+    back, so a proposal is valid exactly when the file it would produce reads back
+    as what was meant. That catches every way free text can break a Markdown table
+    row (a ``|``, a newline) rather than a blocklist of the ones we thought of.
 
     Args:
-        plans_dir: Destination directory (created if missing).
         week_start: The plan's Monday (YYYY-MM-DD).
         days: Seven ``{planned, intent}`` dicts in Monday-Sunday order.
+        plans_dir: When given, also refuse a week that already has a plan file.
 
     Returns:
-        The path of the written ``<monday>_week.md``.
-
-    Raises:
-        FileExistsError: A plan of record for that week already exists; revisions
-            stay a manual edit + re-import.
+        A human-readable error, or None when the proposal is writable.
     """
-    monday = _monday_or_raise(week_start)
-    directory = pathlib.Path(plans_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{week_start}_week.md"
-    if path.exists():
-        raise FileExistsError(f"{path} already exists; revise it manually and re-import")
+    error = week_start_error(week_start)
+    if error is not None:
+        return error
+    if plans_dir is not None:
+        path = pathlib.Path(plans_dir) / f"{week_start}_week.md"
+        if path.exists():
+            return _EXISTS_MSG.format(path=path)
+    if len(days) != 7:
+        return f"expected 7 days for week {week_start}, got {len(days)}"
+    missing = [i for i, d in enumerate(days) if not d.get("planned") or not d.get("intent")]
+    if missing:
+        return f"days {missing} are missing 'planned' or 'intent'"
+    bad = [str(d["intent"]) for d in days if d["intent"] not in INTENTS]
+    if bad:
+        return f"intent(s) {', '.join(bad)} not in {'|'.join(INTENTS)}"
+    return _cell_error(days) or _round_trip_error(week_start, days)
 
+
+def _cell_error(days: list[dict]) -> str | None:
+    """Name the known ways free text breaks a table row, so the caller can rephrase.
+
+    The round-trip below would catch these anyway, but only as a parser error about
+    some shifted column - useless for fixing the text that caused it.
+    """
+    for dow, day in enumerate(days):
+        for char, name in (("|", "'|'"), ("\n", "a line break"), ("\r", "a line break")):
+            if char in str(day["planned"]):
+                return (
+                    f"day {dow}: the session text cannot contain {name} - it would break "
+                    f"the plan-file table row. Rephrase: {day['planned']!r}"
+                )
+    return None
+
+
+def _round_trip_error(week_start: str, days: list[dict]) -> str | None:
+    """Whether the rendered proposal parses back to the same seven days.
+
+    The structural backstop behind ``_cell_error``: valid means "the file this would
+    write reads back as what was meant", so a format hazard nobody enumerated still
+    cannot reach ``plans/``.
+    """
+    try:
+        parsed = parse_week(render_week(week_start, days), week_start)
+    except PlanParseError as exc:
+        return f"proposal does not render to a parseable plan file: {exc}"
+    for dow, (want, got) in enumerate(zip(days, parsed)):
+        if got["planned"] != want["planned"] or got["intent"] != want["intent"]:
+            return f"day {dow} does not survive the plan-file format: {want['planned']!r}"
+    return None
+
+
+def render_week(week_start: str, days: list[dict]) -> str:
+    """Render a proposed week as plan-file Markdown (the athlete's own format)."""
+    monday = _monday_or_raise(week_start)
     sunday = monday + _dt.timedelta(days=6)
     lines = [
         f"# Plan tygodnia — {monday.strftime('%d.%m')}–{sunday.strftime('%d.%m.%Y')}",
@@ -232,7 +292,40 @@ def write_week_file(
         lines.append(
             f"| {_DAY_ABBREVS[dow]} | {date} | {day['planned']} | {day['intent']} | plan |"
         )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
+
+
+def write_week_file(
+    plans_dir: str | pathlib.Path, week_start: str, days: list[dict]
+) -> pathlib.Path:
+    """Write a coach-proposed week as a normal plan file; never overwrites.
+
+    Validates before touching the disk, so this can never leave a file its own
+    importer would reject - which would strand the week, the file existing and no
+    re-confirm possible.
+
+    Args:
+        plans_dir: Destination directory (created if missing).
+        week_start: The plan's Monday (YYYY-MM-DD).
+        days: Seven ``{planned, intent}`` dicts in Monday-Sunday order.
+
+    Returns:
+        The path of the written ``<monday>_week.md``.
+
+    Raises:
+        PlanParseError: The proposal violates the plan contract.
+        FileExistsError: A plan of record for that week already exists; revisions
+            stay a manual edit + re-import.
+    """
+    path = pathlib.Path(plans_dir) / f"{week_start}_week.md"
+    if path.exists():
+        raise FileExistsError(_EXISTS_MSG.format(path=path))
+    error = validate_days(week_start, days)
+    if error is not None:
+        raise PlanParseError(error)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_week(week_start, days), encoding="utf-8")
     return path
 
 

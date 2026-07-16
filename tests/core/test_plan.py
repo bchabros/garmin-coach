@@ -171,7 +171,7 @@ def test_import_dir_missing_dir_is_empty(conn, tmp_path):
 # --- confirm-path writer -------------------------------------------------------
 
 
-def test_write_week_file_round_trips_through_parser(conn, tmp_path):
+def test_write_week_file_round_trips_through_parser(tmp_path):
     days = [
         {"planned": "bieg easy 10 km", "intent": "easy"},
         {"planned": "FBB + Hyrox", "intent": "quality"},
@@ -219,3 +219,57 @@ def test_intent_class_collapses_the_vocabulary_to_measurable_classes():
 
 def test_intent_class_covers_the_whole_vocabulary():
     assert all(plan.intent_class(i) is not None for i in plan.INTENTS)
+
+
+# --- proposal validation -----------------------------------------------------
+
+
+def _proposal(planned="sesja", intent="easy"):
+    return [{"planned": planned, "intent": intent} for _ in range(7)]
+
+
+def test_validate_days_accepts_a_clean_proposal(tmp_path):
+    assert plan.validate_days(WEEK, _proposal(), tmp_path) is None
+
+
+def test_validate_days_rejects_a_pipe_that_would_break_the_table(tmp_path):
+    """A realistic session note ('8x1 km @ 4:00 | HR <165') must not silently
+    corrupt the row it is written into."""
+    days = _proposal(planned="8x1 km @ 4:00 | HR <165", intent="quality")
+
+    error = plan.validate_days(WEEK, days, tmp_path)
+
+    assert error is not None
+    assert "|" in error
+
+
+def test_validate_days_rejects_a_newline_in_the_session_text(tmp_path):
+    error = plan.validate_days(WEEK, _proposal(planned="8x1 km\nHR <165"), tmp_path)
+
+    assert error is not None
+
+
+def test_validate_days_rejects_bad_vocabulary_short_week_and_non_monday(tmp_path):
+    assert "chill" in plan.validate_days(WEEK, _proposal(intent="chill"), tmp_path)
+    assert "7" in plan.validate_days(WEEK, _proposal()[:5], tmp_path)
+    assert "Monday" in plan.validate_days("2026-07-14", _proposal(), tmp_path)
+
+
+def test_validate_days_reports_an_already_authored_week(tmp_path):
+    (tmp_path / f"{WEEK}_week.md").write_text("existing", encoding="utf-8")
+
+    assert "exists" in plan.validate_days(WEEK, _proposal(), tmp_path)
+
+
+def test_validate_days_skips_the_file_check_without_a_dir():
+    assert plan.validate_days(WEEK, _proposal()) is None
+
+
+def test_write_week_file_never_emits_a_file_its_own_parser_would_reject(tmp_path):
+    """The confirm path's core guarantee: no unparseable file reaches plans/."""
+    days = _proposal(planned="8x1 km @ 4:00 | HR <165", intent="quality")
+
+    with pytest.raises(plan.PlanParseError):
+        plan.write_week_file(tmp_path, WEEK, days)
+
+    assert list(tmp_path.iterdir()) == []

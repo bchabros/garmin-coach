@@ -362,11 +362,15 @@ def test_planned_today_prefers_the_authored_week_over_the_template(conn):
         ],
     )
 
-    s = snapshot.build(conn, through_date="2026-07-16")  # Thursday
+    thu = snapshot.build(conn, through_date="2026-07-16")
+    assert thu["planned_intent_today"] == "quality"
+    assert thu["planned_label_today"] == "tempo: 8x1 km"
+    assert thu["plan_source_today"] == "plan_week"
 
-    assert s["planned_intent_today"] == "quality"
-    assert s["planned_label_today"] == "tempo: 8x1 km"
-    assert s["plan_source_today"] == "plan_week"
+    # Friday: the template says quality, but the athlete downgraded it mid-week.
+    fri = snapshot.build(conn, through_date="2026-07-17")
+    assert fri["planned_intent_today"] == "easy"
+    assert fri["plan_source_today"] == "plan_week"
 
 
 def test_planned_today_falls_back_to_the_template_for_an_unplanned_week(conn):

@@ -43,11 +43,16 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 
 ## Architecture
 
-`config.py` (pydantic-settings) - `client.py` (login+MFA, endpoint->method map, the
-only garminconnect importer) - `db.py` (connect, bootstrap, upserts) - `models.py`
-(pure `payload dict -> row dict` normalizers + discipline mapping) - `sync.py`
-(`backfill(client, conn, from_date, to_date)`) - `features.py`/`weekly.py`/`zones.py`
-(mart builders) - `digest.py`/`signals.py` (coach digest) - `cli.py` (argparse).
+The package is layered: `core/` (`config.py` pydantic-settings, `db.py` connect/
+bootstrap/upserts, `models.py` pure `payload dict -> row dict` normalizers +
+discipline mapping, `weeks.py`, `schema.sql`) - `etl/` (`client.py` login+MFA,
+endpoint->method map, the only garminconnect importer; `sync.py`
+`backfill(client, conn, from_date, to_date)`) - `marts/` (mart builders:
+`features.py`/`weekly.py`/`zones.py`/`overlap.py`/`periodize.py`/`snapshot.py` +
+the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
+`thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
+(`author.py`/`publish.py`, the only Garmin write) - `mcp/` (`server.py`/`tools.py`)
+- top-level `cli.py` (argparse) and `daily.py` (nightly orchestrator).
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess
 without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
@@ -59,12 +64,12 @@ live only in marts/views, never mixed into core. Full vocabulary in `docs/glossa
 The agreed boundaries a test exercises -- prefer the highest existing seam, add new
 ones sparingly:
 
-- Test normalizers through pure model functions (`models.py`).
-- Test persistence through `db.py` helpers and observable SQLite state.
-- Test orchestration through `sync.py` with an injected fake Garmin client.
-- Test the mart builders (`features.py`, `weekly.py`, `zones.py`) and the digest
-  builder (`build_digest`/`digest.py`) at the DB boundary.
-- Keep real Garmin transport and auth (`client.py`, `cli.py`) outside unit tests --
+- Test normalizers through pure model functions (`core/models.py`).
+- Test persistence through `core/db.py` helpers and observable SQLite state.
+- Test orchestration through `etl/sync.py` with an injected fake Garmin client.
+- Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
+  and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
+- Keep real Garmin transport and auth (`etl/client.py`, `cli.py`) outside unit tests --
   validated by a live run, not unit tests.
 
 ## Conventions
@@ -72,7 +77,7 @@ ones sparingly:
 - **Poetry**, not `uv`/`pip`, for all dependency work (despite what the BUILD doc says).
 - Python 3.13. Code and docstrings in **English**; commit messages in English.
 - New and changed public docstrings use **Google-style docstrings**.
-- Schema source of truth is the package copy `src/garmin_coach/schema.sql`, loaded via
+- Schema source of truth is the package copy `src/garmin_coach/core/schema.sql`, loaded via
   `importlib.resources`. `docs/schema.sql` is a snapshot kept identical by
   `tests/test_schema_sync.py` -- edit the package copy, then re-sync docs.
 - `AGENTS.md` is a byte-for-byte mirror of `CLAUDE.md`, guarded by

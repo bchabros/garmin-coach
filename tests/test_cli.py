@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from garmin_coach import cli, db
+from garmin_coach import cli
+from garmin_coach.core import db
 from garmin_coach.cli import build_parser
 
 DATA_START = "2026-06-08"
@@ -26,11 +27,20 @@ def test_parser_accepts_log_rpe_activity_mode():
 
 
 def _sila(conn, aid=1, date="2026-06-08"):
-    db.upsert_activity(conn, {
-        "activity_id": aid, "start_local": f"{date} 18:00:00", "date": date,
-        "gtype": "strength_training", "discipline": "Siła",
-        "aero_te": 1.4, "anaero_te": 0.3, "training_load": 22.0, "dur_s": 4200,
-    })
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": aid,
+            "start_local": f"{date} 18:00:00",
+            "date": date,
+            "gtype": "strength_training",
+            "discipline": "Siła",
+            "aero_te": 1.4,
+            "anaero_te": 0.3,
+            "training_load": 22.0,
+            "dur_s": 4200,
+        },
+    )
 
 
 def test_log_session_rpe_rejects_unknown_activity(conn):
@@ -90,10 +100,24 @@ def test_log_niggle_validates_severity_range(conn):
 
 
 def test_parser_accepts_event_add_with_both_uncertainty_axes():
-    args = build_parser().parse_args([
-        "event", "add", "--date", "2026-10-17", "--type", "hyrox", "--priority", "A",
-        "--status", "confirmed", "--date-precision", "approx", "--target", "1:00:00",
-    ])
+    args = build_parser().parse_args(
+        [
+            "event",
+            "add",
+            "--date",
+            "2026-10-17",
+            "--type",
+            "hyrox",
+            "--priority",
+            "A",
+            "--status",
+            "confirmed",
+            "--date-precision",
+            "approx",
+            "--target",
+            "1:00:00",
+        ]
+    )
 
     assert args.command == "event"
     assert args.event_command == "add"
@@ -103,10 +127,20 @@ def test_parser_accepts_event_add_with_both_uncertainty_axes():
 
 def test_parser_rejects_an_unknown_event_status():
     with pytest.raises(SystemExit):
-        build_parser().parse_args([
-            "event", "add", "--date", "2026-10-17", "--type", "hyrox",
-            "--priority", "A", "--status", "maybe",
-        ])
+        build_parser().parse_args(
+            [
+                "event",
+                "add",
+                "--date",
+                "2026-10-17",
+                "--type",
+                "hyrox",
+                "--priority",
+                "A",
+                "--status",
+                "maybe",
+            ]
+        )
 
 
 def test_parse_target_s_reads_hours_minutes_seconds():
@@ -126,8 +160,13 @@ def test_parse_target_s_rejects_nonsense():
 
 def test_add_goal_event_records_the_race(conn):
     cli.add_goal_event(
-        conn, date="2026-10-17", type="hyrox", priority="A",
-        status="confirmed", date_precision="approx", target="1:00:00",
+        conn,
+        date="2026-10-17",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="approx",
+        target="1:00:00",
     )
 
     events = db.list_goal_events(conn)
@@ -146,8 +185,12 @@ def test_add_goal_event_rejects_a_malformed_date(conn):
     """A date typo must be refused at entry: it would otherwise poison every later read."""
     with pytest.raises(ValueError, match="date"):
         cli.add_goal_event(
-            conn, date="17/10/2026", type="run_race", priority="B",
-            status="tentative", date_precision="exact",
+            conn,
+            date="17/10/2026",
+            type="run_race",
+            priority="B",
+            status="tentative",
+            date_precision="exact",
         )
 
     assert db.list_goal_events(conn) == []
@@ -155,8 +198,12 @@ def test_add_goal_event_rejects_a_malformed_date(conn):
 
 def test_update_goal_event_rejects_a_malformed_date(conn):
     cli.add_goal_event(
-        conn, date="2026-10-17", type="hyrox", priority="A",
-        status="confirmed", date_precision="approx",
+        conn,
+        date="2026-10-17",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="approx",
     )
     event_id = db.list_goal_events(conn)[0]["id"]
 
@@ -173,8 +220,12 @@ def test_update_goal_event_rejects_an_unknown_id(conn):
 
 def test_update_goal_event_rejects_an_empty_update(conn):
     cli.add_goal_event(
-        conn, date="2026-10-17", type="hyrox", priority="A",
-        status="confirmed", date_precision="approx",
+        conn,
+        date="2026-10-17",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="approx",
     )
     event_id = db.list_goal_events(conn)[0]["id"]
 
@@ -184,8 +235,12 @@ def test_update_goal_event_rejects_an_empty_update(conn):
 
 def test_update_goal_event_commits_a_tentative_race(conn):
     cli.add_goal_event(
-        conn, date="2026-09-05", type="run_race", priority="B",
-        status="tentative", date_precision="exact",
+        conn,
+        date="2026-09-05",
+        type="run_race",
+        priority="B",
+        status="tentative",
+        date_precision="exact",
     )
     event_id = db.list_goal_events(conn)[0]["id"]
 
@@ -197,22 +252,36 @@ def test_update_goal_event_commits_a_tentative_race(conn):
 def test_add_goal_event_rejects_an_unknown_type(conn):
     with pytest.raises(ValueError, match="type"):
         cli.add_goal_event(
-            conn, date="2026-10-17", type="triathlon", priority="A",
-            status="confirmed", date_precision="approx",
+            conn,
+            date="2026-10-17",
+            type="triathlon",
+            priority="A",
+            status="confirmed",
+            date_precision="approx",
         )
 
 
 def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
     """Re-adding without --target/--note would silently erase them; it must fail instead."""
     cli.add_goal_event(
-        conn, date="2026-10-17", type="hyrox", priority="A",
-        status="confirmed", date_precision="approx", target="1:00:00", note="PB 1:01:46",
+        conn,
+        date="2026-10-17",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="approx",
+        target="1:00:00",
+        note="PB 1:01:46",
     )
 
     with pytest.raises(ValueError, match="already recorded"):
         cli.add_goal_event(
-            conn, date="2026-10-17", type="hyrox", priority="A",
-            status="confirmed", date_precision="approx",
+            conn,
+            date="2026-10-17",
+            type="hyrox",
+            priority="A",
+            status="confirmed",
+            date_precision="approx",
         )
 
     stored = db.list_goal_events(conn)[0]

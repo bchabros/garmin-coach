@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from garmin_coach import daily, db
+from garmin_coach import daily
+from garmin_coach.core import db
 
 DATA_START = "2026-06-08"
 TODAY = "2026-07-15"

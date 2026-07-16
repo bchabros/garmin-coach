@@ -1,4 +1,4 @@
-"""Phase 4 automation: the nightly orchestrator (sync -> features -> alerts).
+"""Nightly orchestrator: sync -> features -> alerts.
 
 Wraps the deterministic pipeline in one testable seam, ``run_daily``, plus a
 logging setup helper. ``garmin-coach daily`` and ``scripts/daily.sh`` are the
@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import digest, features, report, sync
+from .coach import digest, report
+from .etl import sync
+from .marts import features
 
 logger = logging.getLogger("garmin_coach.daily")
 
@@ -209,7 +211,7 @@ def configure_logging(
     """Configure the ``garmin_coach`` logger with a rotating file + console.
 
     Rotation lives in-process (size-based ``RotatingFileHandler``) so it is
-    OS-agnostic and deterministic, satisfying the Phase 4 "log rotated"
+    OS-agnostic and deterministic, satisfying the automation "log rotated"
     requirement without a system logrotate.
 
     Args:

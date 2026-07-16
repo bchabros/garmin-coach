@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from garmin_coach import daily, db
+from garmin_coach import daily
+from garmin_coach.core import db
 
 
 class _AllStreamsFailClient:
@@ -69,9 +70,7 @@ def test_daily_run_is_ok_when_pipeline_completes_cleanly(conn, fake_client):
     """A run where every stream progresses without warnings is ok/exit 0."""
     client = fake_client()  # returns [] / None everywhere: no data, no warnings
 
-    result = daily.run_daily(
-        client, conn, data_start_date="2026-06-08", to_date="2026-06-10"
-    )
+    result = daily.run_daily(client, conn, data_start_date="2026-06-08", to_date="2026-06-10")
 
     assert result.features_ok is True
     assert result.status == "ok"
@@ -86,9 +85,7 @@ def test_daily_run_surfaces_hrv_low_alert_from_fresh_mart(conn, fake_client):
         db.upsert_daily(conn, "hrv_nightly", {"date": f"2026-06-{8 + i:02d}", "avg_hrv": hrv})
     client = fake_client()
 
-    result = daily.run_daily(
-        client, conn, data_start_date="2026-06-08", to_date="2026-06-12"
-    )
+    result = daily.run_daily(client, conn, data_start_date="2026-06-08", to_date="2026-06-12")
 
     assert result.status == "ok"
     assert "HRV_LOW_MORNING" in [a["code"] for a in result.alerts]

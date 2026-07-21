@@ -350,7 +350,14 @@ def _cmd_author(args: argparse.Namespace) -> int:
 
     recommendation = dg.get("recommendation")
     if args.request:
-        request = json.loads(pathlib.Path(args.request).read_text())
+        try:
+            request = json.loads(pathlib.Path(args.request).read_text())
+        except FileNotFoundError:
+            print(f"author failed: request file not found: {args.request}")
+            return 1
+        except json.JSONDecodeError as exc:
+            print(f"author failed: request file is not valid JSON: {exc}")
+            return 1
         request["date"] = args.date
     else:
         if recommendation is None:

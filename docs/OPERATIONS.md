@@ -62,6 +62,11 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
 | `degraded` | 1 | An isolated stream failed but the run continued. | Check the log for the failing stream; often self-heals next run. Re-run `sync` if it persists. |
 | `failed` | 2 | A stage crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
 
+A crash in the `features` stage rolls the **whole** mart pass back: daily metrics,
+plan blocks, weekly rollups, zones, overlap and the snapshot either all advance
+together or none of them do. After a `failed` run the marts still hold the last
+good generation, so a report read against them is stale but never mixed.
+
 ## Logs
 
 In-process `RotatingFileHandler`, configured by `daily` itself (not the shell wrapper).

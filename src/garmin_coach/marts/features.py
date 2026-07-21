@@ -157,7 +157,12 @@ def features(
     from_date: str | None = None,
     to_date: str | None = None,
 ) -> None:
-    """Recompute the ``daily_metrics`` mart and upsert it by date.
+    """Recompute every mart in one transaction and upsert it.
+
+    This function owns both the materialization order and the transaction: the
+    daily mart and the five tail rollups either all land together or none of them
+    do, so a reader never observes a mixed generation. The individual rollups do
+    not commit - a caller that runs one standalone owns the commit itself.
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
@@ -166,10 +171,47 @@ def features(
             backward to the Monday of that week so ``weekly_metrics`` never reads
             stale earlier days from the same week.
         to_date: Last day to emit (default: latest core date).
+
+    Raises:
+        Exception: Whatever a mart step raised, after rolling the whole pass back.
     """
     end = to_date or _latest_core_date(conn)
     if end is None:
         return
+    try:
+        _daily_mart(conn, data_start_date=data_start_date, from_date=from_date, end=end)
+        _tail_rollups(conn, data_start_date=data_start_date, to_date=to_date, end=end)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
+def _tail_rollups(
+    conn: sqlite3.Connection, *, data_start_date: str, to_date: str | None, end: str
+) -> None:
+    """Run the five mart-from-mart rollups in dependency order (no commit)."""
+    # Rebuild the block calendar first: it depends only on the goal events, and the
+    # weekly rollup copies each week's block from it.
+    periodize.rollup(conn, data_start_date=data_start_date)
+
+    # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
+    weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)
+
+    # Recompute personal training zones from the LTHR anchor + aerobic runs.
+    zones.rollup(conn, through_date=end)
+
+    # Rebuild the movement-pattern overlap mart from per-set data.
+    overlap.rollup(conn, through_date=end)
+
+    # Compose the current standing last, so it copies the fresh weekly + zones rows.
+    snapshot.rollup(conn, through_date=end)
+
+
+def _daily_mart(
+    conn: sqlite3.Connection, *, data_start_date: str, from_date: str | None, end: str
+) -> None:
+    """Recompute ``daily_metrics`` from core for every day in the window (no commit)."""
     start = _mart_start(data_start_date, from_date)
 
     thr = thresholds.read(conn)
@@ -224,20 +266,3 @@ def features(
             **recovery_by_day.get(date, empty_recovery),
         }
         db.upsert_daily(conn, "daily_metrics", row)
-    conn.commit()
-
-    # Rebuild the block calendar first: it depends only on the goal events, and the
-    # weekly rollup copies each week's block from it.
-    periodize.rollup(conn, data_start_date=data_start_date)
-
-    # Roll the freshly-written daily mart up into weekly_metrics (complete weeks).
-    weekly.rollup(conn, data_start_date=data_start_date, through_date=to_date)
-
-    # Recompute personal training zones from the LTHR anchor + aerobic runs.
-    zones.rollup(conn, through_date=end)
-
-    # Rebuild the movement-pattern overlap mart from per-set data.
-    overlap.rollup(conn, through_date=end)
-
-    # Compose the current standing last, so it copies the fresh weekly + zones rows.
-    snapshot.rollup(conn, through_date=end)

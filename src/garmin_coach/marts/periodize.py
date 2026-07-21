@@ -172,7 +172,8 @@ def rollup(conn: sqlite3.Connection, *, data_start_date: str) -> None:
 
     Takes no as-of date: the plan is a fact about the athlete's race calendar, not about
     when it is asked for, so any recompute reproduces the same rows. With no confirmed
-    priority-A race the mart is left empty.
+    priority-A race the mart is left empty. ``features`` owns the transaction; this
+    does not commit.
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
@@ -180,7 +181,6 @@ def rollup(conn: sqlite3.Connection, *, data_start_date: str) -> None:
     """
     weeks = build_plan(db.list_goal_events(conn), data_start_date, _thresholds.read(conn))
     db.replace_plan_block(conn, weeks)
-    conn.commit()
 
 
 _CURRENT_PLAN_COLUMNS = (

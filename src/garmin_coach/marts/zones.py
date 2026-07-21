@@ -26,7 +26,8 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
 
     Reads the latest LTHR from ``fitness_markers`` and the aerobic runs from
     ``activities``, runs :func:`compute`, and upserts the single mart row. A
-    mart-from-core step - never calls Garmin. Runs as the tail of ``features``.
+    mart-from-core step - never calls Garmin. Runs as the tail of ``features``,
+    which owns the transaction; this does not commit.
     """
     thresholds = _thresholds.read(conn)
     cutoff = through_date or _latest_core_date(conn)
@@ -34,7 +35,6 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
         return
     row = compute(_latest_lthr(conn), _aerobic_runs(conn), thresholds, cutoff)
     db.upsert_zones(conn, {"id": 1, **row})
-    conn.commit()
 
 
 def _latest_core_date(conn: sqlite3.Connection) -> str | None:

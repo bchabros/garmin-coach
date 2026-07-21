@@ -142,6 +142,8 @@ def coverage(conn: sqlite3.Connection) -> dict[str, Any]:
 def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None:
     """Recompute the ``pattern_overlap`` mart from core and upsert it wholesale.
 
+    ``features`` owns the transaction; this does not commit.
+
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         through_date: Latest day to consider; activities after it are ignored so a
@@ -165,4 +167,3 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
             cov["sets_unmapped"],
             cov["unmapped"],
         )
-    conn.commit()

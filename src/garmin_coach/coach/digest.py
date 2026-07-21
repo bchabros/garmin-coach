@@ -171,13 +171,14 @@ def _read_niggles(conn: sqlite3.Connection, to_date: str) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def _movement_coverage(conn: sqlite3.Connection) -> dict | None:
+def _movement_coverage(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
     """Per-set movement-map coverage, so unmapped-exercise drift stays visible.
 
-    Returns None when no sets are captured yet, so the digest carries the fact only
-    once there is per-set data to report on.
+    Bounded by the report horizon: coverage is a fact about the sets captured by
+    ``to_date``. Returns None when no sets are captured yet, so the digest carries
+    the fact only once there is per-set data to report on.
     """
-    cov = _overlap.coverage(conn)
+    cov = _overlap.coverage(conn, through_date=to_date)
     return cov if cov["sets_total"] else None
 
 
@@ -269,7 +270,7 @@ def build_digest(
     from_date, to_date = _resolve_window(conn, from_date, to_date)
     weekly_rows = _read_weekly(conn, to_date)
     weekly_section = _weekly_section(conn, weekly_rows, thr)
-    zones_section = _zones_section(conn)
+    zones_section = _zones_section(conn, to_date)
     plan_section = _plan_section(conn, to_date)
     deload = _signals.deload_advised(weekly_rows, thr)
     taper = _signals.taper_active(plan_section)
@@ -286,7 +287,7 @@ def build_digest(
         pattern = _signals.pattern_stack(overlap_rows, thr, to_date)
         muscle = _signals.muscle_overlap(overlap_rows, thr, to_date)
         hard_rpe = _signals.hard_rpe_yesterday(_read_rated_sessions(conn, to_date), thr)
-    movement = _movement_coverage(conn)
+    movement = _movement_coverage(conn, to_date)
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
         return {
@@ -382,8 +383,14 @@ def _plan_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
     return _periodize.current_plan(conn, to_date)
 
 
-def _zones_section(conn: sqlite3.Connection) -> dict | None:
-    """The current personal-zones standing from the ``athlete_zones`` singleton."""
+def _zones_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:
+    """The personal-zones standing from the ``athlete_zones`` singleton.
+
+    The mart keeps one current row (ADR 0009), so a digest built for a past horizon
+    can only report the standing it finds. ``matches_horizon`` says whether that row
+    was computed for ``to_date``, making the provenance explicit rather than passing
+    current zones off as as-of ones.
+    """
     cur = conn.execute(
         "SELECT lthr_bpm, z1_hi_bpm, z2_hi_bpm, z3_hi_bpm, z4_hi_bpm, "
         "threshold_pace_s_per_km, z2_pace_ceiling_s_per_km, source, "
@@ -394,7 +401,20 @@ def _zones_section(conn: sqlite3.Connection) -> dict | None:
         return None
     section = dict(zip([d[0] for d in cur.description], row))
     section["lthr_age_days"] = _lthr_age_days(section["lthr_detected_on"], section["computed_at"])
+    section["matches_horizon"] = matches_horizon(section["computed_at"], to_date)
     return section
+
+
+def matches_horizon(computed_at: str | None, to_date: str | None) -> bool | None:
+    """Whether a standing row was computed for the report horizon (None if unknown).
+
+    The zones and status marts each keep a single current row (ADR 0009), so a
+    report for a past horizon can only carry the standing it finds. This makes the
+    provenance explicit for every consumer of a standing block.
+    """
+    if computed_at is None or to_date is None:
+        return None
+    return computed_at == to_date
 
 
 def _lthr_age_days(detected_on: str | None, computed_at: str | None) -> int | None:

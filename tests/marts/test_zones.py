@@ -137,3 +137,43 @@ def test_rollup_is_idempotent(conn):
     zones.rollup(conn, through_date="2026-07-08")
     zones.rollup(conn, through_date="2026-07-08")
     assert conn.execute("SELECT COUNT(*) FROM athlete_zones").fetchone()[0] == 1
+
+
+# --- Issue #36: the as-of cutoff bounds the sources, not just computed_at ---
+
+
+def test_rollup_ignores_an_lthr_detected_after_the_cutoff(conn):
+    """A detection from the future of the horizon must not anchor an as-of recompute."""
+    _seed_lthr(conn, date="2026-06-10", hr=170)
+    _seed_lthr(conn, date="2026-07-10", hr=190)  # after the cutoff
+    _seed_run(conn, 1, "2026-06-12", 3.0, 150)
+
+    zones.rollup(conn, through_date="2026-06-15")
+
+    lthr_bpm, detected_on = conn.execute(
+        "SELECT lthr_bpm, lthr_detected_on FROM athlete_zones WHERE id = 1"
+    ).fetchone()
+    assert detected_on == "2026-06-10"
+    assert lthr_bpm == 170
+
+
+def test_rollup_ignores_runs_after_the_cutoff(conn):
+    """The pace<->HR fit sees only runs that existed at the horizon."""
+    _seed_lthr(conn, date="2026-06-10")
+    # 12 clean runs before the cutoff would reach the regression minimum...
+    for i, hr in enumerate([140, 143, 146, 149, 152, 155, 158, 161, 164, 167, 170, 173]):
+        _seed_run(conn, 100 + i, "2026-07-01", 1000 / (340 - (83 / 35) * (hr - 140)), hr)
+
+    zones.rollup(conn, through_date="2026-06-15")
+
+    source = conn.execute("SELECT source FROM athlete_zones WHERE id = 1").fetchone()[0]
+    assert source == "threshold_pace_fallback+lthr"  # no run existed yet at the horizon
+
+
+def test_rollup_still_sees_everything_up_to_the_cutoff(conn):
+    """The bound is inclusive - a same-day detection still anchors the recompute."""
+    _seed_lthr(conn, date="2026-06-15", hr=180)
+
+    zones.rollup(conn, through_date="2026-06-15")
+
+    assert conn.execute("SELECT lthr_bpm FROM athlete_zones WHERE id = 1").fetchone()[0] == 180

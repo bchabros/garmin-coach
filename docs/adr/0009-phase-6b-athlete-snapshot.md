@@ -25,7 +25,8 @@ new Garmin data. See `docs/prd/phase-6b/PRD.md`.
 
 - **Seam: `snapshot.py`, run inside `features`.** A pure, total
   `build(conn, through_date) -> dict` composes the row from finished marts + core;
-  `rollup(conn, through_date)` upserts the singleton and commits. Runs as the **tail
+  `rollup(conn, through_date)` upserts the singleton (it no longer commits - `features`
+  owns one transaction for the pass, issue #35). Runs as the **tail
   of `features`, after `weekly.rollup` and `zones.rollup`**, so it always reads their
   freshly-written rows in the same run - no drift between the snapshot and its source
   marts. No Garmin (golden rule). The `snapshot` command only reads the table.

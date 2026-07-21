@@ -121,12 +121,24 @@ def _overlap_rows(daily: dict[tuple[str, str, str], float], floor: float) -> lis
     return rows
 
 
-def coverage(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Movement-map coverage over all captured sets (for the digest + drift warning)."""
+def coverage(conn: sqlite3.Connection, *, through_date: str | None = None) -> dict[str, Any]:
+    """Movement-map coverage over captured sets (for the digest + drift warning).
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        through_date: Latest activity day to count; sets from later activities are
+            ignored so a past report reproduces that day's coverage.
+    """
     total = 0
     unmapped_count = 0
     unmapped: set[str] = set()
-    for sub, mapped_sub in conn.execute(f"SELECT s.subcategory, p.subcategory {_SETS_JOIN_MAP}"):
+    where = "" if through_date is None else "WHERE a.date <= ?"
+    params = () if through_date is None else (through_date,)
+    for sub, mapped_sub in conn.execute(
+        f"SELECT s.subcategory, p.subcategory {_SETS_JOIN_MAP} "
+        f"JOIN activities a ON a.activity_id = s.activity_id {where}",
+        params,
+    ):
         total += 1
         if mapped_sub is None:
             unmapped_count += 1

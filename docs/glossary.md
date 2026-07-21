@@ -79,7 +79,12 @@ code, docstrings, PRDs, and ADRs.
   niggle at/above `niggle_reduced_mode_severity` tells the coach to dial back. The
   local equivalent of Runna's "Not Feeling 100%" dial-back.
 - **report horizon** - the single `to_date`/window that scopes a digest; daily facts,
-  weekly facts, and weekly signals must all sit at or before this horizon.
+  weekly facts, and weekly signals must all sit at or before this horizon. Sources are
+  bounded by it too, not merely stamped with it (ADR 0017).
+- **matches_horizon** - on a standing block (the digest's `zones` section,
+  `snapshot.json`): whether that singleton row was computed for this report's horizon.
+  `False` means a current standing is being shown beside as-of daily/weekly facts, so
+  the narrative should hedge it; `None` when either date is unknown.
 - **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below
   target while hard-load share is above ("add Z2"). Computed from our buckets;
   cross-checked against Garmin's `training_status_daily.balance_phrase` via

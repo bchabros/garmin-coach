@@ -33,7 +33,7 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
     cutoff = through_date or _latest_core_date(conn)
     if cutoff is None:
         return
-    row = compute(_latest_lthr(conn), _aerobic_runs(conn), thresholds, cutoff)
+    row = compute(_latest_lthr(conn, cutoff), _aerobic_runs(conn, cutoff), thresholds, cutoff)
     db.upsert_zones(conn, {"id": 1, **row})
 
 
@@ -42,25 +42,26 @@ def _latest_core_date(conn: sqlite3.Connection) -> str | None:
     return r[0] if r else None
 
 
-def _latest_lthr(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """Most recent non-null LTHR heart-rate row from ``fitness_markers``."""
+def _latest_lthr(conn: sqlite3.Connection, cutoff: str) -> dict[str, Any] | None:
+    """Most recent non-null LTHR heart-rate row detected at/before ``cutoff``."""
     r = conn.execute(
         "SELECT date, lactate_thr_hr, lactate_thr_pace FROM fitness_markers "
-        "WHERE lactate_thr_hr IS NOT NULL ORDER BY date DESC LIMIT 1"
+        "WHERE lactate_thr_hr IS NOT NULL AND date <= ? ORDER BY date DESC LIMIT 1",
+        (cutoff,),
     ).fetchone()
     if r is None:
         return None
     return {"lthr_bpm": r[1], "threshold_pace_s_per_km": r[2], "detected_on": r[0]}
 
 
-def _aerobic_runs(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Runs with the fields the pace<->HR fit needs (HR, pace, temperature)."""
+def _aerobic_runs(conn: sqlite3.Connection, cutoff: str) -> list[dict[str, Any]]:
+    """Runs at/before ``cutoff`` with the fields the pace<->HR fit needs."""
     placeholders = ",".join("?" for _ in RUN_DISCIPLINES)
     rows = conn.execute(
         f"SELECT avg_hr, avg_speed_mps, temp_c FROM activities "
-        f"WHERE discipline IN ({placeholders}) "
+        f"WHERE discipline IN ({placeholders}) AND date <= ? "
         f"AND avg_hr IS NOT NULL AND avg_speed_mps > 0",
-        RUN_DISCIPLINES,
+        (*RUN_DISCIPLINES, cutoff),
     ).fetchall()
     return [{"avg_hr": hr, "pace_s_per_km": 1000.0 / spd, "temp_c": temp} for hr, spd, temp in rows]
 

@@ -231,7 +231,15 @@ one `sport: hiit` push (an `--request` JSON with `structure.exercises`), each co
 on the account (labels, weights, and rests render; the re-push reports `noop`). The raw
 payload shape was proven by the live probes (`scratch/phase11_strength_push_probe.py`
 2026-07-15, `scratch/issue16_hiit_push_probe.py` 2026-07-21); this step validates the
-production author -> publish path end to end. Status: pending.
+production author -> publish path end to end.
+
+Passed on 2026-07-21: `GC 2026-07-23 crossfit` (hiit, 25 steps, workout 1639411347)
+and `GC 2026-07-28 strength` (33 steps, workout 1639412392) each created + scheduled
+with both response ids extracted, and each re-push reported `noop` with no duplicate.
+An account read-back of the strength workout confirmed the last unproven field:
+`weightValue: 100` round-trips with `weightUnit` kilogram (`unitId` 8), alongside
+verbatim exercise labels, the 120 s rest override, the 90 s default, and the dropped
+trailing rest.
 
 ## The coach MCP server (mcp__coach__*)
 

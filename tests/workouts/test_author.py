@@ -203,6 +203,32 @@ def test_request_from_recommendation_maps_the_block():
     assert spec["name"] == "GC 2026-07-17 easy"
 
 
+def test_request_from_recommendation_auto_maps_strength():
+    rec = {"target_date": "2026-07-17", "intended_type": "strength"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "strength"
+    assert req["session_type"] == "strength"
+
+
+def test_request_from_recommendation_auto_maps_crossfit_to_hiit():
+    rec = {"target_date": "2026-07-17", "intended_type": "crossfit"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "hiit"
+
+
+def test_request_from_recommendation_hyrox_stays_run_and_asks():
+    rec = {"target_date": "2026-07-17", "intended_type": "hyrox"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "run"
+    with pytest.raises(HyroxSplitRequired):
+        author(req, _context())
+
+
+def test_request_from_recommendation_explicit_sport_wins():
+    rec = {"target_date": "2026-07-17", "intended_type": "hyrox"}
+    assert request_from_recommendation(rec, sport="hiit")["sport"] == "hiit"
+
+
 # --- athlete request: schema validation -------------------------------------
 
 
@@ -390,6 +416,25 @@ def test_athlete_overriding_advice_gets_a_cited_warning():
 def test_athlete_matching_advice_gets_no_override_warning():
     ctx = _context_with_rec("tempo", [])
     spec = author(_request(session_type="tempo", pace=270, origin="athlete"), ctx)
+    assert not any("recommender advises" in w for w in spec["warnings"])
+
+
+def test_athlete_strength_against_easy_advice_warns():
+    ctx = _context_with_rec("easy", ["HRV_LOW_MORNING"])
+    spec = author(_strength_request(), ctx)
+    warning = next(w for w in spec["warnings"] if "recommender" in w)
+    assert "strength" in warning and "easy" in warning
+
+
+def test_athlete_crossfit_against_strength_advice_warns():
+    ctx = _context_with_rec("strength", [])
+    spec = author(_hiit_request(), ctx)
+    assert any("recommender advises strength" in w for w in spec["warnings"])
+
+
+def test_athlete_strength_against_quality_advice_does_not_warn():
+    ctx = _context_with_rec("quality", [])
+    spec = author(_strength_request(), ctx)
     assert not any("recommender advises" in w for w in spec["warnings"])
 
 

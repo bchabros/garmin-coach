@@ -93,8 +93,21 @@ _SPORT_SESSION_TYPES = {
 _REST_DEFAULT_S = {"strength": STRENGTH_REST_S, "hiit": HIIT_REST_S}
 
 # Session-type hardness, for spotting an athlete request that exceeds the
-# recommender's advice. Mirrors the recommender's intent ranking.
-_HARDNESS = {"rest": 0, "easy": 1, "tempo": 2, "quality": 3, "hyrox": 3}
+# recommender's advice. Mirrors the recommender's intent ranking; strength sits
+# beside tempo (a real stress despite its HR-blind load), crossfit beside hyrox.
+_HARDNESS = {
+    "rest": 0,
+    "easy": 1,
+    "tempo": 2,
+    "strength": 2,
+    "quality": 3,
+    "hyrox": 3,
+    "crossfit": 3,
+}
+
+# Unambiguous recommendation intents map straight to a sport; hyrox never does -
+# the athlete says whether it is run-dominant (run) or station-based (hiit).
+_SPORT_FOR_INTENT = {"strength": "strength", "crossfit": "hiit"}
 
 # Per session type: the (end_key, min_key) pairs whose end a structure override may set.
 # The min_key is the pre-11a minutes alias kept for back-compat (easy uses ``duration_min``).
@@ -367,19 +380,22 @@ def _rationale_cite(recommendation: dict[str, Any] | None) -> str:
 
 
 def request_from_recommendation(
-    recommendation: dict[str, Any], *, sport: str = "run"
+    recommendation: dict[str, Any], *, sport: str | None = None
 ) -> dict[str, Any]:
     """Build a workout request from a recommendation block.
 
     Args:
         recommendation: The digest's ``recommendation`` block.
-        sport: The authoring family (only ``run`` is authored for now).
+        sport: An explicit authoring family, or None to map it from the
+            recommendation's intent (``strength`` -> strength, ``crossfit`` ->
+            hiit, run types -> run). A hyrox intent maps to run, where ``author``
+            asks for the run-vs-station split.
 
     Returns:
         A ``recommender``-origin workout request ready for ``author``.
     """
     return {
-        "sport": sport,
+        "sport": sport or _SPORT_FOR_INTENT.get(recommendation["intended_type"], "run"),
         "origin": "recommender",
         "date": recommendation["target_date"],
         "session_type": recommendation["intended_type"],

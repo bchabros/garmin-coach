@@ -700,9 +700,12 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument(
         "--sport",
         dest="sport",
-        default="run",
-        choices=["run"],
-        help="Authoring family for --from-recommendation (only run is authored for now).",
+        default=None,
+        choices=["run", "hiit", "strength"],
+        help=(
+            "Authoring family override; by default the recommendation's intent picks it "
+            "(strength -> strength, crossfit -> hiit, run types -> run; hyrox asks)."
+        ),
     )
     au.add_argument(
         "--reports-dir",

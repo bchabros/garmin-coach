@@ -280,13 +280,14 @@ def author_workout(
     conn: sqlite3.Connection,
     date: str,
     request: dict[str, Any] | None = None,
-    sport: str = "run",
+    sport: str | None = None,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Author a workout spec for a date and write ``workout.json``.
 
     Mirrors the CLI author path: without ``request`` the spec comes from the
-    recommendation targeting ``date``; with one, the request dict (athlete or
+    recommendation targeting ``date`` (its intent picking the sport unless an
+    explicit ``sport`` overrides it); with one, the request dict (athlete or
     hybrid, including a custom ``structure``) is authored as-is.
     """
     dg = _digest_for(conn, _day_before(date))

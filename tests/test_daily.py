@@ -188,6 +188,8 @@ def test_daily_run_degrades_loudly_on_a_bad_plan_file(conn, fake_client, tmp_pat
 
 
 def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client):
-    result = daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+    result = daily.run_daily(
+        fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10"
+    )
     assert result.plans_imported == []
     assert result.status == "ok"

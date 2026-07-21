@@ -1,0 +1,15 @@
+{
+  "sport": "strength",
+  "origin": "athlete",
+  "date": "2026-07-28",
+  "session_type": "strength",
+  "structure": {
+    "exercises": [
+      {"exercise": "back squat", "sets": 5, "reps": 5, "weight_kg": 100, "rest": {"min": 2}},
+      {"exercise": "bench press", "sets": 3, "reps": 8, "weight_kg": 80},
+      {"exercise": "barbell row", "sets": 3, "reps": 8, "weight_kg": 70},
+      {"exercise": "walking lunge", "sets": 3, "reps": 20, "weight_kg": 20},
+      {"exercise": "pull up", "sets": 3, "reps": 10}
+    ]
+  }
+}

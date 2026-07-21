@@ -276,7 +276,9 @@ weight_kg?, rest?}`:
 - **rest**: only when stated ("przerwa 2 min" -> `{"rest": {"min": 2}}`, "do
   gotowości" -> `"lap"`); defaults are 90 s (strength) / 60 s (hiit).
 
-Example: "Piątek FBB: przysiad 5x5 100 kg, wyciskanie 3x8 80 kg, wall balls 3x20":
+Example (fuller ones in `tests/fixtures/strength_request.json` and
+`tests/fixtures/hiit_request.json`) - "Piątek FBB: przysiad 5x5 100 kg, wyciskanie
+3x8 80 kg, wall balls 3x20":
 
 ```json
 {

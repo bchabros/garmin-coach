@@ -135,8 +135,9 @@ class HyroxSplitRequired(Exception):
 
     def __init__(self) -> None:
         super().__init__(
-            "hyrox is run-dominant or station-based; specify a run request with explicit "
-            "structure, or a hiit request with the station exercises"
+            "hyrox is run-dominant or station-based; author it as a run session type "
+            "(easy/tempo/quality with explicit structure), or as a hiit request carrying "
+            "the station exercises"
         )
 
 

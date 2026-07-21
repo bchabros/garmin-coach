@@ -127,8 +127,11 @@ never run from the nightly automation, and it bends the golden rule deliberately
    garmin-coach author --date 2026-07-17 --request req.json       # from your own workout_request
    ```
 
-   `rest` produces no spec; a `hyrox` recommendation asks you to say run-vs-station
-   (`--sport hiit` for stations, a run request with explicit structure otherwise). A
+   `rest` produces no spec; a `hyrox` recommendation asks you to say run-vs-station, and
+   either answer is a hand-written `--request` file: a run one under a run session type
+   (`easy`/`tempo`/`quality`) with explicit structure, or a `hiit` one carrying
+   `structure.exercises`. `session_type: hyrox` is only authored under `sport: hiit` --
+   there is no run template for it, so `--sport` alone cannot answer the split. A
    recommendation's intent picks the sport by itself (`strength` -> strength, `crossfit` ->
    hiit, run types -> run); `--sport` overrides it. Warnings (target is today, no measured
    pace, an override of the recommender's advice, an unknown exercise) are printed and

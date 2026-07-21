@@ -265,7 +265,8 @@ weight_kg?, rest?}`:
 
 - **sport + session_type**: FBB/gym -> `strength`/`strength`; stations/metcon ->
   `hiit` with `crossfit`, or `hyrox` for Hyrox-specific station work. A run-dominant
-  Hyrox day stays `sport: run`.
+  Hyrox day is a run request under a run session type (`easy`/`tempo`/`quality`) with
+  explicit structure - `session_type: hyrox` only authors under `sport: hiit`.
 - **exercise** - the athlete's own words ("przysiad" -> "back squat", "wall balls",
   "sled push"); the whitelist in `workouts/exercises.py` resolves them to Garmin's
   labels. An unknown name still authors (warning + unlabeled step) - flag it to the

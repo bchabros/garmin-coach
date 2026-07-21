@@ -1,0 +1,15 @@
+{
+  "sport": "hiit",
+  "origin": "athlete",
+  "date": "2026-07-23",
+  "session_type": "crossfit",
+  "structure": {
+    "exercises": [
+      {"exercise": "wall balls", "sets": 3, "reps": 20},
+      {"exercise": "sled push", "sets": 3, "time": {"s": 45}},
+      {"exercise": "burpee", "sets": 3, "reps": 15},
+      {"exercise": "kettlebell swing", "sets": 3, "reps": 20, "weight_kg": 24},
+      {"exercise": "row erg", "sets": 1, "time": {"min": 5}}
+    ]
+  }
+}

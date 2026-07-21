@@ -350,7 +350,14 @@ def _cmd_author(args: argparse.Namespace) -> int:
 
     recommendation = dg.get("recommendation")
     if args.request:
-        request = json.loads(pathlib.Path(args.request).read_text())
+        try:
+            request = json.loads(pathlib.Path(args.request).read_text())
+        except FileNotFoundError:
+            print(f"author failed: request file not found: {args.request}")
+            return 1
+        except json.JSONDecodeError as exc:
+            print(f"author failed: request file is not valid JSON: {exc}")
+            return 1
         request["date"] = args.date
     else:
         if recommendation is None:
@@ -365,7 +372,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     }
     try:
         spec = _author.author(request, context)
-    except (_author.DeferredSportError, _author.HyroxSplitRequired) as exc:
+    except _author.HyroxSplitRequired as exc:
         print(f"author: {exc}")
         return 0
     except ValueError as exc:
@@ -700,9 +707,12 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument(
         "--sport",
         dest="sport",
-        default="run",
-        choices=["run"],
-        help="Authoring family for --from-recommendation (only run is authored for now).",
+        default=None,
+        choices=["run", "hiit", "strength"],
+        help=(
+            "Authoring family override; by default the recommendation's intent picks it "
+            "(strength -> strength, crossfit -> hiit, run types -> run; hyrox asks)."
+        ),
     )
     au.add_argument(
         "--reports-dir",

@@ -23,7 +23,9 @@ DAYS = [
 
 
 def week_file(days=DAYS, prose="## Zamiar tygodnia\n\nSynthetic.\n") -> str:
-    rows = "\n".join(f"| {d} | {date} | {label} | {intent} | plan |" for d, date, label, intent in days)
+    rows = "\n".join(
+        f"| {d} | {date} | {label} | {intent} | plan |" for d, date, label, intent in days
+    )
     return (
         "# Plan tygodnia — 13–19.07.2026\n\n"
         "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
@@ -45,7 +47,13 @@ def test_parse_week_maps_all_seven_days():
         "intent": "quality",
     }
     assert [r["intent"] for r in rows] == [
-        "easy", "quality", "rest", "quality", "easy", "rest", "quality",
+        "easy",
+        "quality",
+        "rest",
+        "quality",
+        "easy",
+        "rest",
+        "quality",
     ]
 
 
@@ -198,7 +206,9 @@ def test_write_week_file_refuses_existing(tmp_path):
 # --- vocabulary --------------------------------------------------------------
 
 
-@pytest.mark.parametrize("intent", ["rest", "easy", "tempo", "strength", "hyrox", "crossfit", "quality"])
+@pytest.mark.parametrize(
+    "intent", ["rest", "easy", "tempo", "strength", "hyrox", "crossfit", "quality"]
+)
 def test_parse_week_accepts_every_vocabulary_intent(intent):
     days = [(abbr, date, "sesja", intent) for abbr, date, _, _ in DAYS]
     rows = plan.parse_week(week_file(days), WEEK)

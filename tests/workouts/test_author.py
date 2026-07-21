@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from garmin_coach.workouts.author import (
-    DeferredSportError,
     HyroxSplitRequired,
     author,
     request_from_recommendation,
@@ -204,6 +203,32 @@ def test_request_from_recommendation_maps_the_block():
     assert spec["name"] == "GC 2026-07-17 easy"
 
 
+def test_request_from_recommendation_auto_maps_strength():
+    rec = {"target_date": "2026-07-17", "intended_type": "strength"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "strength"
+    assert req["session_type"] == "strength"
+
+
+def test_request_from_recommendation_auto_maps_crossfit_to_hiit():
+    rec = {"target_date": "2026-07-17", "intended_type": "crossfit"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "hiit"
+
+
+def test_request_from_recommendation_hyrox_stays_run_and_asks():
+    rec = {"target_date": "2026-07-17", "intended_type": "hyrox"}
+    req = request_from_recommendation(rec)
+    assert req["sport"] == "run"
+    with pytest.raises(HyroxSplitRequired):
+        author(req, _context())
+
+
+def test_request_from_recommendation_explicit_sport_wins():
+    rec = {"target_date": "2026-07-17", "intended_type": "hyrox"}
+    assert request_from_recommendation(rec, sport="hiit")["sport"] == "hiit"
+
+
 # --- athlete request: schema validation -------------------------------------
 
 
@@ -228,19 +253,147 @@ def test_unknown_sport_is_rejected():
 # --- sport gating -----------------------------------------------------------
 
 
-def test_hiit_sport_defers_to_the_spike():
-    with pytest.raises(DeferredSportError, match="hiit"):
+def test_hiit_sport_rejects_run_session_types():
+    # hiit no longer defers; it authors, but only its own session types
+    with pytest.raises(ValueError, match="not valid for sport"):
         author(_request(origin="athlete") | {"sport": "hiit"}, _context())
 
 
-def test_strength_sport_defers_to_the_spike():
-    with pytest.raises(DeferredSportError, match="strength"):
+def test_strength_sport_rejects_a_run_session_type():
+    # strength no longer defers; it authors, but only its own session type
+    with pytest.raises(ValueError, match="not valid for sport"):
         author(_request(origin="athlete") | {"sport": "strength"}, _context())
 
 
 def test_hyrox_session_requires_a_split_decision():
     with pytest.raises(HyroxSplitRequired):
         author(_request(session_type="hyrox"), _context())
+
+
+# --- strength authoring ------------------------------------------------------
+
+
+def _strength_request(exercises=None, date="2026-07-17", origin="athlete"):
+    if exercises is None:
+        exercises = [{"exercise": "back_squat", "sets": 2, "reps": 5, "weight_kg": 100}]
+    return {
+        "sport": "strength",
+        "origin": origin,
+        "date": date,
+        "session_type": "strength",
+        "structure": {"exercises": exercises},
+    }
+
+
+def test_strength_expands_exercise_entries_into_per_set_steps():
+    spec = author(_strength_request(), _context())
+    assert spec["sport"] == "strength"
+    assert spec["session_type"] == "strength"
+    assert spec["name"] == "GC 2026-07-17 strength"
+    # 2 sets -> work, rest, work: one flat step per set, the trailing rest skipped
+    assert _kinds(spec["steps"]) == ["work", "rest", "work"]
+    work = spec["steps"][0]
+    assert work["end"] == {"type": "reps", "count": 5}
+    assert work["exercise"] == {"category": "SQUAT", "name": "BARBELL_BACK_SQUAT"}
+    assert work["weight_kg"] == 100
+    assert spec["steps"][1]["end"] == {"type": "time", "seconds": 90}
+    assert spec["warnings"] == []
+
+
+def test_strength_rest_override_and_lap():
+    spec = author(
+        _strength_request(
+            [
+                {"exercise": "back_squat", "sets": 2, "reps": 5, "rest": {"s": 120}},
+                {"exercise": "back_squat", "sets": 2, "reps": 5, "rest": "lap"},
+            ]
+        ),
+        _context(),
+    )
+    assert _kinds(spec["steps"]) == ["work", "rest", "work", "rest", "work", "rest", "work"]
+    assert spec["steps"][1]["end"] == {"type": "time", "seconds": 120}
+    # the second entry's rests end on the lap button; the trailing one is skipped
+    assert spec["steps"][5]["end"] == {"type": "lap"}
+
+
+def test_strength_unknown_exercise_warns_and_stays_unlabeled():
+    # the ski erg has no entry in Garmin's taxonomy - the canonical unmapped case
+    spec = author(
+        _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
+        _context(),
+    )
+    assert any("unknown exercise 'ski erg'" in w for w in spec["warnings"])
+    assert "exercise" not in spec["steps"][0]
+
+
+def test_strength_time_ended_entry():
+    spec = author(
+        _strength_request([{"exercise": "back_squat", "sets": 1, "time": {"s": 45}}]),
+        _context(),
+    )
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 45}
+
+
+def test_strength_requires_exercises():
+    request = _strength_request()
+    request["structure"] = None
+    with pytest.raises(ValueError, match="exercises"):
+        author(request, _context())
+
+
+def test_strength_entry_needs_exactly_one_of_reps_or_time():
+    entries = [{"exercise": "back_squat", "sets": 1, "reps": 5, "time": {"s": 45}}]
+    with pytest.raises(ValueError, match="reps or time"):
+        author(_strength_request(entries), _context())
+
+
+def test_strength_structure_rejects_run_keys():
+    request = _strength_request()
+    request["structure"]["work_min"] = 20
+    with pytest.raises(ValueError, match="unknown structure keys"):
+        author(request, _context())
+
+
+# --- hiit authoring ----------------------------------------------------------
+
+
+def _hiit_request(session_type="crossfit", exercises=None, date="2026-07-17"):
+    if exercises is None:
+        exercises = [{"exercise": "back_squat", "sets": 2, "time": {"s": 40}}]
+    return {
+        "sport": "hiit",
+        "origin": "athlete",
+        "date": date,
+        "session_type": session_type,
+        "structure": {"exercises": exercises},
+    }
+
+
+def test_hiit_expands_stations_with_its_own_rest_default():
+    spec = author(_hiit_request(), _context())
+    assert spec["sport"] == "hiit"
+    assert spec["name"] == "GC 2026-07-17 crossfit"
+    assert _kinds(spec["steps"]) == ["work", "rest", "work"]
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 40}
+    # hiit rests default to 60 s, not strength's 90
+    assert spec["steps"][1]["end"] == {"type": "time", "seconds": 60}
+
+
+def test_hiit_hyrox_session_authors_as_stations():
+    spec = author(
+        _hiit_request(
+            session_type="hyrox", exercises=[{"exercise": "wall balls", "sets": 1, "reps": 30}]
+        ),
+        _context(),
+    )
+    assert spec["name"] == "GC 2026-07-17 hyrox"
+    assert spec["steps"][0]["end"] == {"type": "reps", "count": 30}
+
+
+def test_to_garmin_hiit_payload_uses_sport_type_9():
+    payload = to_garmin(author(_hiit_request(), _context()))
+    assert payload["sportType"] == {"sportTypeId": 9, "sportTypeKey": "hiit", "displayOrder": 9}
+    assert payload["workoutSegments"][0]["sportType"]["sportTypeKey"] == "hiit"
 
 
 # --- hybrid validation ------------------------------------------------------
@@ -263,6 +416,25 @@ def test_athlete_overriding_advice_gets_a_cited_warning():
 def test_athlete_matching_advice_gets_no_override_warning():
     ctx = _context_with_rec("tempo", [])
     spec = author(_request(session_type="tempo", pace=270, origin="athlete"), ctx)
+    assert not any("recommender advises" in w for w in spec["warnings"])
+
+
+def test_athlete_strength_against_easy_advice_warns():
+    ctx = _context_with_rec("easy", ["HRV_LOW_MORNING"])
+    spec = author(_strength_request(), ctx)
+    warning = next(w for w in spec["warnings"] if "recommender" in w)
+    assert "strength" in warning and "easy" in warning
+
+
+def test_athlete_crossfit_against_strength_advice_warns():
+    ctx = _context_with_rec("strength", [])
+    spec = author(_hiit_request(), ctx)
+    assert any("recommender advises strength" in w for w in spec["warnings"])
+
+
+def test_athlete_strength_against_quality_advice_does_not_warn():
+    ctx = _context_with_rec("quality", [])
+    spec = author(_strength_request(), ctx)
     assert not any("recommender advises" in w for w in spec["warnings"])
 
 
@@ -332,6 +504,63 @@ def test_to_garmin_no_target_step_has_no_target_type():
     spec = author(req, _context(zones=None))
     step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
     assert step["targetType"]["workoutTargetTypeKey"] == "no.target"
+
+
+def test_to_garmin_strength_payload_matches_the_probe_shape():
+    spec = author(_strength_request(), _context())
+    payload = to_garmin(spec)
+    assert payload["workoutName"] == "GC 2026-07-17 strength"
+    assert payload["sportType"] == {
+        "sportTypeId": 5,
+        "sportTypeKey": "strength_training",
+        "displayOrder": 5,
+    }
+    segment = payload["workoutSegments"][0]
+    assert segment["sportType"]["sportTypeKey"] == "strength_training"
+    steps = segment["workoutSteps"]
+    assert [s["stepOrder"] for s in steps] == [1, 2, 3]
+    work = steps[0]
+    assert work["type"] == "ExecutableStepDTO"
+    assert work["stepType"]["stepTypeKey"] == "interval"
+    assert work["endCondition"]["conditionTypeKey"] == "reps"
+    assert work["endConditionValue"] == 5.0
+    assert work["category"] == "SQUAT"
+    assert work["exerciseName"] == "BARBELL_BACK_SQUAT"
+    assert work["weightValue"] == 100.0
+    assert work["weightUnit"]["unitKey"] == "kilogram"
+    rest = steps[1]
+    assert rest["stepType"]["stepTypeKey"] == "rest"
+    assert rest["endCondition"]["conditionTypeKey"] == "time"
+    assert rest["endConditionValue"] == 90.0
+
+
+def test_to_garmin_strength_unknown_exercise_step_has_no_labels():
+    spec = author(
+        _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
+        _context(),
+    )
+    step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+    assert "category" not in step
+    assert "exerciseName" not in step
+    assert "weightValue" not in step
+
+
+def test_to_garmin_strength_lap_rest_and_estimated_duration():
+    spec = author(
+        _strength_request(
+            [
+                {"exercise": "back_squat", "sets": 2, "reps": 5, "rest": "lap"},
+                {"exercise": "back_squat", "sets": 1, "time": {"s": 45}},
+            ]
+        ),
+        _context(),
+    )
+    payload = to_garmin(spec)
+    lap_rest = payload["workoutSegments"][0]["workoutSteps"][1]
+    assert lap_rest["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert lap_rest["endConditionValue"] is None
+    # rep-ended sets are unknowable (0 s); only the 45 s time block counts
+    assert payload["estimatedDurationInSecs"] == 45
 
 
 def test_to_garmin_encodes_a_distance_ended_step():

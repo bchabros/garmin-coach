@@ -221,13 +221,14 @@ def refresh_today() -> dict[str, Any]:
 def author_workout(
     date: str,
     request: dict[str, Any] | None = None,
-    sport: str = "run",
+    sport: str | None = None,
 ) -> dict[str, Any]:
     """Author a structured workout spec for a date and write workout.json.
 
     Without ``request`` the spec comes from the recommendation targeting the
-    date; with one, the athlete/hybrid request (including a custom
-    ``structure`` block) is authored as-is. Pure - nothing touches Garmin.
+    date, its intent picking the sport unless an explicit ``sport`` overrides
+    it; with one, the athlete/hybrid request (including a custom ``structure``
+    block) is authored as-is. Pure - nothing touches Garmin.
     """
     conn = _open()
     try:

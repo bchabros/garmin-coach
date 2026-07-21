@@ -349,9 +349,7 @@ def test_adherence_scores_against_the_authored_week_not_the_template(conn):
     _seed_day(conn, "2026-06-08", load_day=50)  # Mon: easy
     _seed_day(conn, "2026-06-11", load_day=200)  # Thu: quality
     _seed_day(conn, "2026-06-14", load_day=50)  # Sun: easy
-    _seed_plan_week(
-        conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"]
-    )
+    _seed_plan_week(conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"])
 
     weekly.rollup(conn, data_start_date=DATA_START)
 
@@ -373,9 +371,7 @@ def test_each_week_resolves_its_own_plan(conn):
 
 def test_plan_vs_actual_grid_reports_the_authored_plan(conn):
     _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
-    _seed_plan_week(
-        conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"]
-    )
+    _seed_plan_week(conn, "2026-06-08", ["easy", "rest", "rest", "quality", "rest", "rest", "easy"])
 
     weekly.rollup(conn, data_start_date=DATA_START)
     grid = weekly.plan_vs_actual(conn, "2026-06-08", hard=150.0)
@@ -392,7 +388,9 @@ def test_a_strength_dominant_day_reads_as_strength_not_easy(conn):
     a planned strength day could never match; load_strength is what makes it visible."""
     _seed_span(conn, "2026-06-08", "2026-06-14", load_day=0, load_anaerobic=0)
     _seed_day(conn, "2026-06-08", load_day=11.8, load_strength=11.8)  # Mon: pure FBB
-    _seed_plan_week(conn, "2026-06-08", ["strength", "rest", "rest", "rest", "rest", "rest", "rest"])
+    _seed_plan_week(
+        conn, "2026-06-08", ["strength", "rest", "rest", "rest", "rest", "rest", "rest"]
+    )
 
     weekly.rollup(conn, data_start_date=DATA_START)
 

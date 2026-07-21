@@ -281,8 +281,7 @@ def render_week(week_start: str, days: list[dict]) -> str:
     lines = [
         f"# Plan tygodnia — {monday.strftime('%d.%m')}–{sunday.strftime('%d.%m.%Y')}",
         "",
-        f"Zaproponowany przez coacha, zatwierdzony {_dt.date.today().isoformat()} "
-        "(plan_confirm).",
+        f"Zaproponowany przez coacha, zatwierdzony {_dt.date.today().isoformat()} (plan_confirm).",
         "",
         "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |",
         "|------|------|------|----------------------|--------|",

@@ -353,7 +353,9 @@ def _plan_file(tmp_path, week_start=WEEK, intents=None):
     rows = "\n".join(
         f"| {abbr} | {(monday + dt.timedelta(days=i)).strftime('%d.%m')} | sesja {i} "
         f"| {intent} | plan |"
-        for i, (abbr, intent) in enumerate(zip(("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"), intents))
+        for i, (abbr, intent) in enumerate(
+            zip(("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"), intents)
+        )
     )
     text = (
         "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
@@ -445,9 +447,7 @@ def test_plan_preview_rejects_a_short_week(conn, tmp_path):
 
 
 def test_plan_preview_rejects_a_non_monday(conn, tmp_path):
-    out = tools.plan_preview(
-        conn, week_start="2026-07-14", days=PROPOSAL, plans_dir=str(tmp_path)
-    )
+    out = tools.plan_preview(conn, week_start="2026-07-14", days=PROPOSAL, plans_dir=str(tmp_path))
 
     assert "Monday" in out["data"]["error"]
 

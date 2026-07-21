@@ -47,3 +47,12 @@ def test_every_tool_carries_a_description():
     tools = asyncio.run(server.server.list_tools())
 
     assert all(t.description for t in tools)
+
+
+def test_author_workout_wrapper_does_not_force_a_sport():
+    # the recommendation's intent picks the sport unless the caller overrides it;
+    # a "run" default here would silently disable the auto-mapping (issue #16, T4)
+    tools = asyncio.run(server.server.list_tools())
+    author = next(t for t in tools if t.name == "author_workout")
+
+    assert author.inputSchema["properties"]["sport"]["default"] is None

@@ -259,10 +259,40 @@ Example (the tempo above), also in `tests/fixtures/tempo_request.json`:
 }
 ```
 
+**Strength / HIIT sessions** (issue #16) author the same way from a
+`structure.exercises` list. Map the words to entries `{exercise, sets, reps | time,
+weight_kg?, rest?}`:
+
+- **sport + session_type**: FBB/gym -> `strength`/`strength`; stations/metcon ->
+  `hiit` with `crossfit`, or `hyrox` for Hyrox-specific station work. A run-dominant
+  Hyrox day stays `sport: run`.
+- **exercise** - the athlete's own words ("przysiad" -> "back squat", "wall balls",
+  "sled push"); the whitelist in `workouts/exercises.py` resolves them to Garmin's
+  labels. An unknown name still authors (warning + unlabeled step) - flag it to the
+  athlete rather than inventing a different exercise.
+- **sets/reps/weight**: "5x5 100 kg" -> `{"sets": 5, "reps": 5, "weight_kg": 100}`;
+  ramping ("100/105/110") -> consecutive single-set entries. Time-boxed stations
+  ("45 s sled") -> `{"time": {"s": 45}}` instead of reps.
+- **rest**: only when stated ("przerwa 2 min" -> `{"rest": {"min": 2}}`, "do
+  gotowości" -> `"lap"`); defaults are 90 s (strength) / 60 s (hiit).
+
+Example: "Piątek FBB: przysiad 5x5 100 kg, wyciskanie 3x8 80 kg, wall balls 3x20":
+
+```json
+{
+  "sport": "strength", "origin": "athlete", "date": "2026-07-24",
+  "session_type": "strength",
+  "structure": {"exercises": [
+    {"exercise": "back squat", "sets": 5, "reps": 5, "weight_kg": 100},
+    {"exercise": "bench press", "sets": 3, "reps": 8, "weight_kg": 80},
+    {"exercise": "wall balls", "sets": 3, "reps": 20}
+  ]}
+}
+```
+
 Then, per the runbook in `docs/OPERATIONS.md`: `garmin-coach author --date D --request
 <path>` writes the spec, `push --date D` dry-runs it (show the athlete), and `push --date
-D --confirm` is the athlete's deliberate write. `hiit`/`strength` are not authored yet
-(they await the strength push spike).
+D --confirm` is the athlete's deliberate write.
 
 ## Tone
 

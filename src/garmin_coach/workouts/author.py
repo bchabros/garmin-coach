@@ -89,6 +89,9 @@ _SPORT_SESSION_TYPES = {
     "hiit": frozenset({"hyrox", "crossfit"}),
 }
 
+# The sports authored from structure.exercises (as opposed to the run roles).
+_EXERCISE_SPORTS = frozenset(("strength", "hiit"))
+
 # Per exercise sport: the default seconds of rest between sets.
 _REST_DEFAULT_S = {"strength": STRENGTH_REST_S, "hiit": HIIT_REST_S}
 
@@ -167,7 +170,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
-    if request["sport"] in _REST_DEFAULT_S:
+    if request["sport"] in _EXERCISE_SPORTS:
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(structure, request["sport"], warnings)
@@ -683,7 +686,7 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     Returns:
         The Garmin workout dict ready for ``upload_workout``.
     """
-    if spec["sport"] in _GARMIN_SPORT_TYPES:
+    if spec["sport"] in _EXERCISE_SPORTS:
         return _exercise_payload(spec)
     order = count(1)
     nodes = [_garmin_node(node, order) for node in spec["steps"]]

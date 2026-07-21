@@ -51,7 +51,8 @@ endpoint->method map, the only garminconnect importer; `sync.py`
 `features.py`/`weekly.py`/`zones.py`/`overlap.py`/`periodize.py`/`snapshot.py` +
 the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 `thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
-(`author.py`/`publish.py`, the only Garmin write) - `mcp/` (`server.py`/`tools.py`)
+(`author.py`/`exercises.py`/`publish.py`, the only Garmin write) - `mcp/`
+(`server.py`/`tools.py`)
 - top-level `cli.py` (argparse) and `daily.py` (nightly orchestrator).
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess

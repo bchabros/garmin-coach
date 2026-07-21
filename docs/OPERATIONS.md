@@ -127,10 +127,12 @@ never run from the nightly automation, and it bends the golden rule deliberately
    garmin-coach author --date 2026-07-17 --request req.json       # from your own workout_request
    ```
 
-   `rest` produces no spec; `hiit`/`strength` requests are understood but deferred to the
-   push spike; a `hyrox` recommendation asks you to say run-vs-station. Warnings (target is
-   today, no measured pace, an override of the recommender's advice) are printed and written
-   into the spec.
+   `rest` produces no spec; a `hyrox` recommendation asks you to say run-vs-station
+   (`--sport hiit` for stations, a run request with explicit structure otherwise). A
+   recommendation's intent picks the sport by itself (`strength` -> strength, `crossfit` ->
+   hiit, run types -> run); `--sport` overrides it. Warnings (target is today, no measured
+   pace, an override of the recommender's advice, an unknown exercise) are printed and
+   written into the spec.
 
 2. **Push** -- **dry-run unless `--confirm`.** No `--confirm` prints the payload and exits
    without touching the account; there is no `--dry-run` flag to forget:
@@ -161,6 +163,28 @@ homogeneous interval block) beyond its defaults. Keys:
   window on the work step. It overrides the recommender's `pace_target_s_per_km` and skips
   the pace -> HR -> none degradation. A band clearly faster than the recommender's
   suggestion adds a (non-blocking) cited warning.
+
+**Strength / HIIT sessions (issue #16).** `sport: strength` (session type `strength`) and
+`sport: hiit` (session types `hyrox` / `crossfit`) author from a `structure.exercises`
+list instead of the run roles. Each entry is one exercise with uniform sets:
+
+- `exercise` - the athlete's name for it ("back squat", "wall balls", "sled push");
+  resolved against the curated whitelist in `workouts/exercises.py` to Garmin's
+  `category`/`exerciseName` pair. An unknown name warns and authors an unlabeled step -
+  it never blocks.
+- `sets` - how many sets; each becomes its own step on the watch (flat steps, never a
+  repeat group - the shape the live probes proved).
+- `reps: N` **or** `time: {"min": N} | {"s": N}` - exactly one; rep-ended or time-ended
+  work.
+- `weight_kg` (optional) - per-set weight, always kilograms.
+- `rest` (optional) - `{"min": N}` / `{"s": N}` / `"lap"` after each of this entry's
+  sets; defaults to 90 s (strength) / 60 s (hiit). The session's trailing rest is
+  dropped. Rep-ended steps count 0 s toward the duration estimate (Garmin recomputes on
+  device).
+
+Ramping weight is consecutive entries of the same exercise (3x100 kg then 1x110 kg =
+two entries). The `GC {date} {type}` naming, `gc-hash` idempotency, and the confirm
+interlock are identical to the run path.
 
 "Tempo Thursday: warm-up on-click, 8x(1km at 3:40-4:00, 2:00 jog), cool-down on-click"
 becomes (canonical fixture: `tests/fixtures/tempo_request.json`):
@@ -200,6 +224,14 @@ Passed on 2026-07-17 (a `quality` push): create scheduled exactly one `GC 2026-0
 quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push reported
 `noop` with no duplicate, and all four response mappings (`get_workouts`,
 `upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
+
+**Strength/HIIT acceptance (issue #16, run once per sport).** The same four steps with
+an exercise request instead of `--from-recommendation`: one `sport: strength` push and
+one `sport: hiit` push (an `--request` JSON with `structure.exercises`), each confirmed
+on the account (labels, weights, and rests render; the re-push reports `noop`). The raw
+payload shape was proven by the live probes (`scratch/phase11_strength_push_probe.py`
+2026-07-15, `scratch/issue16_hiit_push_probe.py` 2026-07-21); this step validates the
+production author -> publish path end to end. Status: pending.
 
 ## The coach MCP server (mcp__coach__*)
 

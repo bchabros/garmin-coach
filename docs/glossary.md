@@ -270,25 +270,48 @@ code, docstrings, PRDs, and ADRs.
   *process*, not a third origin: an `athlete` request that passed through
   recommender validation before authoring.
 - **sport (workout request)** - the authoring/push family of a session: `run |
-  hiit | strength`. Distinct from both `discipline` (human-facing grouping) and
-  the daily `intent`: a run-dominant Hyrox session is `run` (pushable), a
-  station/crossfit-style one is `hiit`, FBB is `strength` (both await the
-  strength/HIIT push spike). The recommender's `intended_type: hyrox` never maps
-  to a sport automatically - the athlete says which kind it is.
+  hiit | strength`, all three authored and pushable (issue #16). Distinct from
+  both `discipline` (human-facing grouping) and the daily `intent`: a
+  run-dominant Hyrox session is `run`, a station/crossfit-style one is `hiit`,
+  FBB is `strength`. Each sport owns its session types (`run`: rest/easy/tempo/
+  quality/hyrox; `strength`: strength; `hiit`: hyrox/crossfit). Unambiguous
+  recommendation intents map to a sport automatically (`strength` -> strength,
+  `crossfit` -> hiit); `intended_type: hyrox` never does - the athlete says
+  which kind it is.
 - **structure override (workout request)** - the optional `structure` block in an
   `athlete`/hybrid request that shapes the session type's template beyond its
-  defaults: `reps` plus, per role (`warmup | work | recovery | cooldown`), an
-  end condition and (for work) a custom pace band. The recommender never emits
-  one (`request_from_recommendation` sets `structure: None`); overrides are the
+  defaults: for runs, `reps` plus, per role (`warmup | work | recovery |
+  cooldown`), an end condition and (for work) a custom pace band; for the
+  exercise sports, the `exercises` list (see *exercise entry*), where it is
+  required rather than optional. The recommender never emits one
+  (`request_from_recommendation` sets `structure: None`); overrides are the
   athlete finalizing what the recommender suggested (Phase 11a).
 - **end condition (spec step)** - how a step finishes: `time` (seconds), `distance`
-  (metres), or `lap` (the watch lap button, "on-click"). Exactly one per step.
-  `warmup`, `cooldown`, and `recovery` may use any of the three; a `work` step must
-  be `time` or `distance` (lap is refused - a work interval needs a defined end).
+  (metres), `reps` (repetition count, exercise sports only), or `lap` (the watch
+  lap button, "on-click"). Exactly one per step. `warmup`, `cooldown`, and
+  `recovery` may use time/distance/lap; a run `work` step must be `time` or
+  `distance` (lap is refused - a work interval needs a defined end); an exercise
+  work step is `reps` or `time`. Unknowable ends (lap, reps, distance without a
+  band) count 0 s toward the duration estimate.
 - **custom pace band (spec step)** - an explicit `[fast_s_per_km, slow_s_per_km]`
   target the athlete sets on the work step, e.g. 3:40-4:00 as `[220, 240]`. It
   wins over the recommender's `pace_target_s_per_km` and suppresses the
   pace -> HR -> none degradation (it is already fully specified).
+- **exercise entry (workout request)** - one element of an exercise sport's
+  `structure.exercises` list: an `exercise` name, `sets`, exactly one of `reps`
+  or `time`, optional `weight_kg` (always kilograms) and `rest`. Sets within one
+  entry are uniform; ramping weight is consecutive entries of the same exercise.
+  The translator expands each set to its own flat step - never a repeat group
+  (exercise metadata inside repeat groups is unproven; the flat shape
+  round-tripped in the live probes).
+- **rest default (exercise sports)** - the between-sets rest applied when an
+  exercise entry gives none: 90 s for `strength`, 60 s for `hiit`; overridable
+  per entry (`{"min"/"s"}` or `"lap"`). The session's trailing rest is dropped.
+- **exercise whitelist** - the curated map from the athlete's exercise names to
+  Garmin `category`/`exerciseName` pairs, held to Garmin Connect's public
+  exercise taxonomy by contract tests (the athlete's logged sets carry no enums,
+  so the taxonomy is the mining source). Warn-never-block: an unknown exercise
+  authors an unlabeled step and a spec warning.
 
 ## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 

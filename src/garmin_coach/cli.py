@@ -365,7 +365,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     }
     try:
         spec = _author.author(request, context)
-    except (_author.DeferredSportError, _author.HyroxSplitRequired) as exc:
+    except _author.HyroxSplitRequired as exc:
         print(f"author: {exc}")
         return 0
     except ValueError as exc:

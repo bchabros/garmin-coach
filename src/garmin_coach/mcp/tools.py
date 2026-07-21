@@ -310,7 +310,7 @@ def author_workout(
     }
     try:
         spec = author.author(request, context)
-    except (author.DeferredSportError, author.HyroxSplitRequired, ValueError) as exc:
+    except (author.HyroxSplitRequired, ValueError) as exc:
         return _wrap(conn, {"spec": None, "error": str(exc)})
 
     if spec is None:

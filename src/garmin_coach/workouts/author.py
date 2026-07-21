@@ -12,9 +12,9 @@ finished spec into the Garmin ``RunningWorkout`` JSON the transport uploads,
 reusing garminconnect's verified step/target structures.
 
 Run authoring covers ``easy``/``tempo``/``quality``; ``rest`` yields no spec, a
-``hyrox`` recommendation asks the athlete for the run/station split. Strength
-authoring expands ``structure.exercises`` entries into flat per-set steps with
-rests between sets (issue #16); the ``hiit`` sport is deferred until its ticket.
+``hyrox`` recommendation asks the athlete for the run/station split. The exercise
+sports (``strength``, ``hiit``) expand ``structure.exercises`` entries into flat
+per-set steps with rests between sets (issue #16).
 """
 
 from __future__ import annotations
@@ -72,22 +72,25 @@ _STEP_BUILDERS = {
     "cooldown": create_cooldown_step,
 }
 
-# Default rest between sets for exercise sports, overridable per entry.
+# Default rest between sets for the exercise sports, overridable per entry.
 STRENGTH_REST_S = 90
+HIIT_REST_S = 60
 
 # Allowed request enumerations.
 _SPORTS = ("run", "hiit", "strength")
 _ORIGINS = ("recommender", "athlete")
-_SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox", "strength")
+_SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox", "strength", "crossfit")
 
-# Which session types each authored sport may carry (hiit joins with its ticket).
+# Which session types each authored sport may carry. A hyrox session is run-dominant
+# under sport run (where it asks for the split) and station-based under sport hiit.
 _SPORT_SESSION_TYPES = {
     "run": frozenset({"rest", "easy", "tempo", "quality", "hyrox"}),
     "strength": frozenset({"strength"}),
+    "hiit": frozenset({"hyrox", "crossfit"}),
 }
 
 # Per exercise sport: the default seconds of rest between sets.
-_REST_DEFAULT_S = {"strength": STRENGTH_REST_S}
+_REST_DEFAULT_S = {"strength": STRENGTH_REST_S, "hiit": HIIT_REST_S}
 
 # Session-type hardness, for spotting an athlete request that exceeds the
 # recommender's advice. Mirrors the recommender's intent ranking.
@@ -111,21 +114,13 @@ _STRUCTURE_ROLES = {
 }
 
 
-class DeferredSportError(Exception):
-    """Raised when a request's sport (``hiit``) awaits its authoring ticket."""
-
-    def __init__(self, sport: str) -> None:
-        super().__init__(f"sport '{sport}' is not authored yet; awaits the push spike")
-        self.sport = sport
-
-
 class HyroxSplitRequired(Exception):
     """Raised when a Hyrox recommendation needs the athlete to choose run vs station."""
 
     def __init__(self) -> None:
         super().__init__(
             "hyrox is run-dominant or station-based; specify a run request with explicit "
-            "structure, or treat it as a hiit (station) session (deferred)"
+            "structure, or a hiit request with the station exercises"
         )
 
 
@@ -145,16 +140,13 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
 
     Raises:
         ValueError: If the request is malformed or the target date is in the past.
-        DeferredSportError: If the sport awaits its authoring ticket (``hiit``).
         HyroxSplitRequired: If a Hyrox session needs the athlete to choose its kind.
     """
     _validate_request(request)
-    if request["sport"] == "hiit":
-        raise DeferredSportError(request["sport"])
     _validate_sport_session(request["sport"], request["session_type"])
 
     session_type = request["session_type"]
-    if session_type == "hyrox":
+    if request["sport"] == "run" and session_type == "hyrox":
         raise HyroxSplitRequired
 
     warnings = _date_guard(request["date"], context["today"])
@@ -162,7 +154,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
-    if request["sport"] == "strength":
+    if request["sport"] in _REST_DEFAULT_S:
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(structure, request["sport"], warnings)
@@ -637,12 +629,17 @@ def _hr_or_none(
     return {"type": "none"}
 
 
-# Garmin sport-type descriptors for the exercise sports (hiit joins with its ticket).
+# Garmin sport-type descriptors for the exercise sports.
 _GARMIN_SPORT_TYPES = {
     "strength": {
         "sportTypeId": SportType.STRENGTH_TRAINING,
         "sportTypeKey": "strength_training",
         "displayOrder": 5,
+    },
+    "hiit": {
+        "sportTypeId": SportType.HIIT,
+        "sportTypeKey": "hiit",
+        "displayOrder": 9,
     },
 }
 

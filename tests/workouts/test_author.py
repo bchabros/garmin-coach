@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from garmin_coach.workouts.author import (
-    DeferredSportError,
     HyroxSplitRequired,
     author,
     request_from_recommendation,
@@ -228,8 +227,9 @@ def test_unknown_sport_is_rejected():
 # --- sport gating -----------------------------------------------------------
 
 
-def test_hiit_sport_defers_to_the_spike():
-    with pytest.raises(DeferredSportError, match="hiit"):
+def test_hiit_sport_rejects_run_session_types():
+    # hiit no longer defers; it authors, but only its own session types
+    with pytest.raises(ValueError, match="not valid for sport"):
         author(_request(origin="athlete") | {"sport": "hiit"}, _context())
 
 
@@ -325,6 +325,48 @@ def test_strength_structure_rejects_run_keys():
     request["structure"]["work_min"] = 20
     with pytest.raises(ValueError, match="unknown structure keys"):
         author(request, _context())
+
+
+# --- hiit authoring ----------------------------------------------------------
+
+
+def _hiit_request(session_type="crossfit", exercises=None, date="2026-07-17"):
+    if exercises is None:
+        exercises = [{"exercise": "back_squat", "sets": 2, "time": {"s": 40}}]
+    return {
+        "sport": "hiit",
+        "origin": "athlete",
+        "date": date,
+        "session_type": session_type,
+        "structure": {"exercises": exercises},
+    }
+
+
+def test_hiit_expands_stations_with_its_own_rest_default():
+    spec = author(_hiit_request(), _context())
+    assert spec["sport"] == "hiit"
+    assert spec["name"] == "GC 2026-07-17 crossfit"
+    assert _kinds(spec["steps"]) == ["work", "rest", "work"]
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 40}
+    # hiit rests default to 60 s, not strength's 90
+    assert spec["steps"][1]["end"] == {"type": "time", "seconds": 60}
+
+
+def test_hiit_hyrox_session_authors_as_stations():
+    spec = author(
+        _hiit_request(
+            session_type="hyrox", exercises=[{"exercise": "wall balls", "sets": 1, "reps": 30}]
+        ),
+        _context(),
+    )
+    assert spec["name"] == "GC 2026-07-17 hyrox"
+    assert spec["steps"][0]["end"] == {"type": "reps", "count": 30}
+
+
+def test_to_garmin_hiit_payload_uses_sport_type_9():
+    payload = to_garmin(author(_hiit_request(), _context()))
+    assert payload["sportType"] == {"sportTypeId": 9, "sportTypeKey": "hiit", "displayOrder": 9}
+    assert payload["workoutSegments"][0]["sportType"]["sportTypeKey"] == "hiit"
 
 
 # --- hybrid validation ------------------------------------------------------

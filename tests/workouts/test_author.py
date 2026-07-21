@@ -291,11 +291,12 @@ def test_strength_rest_override_and_lap():
 
 
 def test_strength_unknown_exercise_warns_and_stays_unlabeled():
+    # the ski erg has no entry in Garmin's taxonomy - the canonical unmapped case
     spec = author(
-        _strength_request([{"exercise": "sled push", "sets": 1, "reps": 10}]),
+        _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
         _context(),
     )
-    assert any("unknown exercise 'sled push'" in w for w in spec["warnings"])
+    assert any("unknown exercise 'ski erg'" in w for w in spec["warnings"])
     assert "exercise" not in spec["steps"][0]
 
 
@@ -490,7 +491,7 @@ def test_to_garmin_strength_payload_matches_the_probe_shape():
 
 def test_to_garmin_strength_unknown_exercise_step_has_no_labels():
     spec = author(
-        _strength_request([{"exercise": "sled push", "sets": 1, "reps": 10}]),
+        _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
         _context(),
     )
     step = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]

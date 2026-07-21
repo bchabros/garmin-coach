@@ -12,8 +12,9 @@ finished spec into the Garmin ``RunningWorkout`` JSON the transport uploads,
 reusing garminconnect's verified step/target structures.
 
 Run authoring covers ``easy``/``tempo``/``quality``; ``rest`` yields no spec, a
-``hyrox`` recommendation asks the athlete for the run/station split, and the
-``hiit``/``strength`` sports are deferred to the push spike.
+``hyrox`` recommendation asks the athlete for the run/station split. Strength
+authoring expands ``structure.exercises`` entries into flat per-set steps with
+rests between sets (issue #16); the ``hiit`` sport is deferred until its ticket.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from garminconnect.workout import (
     ConditionType,
     RunningWorkout,
     SportType,
+    StepType,
     TargetType,
     WorkoutSegment,
     create_cooldown_step,
@@ -33,6 +35,8 @@ from garminconnect.workout import (
     create_repeat_group,
     create_warmup_step,
 )
+
+from garmin_coach.workouts import exercises
 
 # System-authored workouts carry this name prefix so idempotency scans only our
 # own workouts and the athlete can tell them apart in Garmin Connect.
@@ -68,10 +72,22 @@ _STEP_BUILDERS = {
     "cooldown": create_cooldown_step,
 }
 
+# Default rest between sets for exercise sports, overridable per entry.
+STRENGTH_REST_S = 90
+
 # Allowed request enumerations.
 _SPORTS = ("run", "hiit", "strength")
 _ORIGINS = ("recommender", "athlete")
-_SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox")
+_SESSION_TYPES = ("rest", "easy", "tempo", "quality", "hyrox", "strength")
+
+# Which session types each authored sport may carry (hiit joins with its ticket).
+_SPORT_SESSION_TYPES = {
+    "run": frozenset({"rest", "easy", "tempo", "quality", "hyrox"}),
+    "strength": frozenset({"strength"}),
+}
+
+# Per exercise sport: the default seconds of rest between sets.
+_REST_DEFAULT_S = {"strength": STRENGTH_REST_S}
 
 # Session-type hardness, for spotting an athlete request that exceeds the
 # recommender's advice. Mirrors the recommender's intent ranking.
@@ -96,7 +112,7 @@ _STRUCTURE_ROLES = {
 
 
 class DeferredSportError(Exception):
-    """Raised when a request's sport (``hiit``/``strength``) awaits the push spike."""
+    """Raised when a request's sport (``hiit``) awaits its authoring ticket."""
 
     def __init__(self, sport: str) -> None:
         super().__init__(f"sport '{sport}' is not authored yet; awaits the push spike")
@@ -129,12 +145,13 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
 
     Raises:
         ValueError: If the request is malformed or the target date is in the past.
-        DeferredSportError: If the sport awaits the push spike (``hiit``/``strength``).
+        DeferredSportError: If the sport awaits its authoring ticket (``hiit``).
         HyroxSplitRequired: If a Hyrox session needs the athlete to choose its kind.
     """
     _validate_request(request)
-    if request["sport"] != "run":
+    if request["sport"] == "hiit":
         raise DeferredSportError(request["sport"])
+    _validate_sport_session(request["sport"], request["session_type"])
 
     session_type = request["session_type"]
     if session_type == "hyrox":
@@ -145,9 +162,14 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
-    _validate_structure(request.get("structure") or {}, session_type)
-    warnings.extend(_pace_band_warning(request, context))
-    steps = _expand(session_type, request, context.get("zones"), warnings)
+    if request["sport"] == "strength":
+        structure = request.get("structure") or {}
+        _validate_exercises(structure)
+        steps = _expand_exercises(structure, request["sport"], warnings)
+    else:
+        _validate_structure(request.get("structure") or {}, session_type)
+        warnings.extend(_pace_band_warning(request, context))
+        steps = _expand(session_type, request, context.get("zones"), warnings)
     return {
         "sport": request["sport"],
         "origin": request["origin"],
@@ -174,6 +196,134 @@ def _validate_request(request: dict[str, Any]) -> None:
         raise ValueError(f"unknown origin: {request['origin']}")
     if request["session_type"] not in _SESSION_TYPES:
         raise ValueError(f"unknown session_type: {request['session_type']}")
+
+
+def _validate_sport_session(sport: str, session_type: str) -> None:
+    """Check the session type belongs to the sport's authoring family.
+
+    Raises:
+        ValueError: If the session type is not valid for the sport.
+    """
+    if session_type not in _SPORT_SESSION_TYPES[sport]:
+        raise ValueError(f"session_type '{session_type}' is not valid for sport '{sport}'")
+
+
+def _validate_exercises(structure: dict[str, Any]) -> None:
+    """Check an exercise sport's structure carries a well-formed exercises list.
+
+    Raises:
+        ValueError: If the structure has unknown keys, the list is missing or
+            empty, or any entry is malformed.
+    """
+    unknown = set(structure) - {"exercises"}
+    if unknown:
+        raise ValueError(
+            f"unknown structure keys for an exercise sport: {', '.join(sorted(unknown))}"
+        )
+    entries = structure.get("exercises")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("an exercise session needs structure.exercises: a non-empty list")
+    for entry in entries:
+        _validate_exercise_entry(entry)
+
+
+def _validate_exercise_entry(entry: Any) -> None:
+    """Check one exercise entry: exercise, sets, reps XOR time, optional weight and rest.
+
+    Raises:
+        ValueError: If a field is missing, malformed, or reps/time are not
+            mutually exclusive.
+    """
+    if not isinstance(entry, dict):
+        raise ValueError("each exercises entry must be a mapping")
+    if not isinstance(entry.get("exercise"), str) or not entry["exercise"].strip():
+        raise ValueError("each exercises entry needs a non-empty exercise name")
+    sets = entry.get("sets")
+    if not isinstance(sets, int) or sets <= 0:
+        raise ValueError(f"exercise '{entry['exercise']}' sets must be a positive integer")
+    if ("reps" in entry) == ("time" in entry):
+        raise ValueError(f"exercise '{entry['exercise']}' needs exactly one of reps or time")
+    if "reps" in entry and (not isinstance(entry["reps"], int) or entry["reps"] <= 0):
+        raise ValueError(f"exercise '{entry['exercise']}' reps must be a positive integer")
+    if "time" in entry:
+        _validate_duration(entry["time"], f"exercise '{entry['exercise']}' time")
+    weight = entry.get("weight_kg")
+    if weight is not None and (not isinstance(weight, int | float) or weight <= 0):
+        raise ValueError(f"exercise '{entry['exercise']}' weight_kg must be positive")
+    rest = entry.get("rest")
+    if rest is not None and rest != "lap":
+        _validate_duration(rest, f"exercise '{entry['exercise']}' rest")
+
+
+def _validate_duration(value: Any, label: str) -> None:
+    """Check a duration descriptor is ``{"min": N}`` or ``{"s": N}`` with a positive N.
+
+    Raises:
+        ValueError: If the descriptor is not one of the two shapes or N is not positive.
+    """
+    if not isinstance(value, dict) or ("min" in value) == ("s" in value):
+        raise ValueError(f'{label} must be {{"min": N}} or {{"s": N}}')
+    key = "min" if "min" in value else "s"
+    if not isinstance(value[key], int | float) or value[key] <= 0:
+        raise ValueError(f"{label} {key} must be positive")
+
+
+def _expand_exercises(
+    structure: dict[str, Any], sport: str, warnings: list[str]
+) -> list[dict[str, Any]]:
+    """Expand exercise entries into flat per-set work steps with rests between sets.
+
+    One step per set (never a repeat group - the probe-proven shape), a rest step
+    after every set, and the session's trailing rest skipped.
+    """
+    steps: list[dict[str, Any]] = []
+    for entry in structure["exercises"]:
+        work = _exercise_work_step(entry, warnings)
+        rest = {"kind": "rest", "end": _rest_end(entry, sport), "target": _NO_TARGET}
+        for _ in range(entry["sets"]):
+            steps.append(dict(work))
+            steps.append(dict(rest))
+    steps.pop()
+    return steps
+
+
+def _exercise_work_step(entry: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
+    """One entry's work step: end condition, resolved exercise label, optional weight."""
+    step: dict[str, Any] = {"kind": "work", "end": _exercise_end(entry), "target": _NO_TARGET}
+    pair = exercises.resolve(entry["exercise"])
+    if pair is None:
+        warnings.append(
+            f"unknown exercise '{entry['exercise']}'; the step will be unlabeled on the watch"
+        )
+    else:
+        step["exercise"] = {"category": pair[0], "name": pair[1]}
+    if entry.get("weight_kg") is not None:
+        step["weight_kg"] = entry["weight_kg"]
+    return step
+
+
+def _exercise_end(entry: dict[str, Any]) -> dict[str, Any]:
+    """A rep-ended or time-ended work end for one exercise entry."""
+    if "reps" in entry:
+        return {"type": "reps", "count": entry["reps"]}
+    return {"type": "time", "seconds": _seconds(entry["time"])}
+
+
+def _rest_end(entry: dict[str, Any], sport: str) -> dict[str, Any]:
+    """The rest end after each of an entry's sets: override, or the sport default."""
+    rest = entry.get("rest")
+    if rest is None:
+        return {"type": "time", "seconds": _REST_DEFAULT_S[sport]}
+    if rest == "lap":
+        return {"type": "lap"}
+    return {"type": "time", "seconds": _seconds(rest)}
+
+
+def _seconds(duration: dict[str, Any]) -> int:
+    """The seconds of a validated ``{"min": N}`` / ``{"s": N}`` duration descriptor."""
+    if "min" in duration:
+        return int(duration["min"] * 60)
+    return int(duration["s"])
 
 
 def _hybrid_warnings(request: dict[str, Any], context: dict[str, Any]) -> list[str]:
@@ -487,8 +637,32 @@ def _hr_or_none(
     return {"type": "none"}
 
 
+# Garmin sport-type descriptors for the exercise sports (hiit joins with its ticket).
+_GARMIN_SPORT_TYPES = {
+    "strength": {
+        "sportTypeId": SportType.STRENGTH_TRAINING,
+        "sportTypeKey": "strength_training",
+        "displayOrder": 5,
+    },
+}
+
+# Garmin step-type descriptors the hand-built exercise payload uses.
+_INTERVAL_STEP_TYPE = {
+    "stepTypeId": StepType.INTERVAL,
+    "stepTypeKey": "interval",
+    "displayOrder": 3,
+}
+_REST_STEP_TYPE = {"stepTypeId": StepType.REST, "stepTypeKey": "rest", "displayOrder": 5}
+
+# Garmin's unit descriptor for kilogram weights (the system's fixed weight unit).
+_KILOGRAM_UNIT = {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0}
+
+
 def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
-    """Translate a workout spec into a Garmin ``RunningWorkout`` JSON payload.
+    """Translate a workout spec into a raw Garmin workout JSON payload.
+
+    Run specs reuse garminconnect's typed ``RunningWorkout``; exercise-sport
+    specs are hand-built (the library ships no typed strength/HIIT class).
 
     Args:
         spec: A finished workout spec from ``author``.
@@ -496,6 +670,8 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     Returns:
         The Garmin workout dict ready for ``upload_workout``.
     """
+    if spec["sport"] in _GARMIN_SPORT_TYPES:
+        return _exercise_payload(spec)
     order = count(1)
     nodes = [_garmin_node(node, order) for node in spec["steps"]]
     segment = WorkoutSegment(
@@ -509,6 +685,68 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
         workoutSegments=[segment],
     )
     return workout.to_dict()
+
+
+def _exercise_payload(spec: dict[str, Any]) -> dict[str, Any]:
+    """Hand-build the raw workout payload for an exercise-sport spec.
+
+    Flat executable steps only (one per set, rests between) - the shape the live
+    probes proved the create endpoint accepts.
+    """
+    sport_type = _GARMIN_SPORT_TYPES[spec["sport"]]
+    steps = [
+        _exercise_garmin_step(step, order) for order, step in enumerate(spec["steps"], start=1)
+    ]
+    return {
+        "workoutName": spec["name"],
+        "sportType": sport_type,
+        "estimatedDurationInSecs": _estimated_duration(spec["steps"]),
+        "workoutSegments": [{"segmentOrder": 1, "sportType": sport_type, "workoutSteps": steps}],
+    }
+
+
+def _exercise_garmin_step(step: dict[str, Any], order: int) -> dict[str, Any]:
+    """One raw executable step (work or rest) for an exercise-sport spec step."""
+    payload: dict[str, Any] = {
+        "type": "ExecutableStepDTO",
+        "stepOrder": order,
+        "stepType": _INTERVAL_STEP_TYPE if step["kind"] == "work" else _REST_STEP_TYPE,
+        **_exercise_end_condition(step["end"]),
+    }
+    if "exercise" in step:
+        payload["category"] = step["exercise"]["category"]
+        payload["exerciseName"] = step["exercise"]["name"]
+    if "weight_kg" in step:
+        payload["weightValue"] = float(step["weight_kg"])
+        payload["weightUnit"] = _KILOGRAM_UNIT
+    return payload
+
+
+def _exercise_end_condition(end: dict[str, Any]) -> dict[str, Any]:
+    """The endCondition/endConditionValue pair for a reps, time, or lap end."""
+    if end["type"] == "reps":
+        condition = {
+            "conditionTypeId": ConditionType.REPS,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": True,
+        }
+        return {"endCondition": condition, "endConditionValue": float(end["count"])}
+    if end["type"] == "time":
+        condition = {
+            "conditionTypeId": ConditionType.TIME,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": True,
+        }
+        return {"endCondition": condition, "endConditionValue": float(end["seconds"])}
+    condition = {
+        "conditionTypeId": ConditionType.LAP_BUTTON,
+        "conditionTypeKey": "lap.button",
+        "displayOrder": 1,
+        "displayable": True,
+    }
+    return {"endCondition": condition, "endConditionValue": None}
 
 
 def _garmin_node(node: dict[str, Any], order: count[int]) -> Any:
@@ -618,7 +856,7 @@ def _step_seconds(step: dict[str, Any]) -> int:
         return int(end["seconds"])
     if end["type"] == "distance":
         return _distance_seconds(end["metres"], step["target"])
-    return 0  # lap: unknowable
+    return 0  # lap or reps: unknowable
 
 
 def _distance_seconds(metres: int, target: dict[str, Any]) -> int:

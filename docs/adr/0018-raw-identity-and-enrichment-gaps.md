@@ -41,7 +41,7 @@ and was never retried.
   date.
 
 - **A failed enrichment is reported but does not degrade the run.** Misses are logged
-  (`[sync]` tag) and collected in `SyncResult.enrichment_misses`, which `daily` logs and
+  (`sync:` tag) and collected in `SyncResult.enrichment_misses`, which `daily` logs and
   counts. Rejected: appending them to `SyncResult.warnings`. That would flip `degraded`
   and the process exit code to 1 for a single missing weather reading, contradicting
   ADR 0001's partial-success stance and training the operator to ignore exit 1. A

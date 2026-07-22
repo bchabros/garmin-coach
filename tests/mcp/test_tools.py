@@ -14,6 +14,7 @@ from garmin_coach import cli
 from garmin_coach.core import db
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
+from garmin_coach.workouts import publish
 
 DATA_START = "2026-06-08"
 TODAY = dt.date.today().isoformat()
@@ -540,12 +541,18 @@ def test_push_confirm_refuses_a_token_from_before_a_date_change(
 ):
     """A token from one day must not confirm the identical workout on another day.
 
-    The same session authored twice has the same name and steps, so the date-free
-    gc-hash cannot tell the two pushes apart - only the token can.
+    The LATER spec is a byte-for-byte copy of FUTURE's with only the date changed,
+    so the date-free gc-hash is identical for both pushes - only the token can tell
+    them apart, and the guard assertion below keeps this test discriminating.
     """
     request = fixture("tempo_request")
     tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
-    tools.author_workout(conn, date=LATER, request=request, reports_dir=str(tmp_path))
+    spec = json.loads((tmp_path / FUTURE / "workout.json").read_text())
+    retargeted = {**spec, "date": LATER}
+    (tmp_path / LATER).mkdir()
+    (tmp_path / LATER / "workout.json").write_text(json.dumps(retargeted))
+    assert publish.spec_hash(spec) == publish.spec_hash(retargeted)
+
     pub = fake_publisher()
     preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
 

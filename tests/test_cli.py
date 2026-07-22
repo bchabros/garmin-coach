@@ -96,6 +96,33 @@ def test_log_niggle_validates_severity_range(conn):
         cli.log_niggle(conn, body_part="kolano", severity=6, date="2026-06-14")
 
 
+# --- Issue #35: standalone recompute entry points still commit their work ---
+
+
+def test_log_session_rpe_survives_a_rollback_probe(conn):
+    """The rollups no longer commit, but this entry point still persists everything."""
+    _sila(conn)
+    cli.log_session_rpe(conn, activity_id=1, rpe=9, data_start_date=DATA_START)
+
+    conn.rollback()
+
+    assert conn.execute("SELECT rpe FROM session_rpe WHERE activity_id=1").fetchone()[0] == 9
+    row = conn.execute("SELECT load_strength FROM daily_metrics WHERE date='2026-06-08'").fetchone()
+    assert row is not None and row[0] is not None
+
+
+def test_log_niggle_survives_a_rollback_probe(conn):
+    """log_niggle owns its own transaction; the write must outlive a rollback."""
+    cli.log_niggle(conn, body_part="kolano", severity=4, date="2026-06-14")
+
+    conn.rollback()
+
+    row = conn.execute(
+        "SELECT severity FROM niggle WHERE date='2026-06-14' AND body_part='kolano'"
+    ).fetchone()
+    assert row[0] == 4
+
+
 # --- `event` command (Phase 9): record what the athlete is training for ---
 
 

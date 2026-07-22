@@ -172,7 +172,7 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
     rows = _overlap_rows(daily, thr["pattern_load_floor"])
     db.replace_pattern_overlap(conn, rows)
 
-    cov = coverage(conn)
+    cov = coverage(conn, through_date=through_date)
     if cov["sets_unmapped"]:
         logger.warning(
             "overlap: %d unmapped exercise subcategories (excluded from overlap): %s",

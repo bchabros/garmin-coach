@@ -112,20 +112,20 @@ def publish(
         ids it created (or the partial state and error when scheduling failed).
     """
     date = spec["date"]
-    spec_hash = _spec_hash(spec)
+    marker = spec_hash(spec)
     payload = _author.to_garmin(spec)
-    payload["description"] = f"{_HASH_PREFIX}{spec_hash}"
+    payload["description"] = f"{_HASH_PREFIX}{marker}"
 
     warnings = list(spec.get("warnings", []))
     if date in activity_dates:
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
     existing = _find_by_name(publisher, spec["name"])
-    action = _resolve_action(existing, spec_hash, publisher, date, replace)
+    action = _resolve_action(existing, marker, publisher, date, replace)
     result = PublishResult(
         action=action,
         applied=False,
-        spec_hash=spec_hash,
+        spec_hash=marker,
         date=date,
         payload=payload,
         message=_message(action),
@@ -282,20 +282,20 @@ def connect_publisher(settings: Any) -> WorkoutPublisher:
     return GarminWorkoutPublisher(client.login_api(settings))
 
 
-def _spec_hash(spec: dict[str, Any]) -> str:
+def _canonical_hash(fields: dict[str, Any]) -> str:
+    """The stable short hash of a canonically serialized field set."""
+    canonical = json.dumps(fields, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+def spec_hash(spec: dict[str, Any]) -> str:
     """A stable short hash of the canonical spec (its name and steps).
 
     Deliberately date-free: this is the idempotency marker carried in the Garmin
     workout description, and rescheduling a workout must not make it look like a
     different one. For the preview/confirm handshake use :func:`confirm_token`.
     """
-    canonical = json.dumps({"name": spec["name"], "steps": spec["steps"]}, sort_keys=True)
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
-
-
-def spec_hash(spec: dict[str, Any]) -> str:
-    """Public form of the canonical-spec hash - the account-side idempotency marker."""
-    return _spec_hash(spec)
+    return _canonical_hash({"name": spec["name"], "steps": spec["steps"]})
 
 
 def confirm_token(spec: dict[str, Any]) -> str:
@@ -305,10 +305,7 @@ def confirm_token(spec: dict[str, Any]) -> str:
     the activity-collision check ran against: a spec retargeted between preview and
     confirm must invalidate the preview even though the workout itself is unchanged.
     """
-    canonical = json.dumps(
-        {"name": spec["name"], "steps": spec["steps"], "date": spec["date"]}, sort_keys=True
-    )
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    return _canonical_hash({"name": spec["name"], "steps": spec["steps"], "date": spec["date"]})
 
 
 def _message(action: str) -> str:

@@ -25,10 +25,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-logger.info("[NB_02] Processing %d attachments for batch %s", count, batch_id)
+logger.info("sync: stored %d activities for %s", count, day)
 ```
-Prefix messages with a `[Component]` tag. See the pipeline notebooks
-(`notebooks/NB_00`–`NB_02`) for the established pattern.
+Prefix messages with a lowercase `component:` tag naming the module
+(`daily: ...`, `sync: ...`, `overlap: ...`) — the established pattern across
+`src/garmin_coach/`.
 
 **Docstrings** — Google-style with `Args:` and `Returns:` sections, only where the
 logic isn't self-evident. Don't add docstrings to code you didn't change. Full rules

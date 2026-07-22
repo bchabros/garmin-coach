@@ -202,7 +202,7 @@ def _fetch_enrichment(
         return call()
     except Exception as exc:  # noqa: BLE001 - enrichment isolation: record, keep going
         message = f"{kind} enrichment failed for activity {activity_id}: {exc}"
-        logger.warning("[sync] %s", message)
+        logger.warning("sync: %s", message)
         if misses is not None:
             misses.append(message)
         return None

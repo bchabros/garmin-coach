@@ -336,10 +336,16 @@ code, docstrings, PRDs, and ADRs.
 - **partial fields** - the intraday-accumulating mart fields (load, ACWR, zone
   minutes, RHR, stress, body battery) listed in the envelope when today is included.
   Morning-complete streams (sleep, HRV, readiness) are never flagged.
-- **preview-hash handshake** - the MCP push interlock: `push_preview` returns the
-  canonical `spec_hash` alongside the payload, and `push_confirm` refuses any other
-  value without touching the account. The MCP counterpart of the CLI's `--confirm`,
-  strict enough for an agent caller.
+- **preview-hash handshake** - the MCP push interlock: `push_preview` returns a
+  `confirm_token` alongside the payload, and `push_confirm` refuses any other value
+  without touching the account. The MCP counterpart of the CLI's `--confirm`, strict
+  enough for an agent caller.
+- **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
+  (name + steps) is the account-side idempotency marker written into the Garmin
+  workout description; it ignores the date on purpose, so rescheduling a workout is
+  not a different workout. `confirm_token` (name + steps + date) gates
+  preview -> confirm, because the date decides what gets scheduled and which day's
+  activity collision was checked.
 
 ## Process terms
 

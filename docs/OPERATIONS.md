@@ -282,10 +282,11 @@ Which clients pick it up and how is covered in "Registering the server" below �
   coach read; it shares the login rate-limit exposure (429) of any transport call.
 - **Workout push** — `author_workout(date, request?)` writes `workout.json`;
   `push_preview(date)` returns the resolved action, the Garmin payload, and a
-  `spec_hash`; `push_confirm(date, spec_hash, replace?)` writes to the account and
-  **refuses any hash other than the previewed one**. Show the preview to the athlete
-  before confirming — the handshake exists so an agent cannot push what it has not
-  displayed.
+  `confirm_token`; `push_confirm(date, confirm_token, replace?)` writes to the account
+  and **refuses any token other than the previewed one**. The token covers the workout
+  *and* its date, so a spec retargeted after the preview cannot be confirmed. Show the
+  preview to the athlete before confirming — the handshake exists so an agent cannot
+  push what it has not displayed.
 
 **Reading the freshness envelope.** Every response carries
 `{data_through, today_included, partial_fields}`. If `today_included` is true, any

@@ -283,14 +283,32 @@ def connect_publisher(settings: Any) -> WorkoutPublisher:
 
 
 def _spec_hash(spec: dict[str, Any]) -> str:
-    """A stable short hash of the canonical spec (its name and steps)."""
+    """A stable short hash of the canonical spec (its name and steps).
+
+    Deliberately date-free: this is the idempotency marker carried in the Garmin
+    workout description, and rescheduling a workout must not make it look like a
+    different one. For the preview/confirm handshake use :func:`confirm_token`.
+    """
     canonical = json.dumps({"name": spec["name"], "steps": spec["steps"]}, sort_keys=True)
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 def spec_hash(spec: dict[str, Any]) -> str:
-    """Public form of the canonical-spec hash, for the MCP preview/confirm handshake."""
+    """Public form of the canonical-spec hash - the account-side idempotency marker."""
     return _spec_hash(spec)
+
+
+def confirm_token(spec: dict[str, Any]) -> str:
+    """A token covering everything a preview showed and a confirm acts on.
+
+    The date is included because it decides what the push schedules and which day
+    the activity-collision check ran against: a spec retargeted between preview and
+    confirm must invalidate the preview even though the workout itself is unchanged.
+    """
+    canonical = json.dumps(
+        {"name": spec["name"], "steps": spec["steps"], "date": spec["date"]}, sort_keys=True
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 def _message(action: str) -> str:

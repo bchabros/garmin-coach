@@ -205,6 +205,7 @@ def test_get_workout_status_with_no_artifacts_is_explicit(conn, tmp_path):
 # --- action tools -----------------------------------------------------------
 
 FUTURE = (dt.date.today() + dt.timedelta(days=2)).isoformat()
+LATER = (dt.date.today() + dt.timedelta(days=3)).isoformat()
 
 
 def _seed_activity(conn, aid=1, date="2026-07-10") -> None:
@@ -297,13 +298,13 @@ def test_push_preview_returns_action_hash_and_payload(conn, tmp_path, fixture, f
     assert pub.calls == []
 
 
-def test_push_confirm_refuses_a_stale_hash(conn, tmp_path, fixture, fake_publisher):
+def test_push_confirm_refuses_a_stale_token(conn, tmp_path, fixture, fake_publisher):
     request = fixture("tempo_request")
     tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
     pub = fake_publisher()
 
     out = tools.push_confirm(
-        conn, date=FUTURE, spec_hash="deadbeef", publisher=pub, reports_dir=str(tmp_path)
+        conn, date=FUTURE, confirm_token="deadbeef", publisher=pub, reports_dir=str(tmp_path)
     )
 
     assert out["data"]["error"] is not None
@@ -311,7 +312,7 @@ def test_push_confirm_refuses_a_stale_hash(conn, tmp_path, fixture, fake_publish
     assert pub.calls == []
 
 
-def test_push_confirm_with_matching_hash_uploads_and_schedules(
+def test_push_confirm_with_matching_token_uploads_and_schedules(
     conn, tmp_path, fixture, fake_publisher
 ):
     request = fixture("tempo_request")
@@ -322,7 +323,7 @@ def test_push_confirm_with_matching_hash_uploads_and_schedules(
     out = tools.push_confirm(
         conn,
         date=FUTURE,
-        spec_hash=preview["data"]["spec_hash"],
+        confirm_token=preview["data"]["confirm_token"],
         publisher=pub,
         reports_dir=str(tmp_path),
     )
@@ -521,3 +522,55 @@ def test_plan_confirm_with_a_pipe_reports_an_error_and_strands_nothing(conn, tmp
     assert out["data"]["error"] is not None
     assert list(tmp_path.iterdir()) == []
     assert conn.execute("SELECT COUNT(*) FROM plan_week").fetchone()[0] == 0
+
+
+# --- Issue #37: the confirm token must cover the date the push acts on ---
+
+
+def _retarget_spec(tmp_path, from_date, to_date):
+    """Move the authored spec's own date without touching its name or steps."""
+    path = tmp_path / from_date / "workout.json"
+    spec = json.loads(path.read_text())
+    spec["date"] = to_date
+    path.write_text(json.dumps(spec))
+
+
+def test_push_confirm_refuses_a_token_from_before_a_date_change(
+    conn, tmp_path, fixture, fake_publisher
+):
+    """A token from one day must not confirm the identical workout on another day.
+
+    The same session authored twice has the same name and steps, so the date-free
+    gc-hash cannot tell the two pushes apart - only the token can.
+    """
+    request = fixture("tempo_request")
+    tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    tools.author_workout(conn, date=LATER, request=request, reports_dir=str(tmp_path))
+    pub = fake_publisher()
+    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    out = tools.push_confirm(
+        conn,
+        date=LATER,
+        confirm_token=preview["data"]["confirm_token"],
+        publisher=pub,
+        reports_dir=str(tmp_path),
+    )
+
+    assert out["data"]["error"] is not None
+    assert "stale" in out["data"]["error"]
+    assert pub.calls == []
+
+
+def test_a_spec_filed_under_another_date_is_refused(conn, tmp_path, fixture, fake_publisher):
+    """The folder is the target day; a spec pointing elsewhere would push the wrong day."""
+    request = fixture("tempo_request")
+    tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    _retarget_spec(tmp_path, FUTURE, LATER)
+
+    out = tools.push_preview(
+        conn, date=FUTURE, publisher=fake_publisher(), reports_dir=str(tmp_path)
+    )
+
+    assert out["data"]["error"] is not None
+    assert LATER in out["data"]["error"]

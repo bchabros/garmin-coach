@@ -241,10 +241,11 @@ def author_workout(
 
 @server.tool()
 def push_preview(date: str) -> dict[str, Any]:
-    """Dry-run the push for a date: resolved action, Garmin payload, and spec_hash.
+    """Dry-run the push for a date: resolved action, Garmin payload, and confirm token.
 
     Nothing is written. Show the result to the athlete; the returned
-    ``spec_hash`` is the token ``push_confirm`` requires.
+    ``confirm_token`` is what ``push_confirm`` requires. It covers the workout and
+    the date it is scheduled for, so retargeting the spec invalidates the preview.
     """
     settings = get_settings()
     conn = _open()
@@ -256,10 +257,10 @@ def push_preview(date: str) -> dict[str, Any]:
 
 
 @server.tool()
-def push_confirm(date: str, spec_hash: str, replace: bool = False) -> dict[str, Any]:
+def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[str, Any]:
     """Write the previewed workout to the Garmin account (upload + schedule).
 
-    Requires the ``spec_hash`` returned by ``push_preview`` - any other value
+    Requires the ``confirm_token`` returned by ``push_preview`` - any other value
     is refused without touching the account. ``replace`` overwrites a changed
     same-name workout, mirroring the CLI's --replace.
     """
@@ -270,7 +271,7 @@ def push_confirm(date: str, spec_hash: str, replace: bool = False) -> dict[str, 
         return tools.push_confirm(
             conn,
             date=date,
-            spec_hash=spec_hash,
+            confirm_token=confirm_token,
             publisher=publisher,
             replace=replace,
             reports_dir=_REPORTS_DIR,

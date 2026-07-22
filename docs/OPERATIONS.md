@@ -93,7 +93,12 @@ Config keys (`config.py`, overridable via env / `.env`):
   Same exit-code contract as `daily` (0 ok / 1 degraded / 2 failed).
 - **Re-running is safe (idempotency).** Re-running `backfill`/`sync` must not change
   **core** row counts (upsert by PK). Only `raw_payloads` grows (append-only, keyed by
-  `fetched_at`). Re-run freely to recover from a degraded run.
+  `fetched_at` plus the payload hash). Re-run freely to recover from a degraded run.
+- **Enrichment gaps.** Per-activity weather and exercise sets are best-effort: a failed
+  fetch leaves the enrichment absent and never aborts the run, so it does **not** make
+  the run `degraded`. It is logged as `daily: enrichment gap: ...` and counted in the
+  sync stage's `enrichment_gaps=`. Grep the log for these before concluding that Garmin
+  simply had no data; a re-run repairs them.
 - **Onboarding gap.** Real data starts 2026-06-08 (`data_start`, defined in
   `docs/glossary.md`); earlier dates are explicit gaps, not zero training.
 

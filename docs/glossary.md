@@ -5,7 +5,10 @@ code, docstrings, PRDs, and ADRs.
 
 ## Data layers (medallion)
 
-- **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten.
+- **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten. A row's
+  identity is `(endpoint, ref_date, fetched_at, payload_sha)`: the content hash is part
+  of the key because `fetched_at` only resolves to the second (ADR 0018). Enrichment
+  payloads are filed under the activity's own day, not the requested range start.
 - **core** - normalized, upserted-by-PK tables (`activities`, `daily_wellness`,
   `sleep`, `hrv_nightly`, `sync_state`, plus the manually-logged `session_rpe` and
   `niggle`). The system of record. Most core tables are ETL-written from Garmin;

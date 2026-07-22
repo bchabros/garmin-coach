@@ -87,7 +87,10 @@ class FakeGarminClient:
 
     def get_activity_weather(self, activity_id: int):
         self.calls.append(("weather", str(activity_id)))
-        return self.weather_by_id.get(activity_id)
+        payload = self.weather_by_id.get(activity_id)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
     def get_activity_exercise_sets(self, activity_id: int):
         self.calls.append(("sets", str(activity_id)))

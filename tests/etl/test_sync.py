@@ -308,3 +308,68 @@ def test_backfill_excludes_today_when_to_date_omitted(conn, fake_client):
     day_calls = [d for (ep, d) in client.calls if ep == "sleep"]
     assert (today - dt.timedelta(days=1)).isoformat() in day_calls
     assert today.isoformat() not in day_calls
+
+
+# --- Issue #34: enrichment referents and observable enrichment gaps ---
+
+
+def _activity_payload(activity_id: int, start_local: str) -> dict:
+    return {
+        "activityId": activity_id,
+        "startTimeLocal": start_local,
+        "activityType": {"typeKey": "running"},
+        "duration": 1800.0,
+    }
+
+
+def test_enrichment_payloads_are_stamped_with_their_own_activity_day(conn, fake_client):
+    """A range pull must not file every activity's weather under the range start."""
+    client = fake_client(
+        activities=[
+            _activity_payload(1, "2026-06-09 07:00:00"),
+            _activity_payload(2, "2026-06-11 18:00:00"),
+        ],
+        weather_by_id={1: {"temp": 60}, 2: {"temp": 70}},
+    )
+
+    sync.backfill(client, conn, "2026-06-08", "2026-06-12")
+
+    ref_dates = sorted(
+        r[0]
+        for r in conn.execute(
+            "SELECT ref_date FROM raw_payloads WHERE endpoint='get_activity_weather'"
+        )
+    )
+    assert ref_dates == ["2026-06-09", "2026-06-11"]
+
+
+def test_both_activities_weather_survive_a_same_second_fan_out(conn, fake_client):
+    """Two activities on one day enrich in the same second - neither payload is lost."""
+    client = fake_client(
+        activities=[
+            _activity_payload(1, "2026-06-09 07:00:00"),
+            _activity_payload(2, "2026-06-09 18:00:00"),
+        ],
+        weather_by_id={1: {"temp": 60}, 2: {"temp": 70}},
+    )
+
+    sync.backfill(client, conn, "2026-06-08", "2026-06-12")
+
+    n = conn.execute(
+        "SELECT COUNT(*) FROM raw_payloads WHERE endpoint='get_activity_weather'"
+    ).fetchone()[0]
+    assert n == 2
+
+
+def test_a_failed_enrichment_is_recorded_and_never_aborts_the_run(conn, fake_client):
+    """Best-effort stays best-effort (ADR 0001), but the gap stops being invisible."""
+    client = fake_client(
+        activities=[_activity_payload(1, "2026-06-09 07:00:00")],
+        weather_by_id={1: RuntimeError("weather endpoint down")},
+    )
+
+    result = sync.refresh_day(client, conn, "2026-06-09")
+
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1  # run continued
+    assert any("weather" in m and "1" in m for m in result.enrichment_misses)
+    assert not result.degraded  # an enrichment gap is not a stream failure

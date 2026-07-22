@@ -7,7 +7,7 @@ are exercised without any live Garmin call. Prior art: ``tests/test_sync.py``.
 
 from __future__ import annotations
 
-from garmin_coach.workouts.publish import publish
+from garmin_coach.workouts.publish import confirm_token, publish, spec_hash
 from tests.conftest import FakePublisher
 
 
@@ -179,3 +179,20 @@ def test_receipt_carries_ids_hash_and_action():
     assert receipt["schedule_id"] == result.schedule_id
     assert receipt["name"] == "GC 2026-07-17 tempo"
     assert receipt["spec_hash"]
+
+
+# --- Issue #37: two hashes, two jobs ---
+
+
+def test_the_gc_hash_ignores_the_date_but_the_confirm_token_does_not():
+    """Rescheduling is the same workout on the account, but a different push to confirm."""
+    # Same name and steps on two days: only the token can tell the pushes apart.
+    monday = _spec(date="2026-07-27", name="GC tempo")
+    tuesday = _spec(date="2026-07-28", name="GC tempo")
+
+    assert spec_hash(monday) == spec_hash(tuesday)
+    assert confirm_token(monday) != confirm_token(tuesday)
+
+
+def test_the_confirm_token_still_reacts_to_the_workout_itself():
+    assert confirm_token(_spec()) != confirm_token(_spec(work_s=1800))

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
+
 from garmin_coach.core import db
 from garmin_coach.marts import features
 
@@ -418,3 +420,53 @@ def test_features_leaves_plan_block_empty_without_an_anchor(conn):
     features.features(conn, data_start_date="2026-06-08", to_date="2026-06-21")
 
     assert conn.execute("SELECT COUNT(*) FROM plan_block").fetchone()[0] == 0
+
+
+# --- Issue #35: one materialization pass is one transaction ---
+
+
+def _mart_generation(conn) -> dict[str, list]:
+    """A snapshot of every mart table the pass writes, for all-or-nothing assertions."""
+    return {
+        table: conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+        for table in (
+            "daily_metrics",
+            "plan_block",
+            "weekly_metrics",
+            "athlete_zones",
+            "pattern_overlap",
+            "athlete_status",
+        )
+    }
+
+
+def test_a_failed_pass_leaves_every_mart_untouched(conn, monkeypatch):
+    """A mid-sequence crash rolls the whole pass back, so no mart advances alone."""
+    _activity(conn, 1, "2026-06-08", aero=2.0, anaero=0.0, load=50)
+    features.features(conn, data_start_date="2026-06-08", to_date="2026-06-14")
+    before = _mart_generation(conn)
+
+    # A second day of core data would move daily_metrics, weekly_metrics and the
+    # snapshot forward - but zones blows up in the middle of the pass.
+    _activity(conn, 2, "2026-06-15", aero=2.0, anaero=0.0, load=90)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("zones exploded")
+
+    monkeypatch.setattr(features.zones, "rollup", _boom)
+
+    with pytest.raises(RuntimeError, match="zones exploded"):
+        features.features(conn, data_start_date="2026-06-08", to_date="2026-06-21")
+
+    assert _mart_generation(conn) == before
+
+
+def test_a_successful_pass_commits_the_whole_generation(conn):
+    """The committing caller sees the finished marts, not a half-written pass."""
+    _activity(conn, 1, "2026-06-08", aero=2.0, anaero=0.0, load=50)
+
+    features.features(conn, data_start_date="2026-06-08", to_date="2026-06-14")
+
+    conn.rollback()  # a no-op only if the pass already committed
+    assert conn.execute("SELECT COUNT(*) FROM daily_metrics").fetchone()[0] == 7
+    assert conn.execute("SELECT COUNT(*) FROM athlete_status").fetchone()[0] == 1

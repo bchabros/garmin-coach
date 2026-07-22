@@ -192,3 +192,60 @@ def test_list_goal_events_is_ordered_by_date(conn):
     db.insert_goal_event(conn, _goal_event(date="2026-09-05", type="run_race"))
 
     assert [e["date"] for e in db.list_goal_events(conn)] == ["2026-09-05", "2026-10-17"]
+
+
+# --- Issue #34: raw identity must not lose a distinct payload ---
+
+
+def test_two_distinct_payloads_in_the_same_second_both_survive(conn):
+    """The raw layer promises reprocessing; a same-second collision must not eat one."""
+    stamp = "2026-07-04T10:00:00"
+    db.insert_raw(conn, "get_activity_weather", "2026-06-10", '{"temp": 19}', fetched_at=stamp)
+    db.insert_raw(conn, "get_activity_weather", "2026-06-10", '{"temp": 24}', fetched_at=stamp)
+
+    payloads = [
+        r[0]
+        for r in conn.execute(
+            "SELECT payload FROM raw_payloads WHERE endpoint=? AND ref_date=? ORDER BY payload",
+            ("get_activity_weather", "2026-06-10"),
+        )
+    ]
+    assert payloads == ['{"temp": 19}', '{"temp": 24}']
+
+
+def test_the_identical_payload_in_the_same_second_stays_one_row(conn):
+    """A repeated identical call is a genuine no-op, not a second copy."""
+    stamp = "2026-07-04T10:00:00"
+    db.insert_raw(conn, "get_sleep_data", "2026-06-10", "{}", fetched_at=stamp)
+    db.insert_raw(conn, "get_sleep_data", "2026-06-10", "{}", fetched_at=stamp)
+
+    assert conn.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0] == 1
+
+
+def test_bootstrap_migrates_a_pre_sha_raw_table(tmp_path):
+    """A DB created before the identity fix keeps every row and gains the new key."""
+    path = str(tmp_path / "legacy.db")
+    c = db.connect(path)
+    c.executescript(
+        "CREATE TABLE raw_payloads ("
+        "  fetched_at TEXT NOT NULL, endpoint TEXT NOT NULL,"
+        "  ref_date TEXT NOT NULL, payload TEXT NOT NULL,"
+        "  PRIMARY KEY (endpoint, ref_date, fetched_at));"
+    )
+    c.execute(
+        "INSERT INTO raw_payloads VALUES ('2026-07-04T10:00:00','get_sleep_data','2026-06-10','{}')"
+    )
+    c.commit()
+
+    db.bootstrap(c)
+
+    cols = {r[1] for r in c.execute("PRAGMA table_info(raw_payloads)")}
+    assert "payload_sha" in cols
+    rows = c.execute("SELECT endpoint, ref_date, payload, payload_sha FROM raw_payloads").fetchall()
+    assert len(rows) == 1
+    assert rows[0][:3] == ("get_sleep_data", "2026-06-10", "{}")
+    assert rows[0][3]  # the sha was backfilled, not left NULL
+    # the migration is one-shot: a second bootstrap neither raises nor duplicates
+    db.bootstrap(c)
+    assert c.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0] == 1
+    c.close()

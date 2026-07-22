@@ -413,10 +413,11 @@ def push_preview(
     publisher: publish.WorkoutPublisher,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Dry-run the push for a date: the resolved action, payload, and spec_hash.
+    """Dry-run the push for a date: the resolved action, payload, and confirm token.
 
-    The returned ``spec_hash`` is the confirm token: ``push_confirm`` refuses
-    any other value, so a push can only follow a preview the caller displayed.
+    The returned ``confirm_token`` is what ``push_confirm`` requires; it covers the
+    workout *and* its date, so a push can only follow a preview the caller displayed.
+    ``spec_hash`` is the separate account-side idempotency marker, shown for reference.
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
@@ -428,6 +429,7 @@ def push_preview(
     data = {
         "date": date,
         "action": result.action,
+        "confirm_token": publish.confirm_token(spec),
         "spec_hash": result.spec_hash,
         "payload": result.payload,
         "message": result.message,
@@ -441,27 +443,26 @@ def push_confirm(
     conn: sqlite3.Connection,
     *,
     date: str,
-    spec_hash: str,
+    confirm_token: str,
     publisher: publish.WorkoutPublisher,
     replace: bool = False,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Execute the push for a date, gated on the hash from ``push_preview``.
+    """Execute the push for a date, gated on the token from ``push_preview``.
 
-    A mismatched hash is refused without touching the account - the spec
-    changed since the preview (or no preview happened), so preview again.
+    A mismatched token is refused without touching the account - the spec or its
+    date changed since the preview (or no preview happened), so preview again.
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
         return _wrap(conn, {"error": error, "applied": False})
 
-    current = publish.spec_hash(spec)
-    if spec_hash != current:
+    if confirm_token != publish.confirm_token(spec):
         return _wrap(
             conn,
             {
-                "error": "stale spec_hash: the spec changed since the preview; "
-                "run push_preview again",
+                "error": "stale confirm_token: the spec or its date changed since the "
+                "preview; run push_preview again",
                 "applied": False,
             },
         )
@@ -489,11 +490,22 @@ def push_confirm(
 
 
 def _load_spec(date: str, reports_dir: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Read the authored spec for a date, or explain why there is none."""
+    """Read the authored spec for a date, or explain why there is none.
+
+    The folder names the target day, while ``publish`` schedules on the spec's own
+    ``date``; a disagreement would push a different day than the one whose activity
+    collision was checked, so it is refused rather than silently preferred.
+    """
     path = pathlib.Path(reports_dir) / date / "workout.json"
     if not path.exists():
         return None, f"no workout.json for {date}; run author_workout first"
-    return json.loads(path.read_text()), None
+    spec = json.loads(path.read_text())
+    if spec.get("date") != date:
+        return None, (
+            f"workout.json under {date} targets {spec.get('date')}; "
+            "re-author it for the date you mean to push"
+        )
+    return spec, None
 
 
 def _dates_with_activity(conn: sqlite3.Connection, date: str) -> set[str]:

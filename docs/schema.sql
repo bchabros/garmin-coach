@@ -16,11 +16,16 @@ PRAGMA journal_mode = WAL;
 -- RAW  (append-only; never overwrite — lets you reprocess without re-hitting API)
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS raw_payloads (
-  fetched_at  TEXT NOT NULL,          -- ISO ts of the pull
+  fetched_at  TEXT NOT NULL,          -- ISO ts of the pull (second resolution)
   endpoint    TEXT NOT NULL,          -- e.g. 'get_sleep_data', 'get_activities_by_date'
   ref_date    TEXT NOT NULL,          -- date the payload refers to (YYYY-MM-DD)
   payload     TEXT NOT NULL,          -- raw JSON string
-  PRIMARY KEY (endpoint, ref_date, fetched_at)
+  payload_sha TEXT NOT NULL,          -- sha256 of payload; completes the identity
+  -- payload_sha is in the key because fetched_at only resolves to the second: a
+  -- fan-out (weather/sets per activity) issues several distinct payloads for the
+  -- same endpoint and ref_date within one second, and without the hash the second
+  -- one would be silently dropped by INSERT OR IGNORE. See issue #34.
+  PRIMARY KEY (endpoint, ref_date, fetched_at, payload_sha)
 );
 
 -- =============================================================================

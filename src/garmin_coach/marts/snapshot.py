@@ -42,12 +42,12 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
 
     A mart-from-mart step - never calls Garmin. Runs as the tail of ``features``,
     after ``weekly.rollup`` and ``zones.rollup``, so it copies their fresh rows.
+    ``features`` owns the transaction; this does not commit.
     """
     cutoff = through_date or _latest_mart_date(conn)
     if cutoff is None:
         return
     db.upsert_status(conn, {"id": 1, **build(conn, through_date=cutoff)})
-    conn.commit()
 
 
 def read(conn: sqlite3.Connection) -> dict[str, Any] | None:

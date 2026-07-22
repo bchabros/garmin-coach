@@ -61,3 +61,30 @@ def test_generate_report_without_status_row_skips_snapshot(conn, tmp_path):
     out = report.generate_report(conn, reports_dir=str(tmp_path))
     assert (out / "digest.json").exists()
     assert not (out / "snapshot.json").exists()  # nothing to emit, no crash
+
+
+# --- Issue #36: the emitted standing states which horizon it belongs to ---
+
+
+def test_snapshot_json_flags_a_standing_computed_off_the_horizon(conn, tmp_path):
+    """The snapshot is a singleton; the report must not pass it off as as-of data."""
+    for date in ["2026-07-06", "2026-07-07", "2026-07-08"]:
+        _seed_daily(conn, date)
+    db.upsert_status(conn, {"id": 1, "computed_at": "2026-07-20", "vo2max": 52.0})
+
+    out = report.generate_report(conn, to_date="2026-07-08", reports_dir=str(tmp_path))
+
+    status = json.loads((out / "snapshot.json").read_text())
+    assert status["computed_at"] == "2026-07-20"
+    assert status["matches_horizon"] is False
+
+
+def test_snapshot_json_confirms_a_standing_computed_at_the_horizon(conn, tmp_path):
+    for date in ["2026-07-06", "2026-07-07", "2026-07-08"]:
+        _seed_daily(conn, date)
+    db.upsert_status(conn, {"id": 1, "computed_at": "2026-07-08", "vo2max": 52.0})
+
+    out = report.generate_report(conn, to_date="2026-07-08", reports_dir=str(tmp_path))
+
+    status = json.loads((out / "snapshot.json").read_text())
+    assert status["matches_horizon"] is True

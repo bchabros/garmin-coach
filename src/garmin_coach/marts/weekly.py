@@ -151,6 +151,8 @@ def rollup(
 ) -> None:
     """Recompute ``weekly_metrics`` for every complete week from the daily mart.
 
+    ``features`` owns the transaction; this does not commit.
+
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         data_start_date: First real-data date; weeks before it are not emitted.
@@ -180,7 +182,6 @@ def rollup(
         db.upsert_weekly(conn, row)
         db.replace_weekly_plan_actual(conn, row["week_start"], intent_rows)
         prev_hrv_mean = hrv_mean if hrv_mean is not None else prev_hrv_mean
-    conn.commit()
 
 
 def _monotony(loads: list[float]) -> float | None:

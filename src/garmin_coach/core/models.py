@@ -41,7 +41,12 @@ def map_discipline(
     return _DISCIPLINE.get(gtype)
 
 
-def _date_of(start_local: str | None) -> str | None:
+def date_of(start_local: str | None) -> str | None:
+    """The calendar day an activity belongs to, from its local start timestamp.
+
+    Public because the ingest needs an activity's own day to file its enrichment
+    payloads under, before the activity row itself is normalized.
+    """
     return start_local.split(" ")[0] if start_local else None
 
 
@@ -70,7 +75,7 @@ def normalize_activity(p: dict[str, Any], weather: dict[str, Any] | None = None)
         "activity_id": p.get("activityId"),
         "start_local": start_local,
         "start_gmt": p.get("startTimeGMT"),
-        "date": _date_of(start_local),
+        "date": date_of(start_local),
         "gtype": gtype,
         "discipline": map_discipline(gtype, p.get("activityName"), p.get("elevationGain")),
         "name": p.get("activityName"),

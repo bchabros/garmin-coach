@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from ..core import db, models
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,6 +28,10 @@ class SyncResult:
     attempted_streams: set[str] = field(default_factory=set)
     progressed_streams: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
+    # Per-activity enrichment failures (weather, exercise sets). Deliberately not
+    # warnings: a missing enrichment is partial success (ADR 0001), not a stream
+    # outage, so it is reported without degrading the run's status.
+    enrichment_misses: list[str] = field(default_factory=list)
 
     @property
     def had_progress(self) -> bool:
@@ -177,23 +184,27 @@ def _call_with_retry(
     raise last_error or RuntimeError("retry failed without an exception")
 
 
-def _fetch_weather(client: GarminClient, activity_id: Any) -> dict[str, Any] | None:
-    """Best-effort per-activity weather; a failure leaves temp_c NULL, never aborts."""
+def _fetch_enrichment(
+    call: Callable[[], dict[str, Any] | None],
+    kind: str,
+    activity_id: Any,
+    misses: list[str] | None,
+) -> dict[str, Any] | None:
+    """Run one best-effort enrichment call, recording a failure instead of hiding it.
+
+    A failure leaves the enrichment absent and never aborts the run (ADR 0001), but
+    it is logged and appended to ``misses`` so the gap can be found and repaired
+    later. A ``None`` result is not a miss: Garmin simply has nothing for it.
+    """
     if activity_id is None:
         return None
     try:
-        return client.get_activity_weather(activity_id)
-    except Exception:
-        return None
-
-
-def _fetch_sets(client: GarminClient, activity_id: Any) -> dict[str, Any] | None:
-    """Best-effort per-activity exercise sets; a failure leaves no sets, never aborts."""
-    if activity_id is None:
-        return None
-    try:
-        return client.get_activity_exercise_sets(activity_id)
-    except Exception:
+        return call()
+    except Exception as exc:  # noqa: BLE001 - enrichment isolation: record, keep going
+        message = f"{kind} enrichment failed for activity {activity_id}: {exc}"
+        logger.warning("sync: %s", message)
+        if misses is not None:
+            misses.append(message)
         return None
 
 
@@ -202,29 +213,55 @@ def _store_activities(
     ref_date: str,
     activities: list[dict[str, Any]],
     client: GarminClient | None = None,
+    misses: list[str] | None = None,
 ) -> None:
     """Store activity range payload raw-first, then upsert each core activity.
 
     When ``client`` is given, each activity is enriched with its weather
     (``temp_c``) and its exercise sets; both raw payloads are appended for
-    reprocessing. Each enrichment is best-effort and never aborts the run.
+    reprocessing, filed under the activity's own day rather than the requested
+    range start, so reprocessing by date finds them. Each enrichment is
+    best-effort: a failure is recorded in ``misses`` and never aborts the run.
     """
     db.insert_raw(conn, "get_activities_by_date", ref_date, json.dumps(activities))
     for act in activities:
         activity_id = act.get("activityId")
-        weather = _fetch_weather(client, activity_id) if client else None
-        if weather is not None:
-            db.insert_raw(conn, "get_activity_weather", ref_date, json.dumps(weather))
+        day = models.date_of(act.get("startTimeLocal")) or ref_date
+        weather: dict[str, Any] | None = None
+        if client is not None:
+            weather = _store_weather(conn, client, activity_id, day, misses)
         db.upsert_activity(conn, models.normalize_activity(act, weather))
         if client is not None and activity_id is not None:
-            _store_exercise_sets(conn, ref_date, activity_id, client)
+            _store_exercise_sets(conn, day, activity_id, client, misses)
+
+
+def _store_weather(
+    conn: sqlite3.Connection,
+    client: GarminClient,
+    activity_id: Any,
+    ref_date: str,
+    misses: list[str] | None,
+) -> dict[str, Any] | None:
+    """Fetch one activity's weather raw-first; return it for the core row's temp_c."""
+    weather = _fetch_enrichment(
+        lambda: client.get_activity_weather(activity_id), "weather", activity_id, misses
+    )
+    if weather is not None:
+        db.insert_raw(conn, "get_activity_weather", ref_date, json.dumps(weather))
+    return weather
 
 
 def _store_exercise_sets(
-    conn: sqlite3.Connection, ref_date: str, activity_id: int, client: GarminClient
+    conn: sqlite3.Connection,
+    ref_date: str,
+    activity_id: int,
+    client: GarminClient,
+    misses: list[str] | None = None,
 ) -> None:
     """Fetch one activity's exercise sets raw-first, then replace its `activity_sets`."""
-    payload = _fetch_sets(client, activity_id)
+    payload = _fetch_enrichment(
+        lambda: client.get_activity_exercise_sets(activity_id), "sets", activity_id, misses
+    )
     if payload is None:
         return
     db.insert_raw(conn, "get_activity_exercise_sets", ref_date, json.dumps(payload))
@@ -329,12 +366,12 @@ def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
                 ctx.conn.commit()
                 break
 
-            _store_activities(ctx.conn, date, activities, ctx.client)
+            _store_activities(ctx.conn, date, activities, ctx.client, ctx.result.enrichment_misses)
             db.set_sync_watermark(ctx.conn, "activities", date)
             ctx.result.progressed_streams.add("activities")
             ctx.conn.commit()
     else:
-        _store_activities(ctx.conn, start_s, activities, ctx.client)
+        _store_activities(ctx.conn, start_s, activities, ctx.client, ctx.result.enrichment_misses)
         db.set_sync_watermark(ctx.conn, "activities", end_s)
         ctx.result.progressed_streams.add("activities")
         ctx.conn.commit()
@@ -390,7 +427,7 @@ def refresh_day(client: GarminClient, conn: sqlite3.Connection, date: str) -> Sy
     except Exception as exc:  # noqa: BLE001 - stream isolation: record, keep going
         result.warnings.append(f"activities failed for {date}: {exc}")
     else:
-        _store_activities(conn, date, activities, client)
+        _store_activities(conn, date, activities, client, result.enrichment_misses)
         result.progressed_streams.add("activities")
     conn.commit()
 

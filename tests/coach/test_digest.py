@@ -823,3 +823,56 @@ def test_plan_missing_is_silent_when_the_week_being_planned_is_authored(conn):
     dg = build_digest(conn, from_date="2026-06-14", to_date="2026-06-14")
 
     assert "PLAN_MISSING" not in _codes(dg)
+
+
+# --- Issue #36: the report horizon bounds every section it can bound ---
+
+
+def _dated_set(conn, activity_id, subcategory, date, set_idx=0):
+    conn.execute(
+        "INSERT OR IGNORE INTO activities(activity_id, start_local, date, gtype) VALUES (?,?,?,?)",
+        (activity_id, f"{date} 17:00:00", date, "strength_training"),
+    )
+    conn.execute(
+        "INSERT INTO activity_sets(activity_id, set_idx, subcategory) VALUES (?,?,?)",
+        (activity_id, set_idx, subcategory),
+    )
+
+
+def test_movement_coverage_ignores_sets_after_the_horizon(conn):
+    """Coverage is a fact about the sets captured by the horizon, not about today."""
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    _dated_set(conn, 1, "BARBELL_DEADLIFT", date="2026-07-10")
+    _dated_set(conn, 2, "MYSTERY_LIFT", date="2026-07-20")  # after the horizon
+
+    cov = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["movement"]
+
+    assert cov["sets_total"] == 1
+    assert cov["sets_unmapped"] == 0
+    assert cov["unmapped"] == []
+
+
+def test_zones_section_flags_a_standing_row_computed_off_the_horizon(conn):
+    """The zones singleton is 'current'; the digest must say when that is not the horizon."""
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    db.upsert_zones(
+        conn,
+        {"id": 1, "lthr_bpm": 175, "z2_hi_bpm": 156, "computed_at": "2026-07-20", "stale": 0},
+    )
+
+    zones_section = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["zones"]
+
+    assert zones_section["computed_at"] == "2026-07-20"
+    assert zones_section["matches_horizon"] is False
+
+
+def test_zones_section_confirms_a_standing_row_computed_at_the_horizon(conn):
+    _mart(conn, date="2026-07-11", load_day=100, acwr=1.0, n_chronic=28)
+    db.upsert_zones(
+        conn,
+        {"id": 1, "lthr_bpm": 175, "z2_hi_bpm": 156, "computed_at": "2026-07-11", "stale": 0},
+    )
+
+    zones_section = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["zones"]
+
+    assert zones_section["matches_horizon"] is True

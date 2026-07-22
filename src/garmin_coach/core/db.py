@@ -9,6 +9,7 @@ duplicates. raw_payloads is append-only by design.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import importlib.resources
 import sqlite3
 from typing import Any
@@ -43,10 +44,16 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+_LEGACY_RAW_TABLE = "raw_payloads_pre_sha"
+
+
 def bootstrap(conn: sqlite3.Connection) -> None:
-    """Create all tables/views idempotently, then add any missing columns."""
+    """Create all tables/views idempotently, then run the schema migrations."""
+    migrating_raw = _rename_legacy_raw_payloads(conn)
     conn.executescript(_schema_sql())
     _migrate_columns(conn)
+    if migrating_raw:
+        _restore_legacy_raw_payloads(conn)
     conn.commit()
 
 
@@ -59,6 +66,36 @@ def _migrate_columns(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
+def _rename_legacy_raw_payloads(conn: sqlite3.Connection) -> bool:
+    """Move a pre-``payload_sha`` raw table aside so the schema can recreate it.
+
+    The identity fix (issue #34) changed the primary key, which SQLite cannot ALTER,
+    so the table is rebuilt. Returns whether a rebuild is in progress.
+    """
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(raw_payloads)")}
+    if not columns or "payload_sha" in columns:
+        return False
+    conn.execute(f"DROP TABLE IF EXISTS {_LEGACY_RAW_TABLE}")
+    conn.execute(f"ALTER TABLE raw_payloads RENAME TO {_LEGACY_RAW_TABLE}")
+    return True
+
+
+def _restore_legacy_raw_payloads(conn: sqlite3.Connection) -> None:
+    """Copy every pre-migration raw row into the rebuilt table, hashing as it goes."""
+    conn.create_function("sha256_hex", 1, _payload_sha, deterministic=True)
+    conn.execute(
+        "INSERT OR IGNORE INTO raw_payloads(fetched_at, endpoint, ref_date, payload, payload_sha) "
+        f"SELECT fetched_at, endpoint, ref_date, payload, sha256_hex(payload) "
+        f"FROM {_LEGACY_RAW_TABLE}"
+    )
+    conn.execute(f"DROP TABLE {_LEGACY_RAW_TABLE}")
+
+
+def _payload_sha(payload: str) -> str:
+    """Content hash completing a raw row's identity."""
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def insert_raw(
     conn: sqlite3.Connection,
     endpoint: str,
@@ -66,12 +103,17 @@ def insert_raw(
     payload: str,
     fetched_at: str | None = None,
 ) -> None:
-    """Append a raw payload. Never overwrites (PK includes fetched_at)."""
+    """Append a raw payload; never overwrites and never silently drops one.
+
+    ``fetched_at`` only resolves to the second, so the payload hash completes the
+    identity: two distinct payloads for the same endpoint and ref_date in the same
+    second both land, while a byte-identical repeat of the same call is a no-op.
+    """
     fetched_at = fetched_at or _dt.datetime.now().isoformat(timespec="seconds")
     conn.execute(
-        "INSERT OR IGNORE INTO raw_payloads(fetched_at, endpoint, ref_date, payload) "
-        "VALUES (?,?,?,?)",
-        (fetched_at, endpoint, ref_date, payload),
+        "INSERT OR IGNORE INTO raw_payloads(fetched_at, endpoint, ref_date, payload, payload_sha) "
+        "VALUES (?,?,?,?,?)",
+        (fetched_at, endpoint, ref_date, payload, _payload_sha(payload)),
     )
 
 

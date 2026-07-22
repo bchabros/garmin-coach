@@ -60,6 +60,11 @@ without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
 `daily_metrics`/`weekly_metrics`/`athlete_zones` (recomputed, never edited). Derived values
 live only in marts/views, never mixed into core. Full vocabulary in `docs/glossary.md`.
 
+**Mart transactions.** `marts.features.features()` owns both the materialization order
+and the transaction: one pass is one commit, and any failure rolls the whole pass back.
+The individual `rollup()` functions therefore do **not** commit -- if you call one
+standalone (a test, a new entry point), you own the commit.
+
 ## Testing seams
 
 The agreed boundaries a test exercises -- prefer the highest existing seam, add new

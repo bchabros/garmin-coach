@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from garmin_coach.core import db
 from garmin_coach.marts import overlap
 
@@ -130,6 +132,18 @@ def test_rollup_is_idempotent(conn):
     n = conn.execute("SELECT COUNT(*) FROM pattern_overlap").fetchone()[0]
     # one pattern row (hinge) + one muscle row (posterior) on 06-13
     assert n == 2
+
+
+def test_as_of_drift_warning_ignores_future_sets(conn, caplog):
+    # The unmapped set exists only after the cutoff: an as-of recompute must not
+    # warn about drift the report's horizon cannot see.
+    _add_session(conn, 1, "2026-06-12", ["BARBELL_DEADLIFT"] * 4)
+    _add_session(conn, 2, "2026-06-14", ["MYSTERY_LIFT"])
+
+    with caplog.at_level(logging.WARNING, logger="garmin_coach.marts.overlap"):
+        overlap.rollup(conn, through_date="2026-06-13")
+
+    assert "unmapped" not in caplog.text
 
 
 def test_rollup_as_of_reproduces_past_day(conn):

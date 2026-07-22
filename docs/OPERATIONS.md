@@ -62,6 +62,11 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
 | `degraded` | 1 | An isolated stream failed but the run continued. | Check the log for the failing stream; often self-heals next run. Re-run `sync` if it persists. |
 | `failed` | 2 | A stage crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
 
+A crash in the `features` stage rolls the **whole** mart pass back: daily metrics,
+plan blocks, weekly rollups, zones, overlap and the snapshot either all advance
+together or none of them do. After a `failed` run the marts still hold the last
+good generation, so a report read against them is stale but never mixed.
+
 ## Logs
 
 In-process `RotatingFileHandler`, configured by `daily` itself (not the shell wrapper).
@@ -88,7 +93,12 @@ Config keys (`config.py`, overridable via env / `.env`):
   Same exit-code contract as `daily` (0 ok / 1 degraded / 2 failed).
 - **Re-running is safe (idempotency).** Re-running `backfill`/`sync` must not change
   **core** row counts (upsert by PK). Only `raw_payloads` grows (append-only, keyed by
-  `fetched_at`). Re-run freely to recover from a degraded run.
+  `fetched_at` plus the payload hash). Re-run freely to recover from a degraded run.
+- **Enrichment gaps.** Per-activity weather and exercise sets are best-effort: a failed
+  fetch leaves the enrichment absent and never aborts the run, so it does **not** make
+  the run `degraded`. It is logged as `daily: enrichment gap: ...` and counted in the
+  sync stage's `enrichment_gaps=`. Grep the log for these before concluding that Garmin
+  simply had no data; a re-run repairs them.
 - **Onboarding gap.** Real data starts 2026-06-08 (`data_start`, defined in
   `docs/glossary.md`); earlier dates are explicit gaps, not zero training.
 
@@ -272,10 +282,11 @@ Which clients pick it up and how is covered in "Registering the server" below �
   coach read; it shares the login rate-limit exposure (429) of any transport call.
 - **Workout push** — `author_workout(date, request?)` writes `workout.json`;
   `push_preview(date)` returns the resolved action, the Garmin payload, and a
-  `spec_hash`; `push_confirm(date, spec_hash, replace?)` writes to the account and
-  **refuses any hash other than the previewed one**. Show the preview to the athlete
-  before confirming — the handshake exists so an agent cannot push what it has not
-  displayed.
+  `confirm_token`; `push_confirm(date, confirm_token, replace?)` writes to the account
+  and **refuses any token other than the previewed one**. The token covers the workout
+  *and* its date, so a spec retargeted after the preview cannot be confirmed. Show the
+  preview to the athlete before confirming — the handshake exists so an agent cannot
+  push what it has not displayed.
 
 **Reading the freshness envelope.** Every response carries
 `{data_through, today_included, partial_fields}`. If `today_included` is true, any

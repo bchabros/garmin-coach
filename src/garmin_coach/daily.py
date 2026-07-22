@@ -145,10 +145,13 @@ def run_daily(
         return result
     for warning in result.sync.warnings:
         logger.warning("daily: sync warning: %s", warning)
+    for miss in result.sync.enrichment_misses:
+        logger.warning("daily: enrichment gap: %s", miss)
     logger.info(
-        "daily: sync stage done (progressed=%s warnings=%d)",
+        "daily: sync stage done (progressed=%s warnings=%d enrichment_gaps=%d)",
         ",".join(sorted(result.sync.progressed_streams)) or "none",
         len(result.sync.warnings),
+        len(result.sync.enrichment_misses),
     )
 
     logger.info("daily: features stage starting")

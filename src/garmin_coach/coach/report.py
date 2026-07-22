@@ -61,7 +61,11 @@ def generate_report(
     (out / "digest.json").write_text(json.dumps(dg, indent=2))
 
     # Emit the current standing beside the digest (read-only; features owns the mart).
+    # It is a singleton, so it carries whether it belongs to this report's horizon.
     status = snapshot.read(conn)
     if status is not None:
+        status["matches_horizon"] = digest.matches_horizon(
+            status.get("computed_at"), dg["window"]["to"]
+        )
         snapshot.write_json(status, out)
     return out

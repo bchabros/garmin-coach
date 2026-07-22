@@ -90,7 +90,9 @@ only.
      (`z2_hi_bpm`). If `zones.stale` is 1, note it briefly - the zones come from an LTHR
      detection `lthr_age_days` days ago (on `lthr_detected_on`), past the staleness
      cadence; suggest a harder threshold effort to refresh them. Do not invent numbers
-     when `zones` is null.
+     when `zones` is null. If `zones.matches_horizon` is false, the zones are the
+     athlete's *current* standing next to an as-of window - say so instead of dating
+     them to the window.
    - **Sygnały** - one short paragraph per signal, most severe first. State the actual
      numbers from `facts`. Map each code to a concrete action:
      - `HRV_LOW_MORNING` -> degrade today's quality session to easy.

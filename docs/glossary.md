@@ -5,7 +5,10 @@ code, docstrings, PRDs, and ADRs.
 
 ## Data layers (medallion)
 
-- **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten.
+- **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten. A row's
+  identity is `(endpoint, ref_date, fetched_at, payload_sha)`: the content hash is part
+  of the key because `fetched_at` only resolves to the second (ADR 0018). Enrichment
+  payloads are filed under the activity's own day, not the requested range start.
 - **core** - normalized, upserted-by-PK tables (`activities`, `daily_wellness`,
   `sleep`, `hrv_nightly`, `sync_state`, plus the manually-logged `session_rpe` and
   `niggle`). The system of record. Most core tables are ETL-written from Garmin;
@@ -79,7 +82,12 @@ code, docstrings, PRDs, and ADRs.
   niggle at/above `niggle_reduced_mode_severity` tells the coach to dial back. The
   local equivalent of Runna's "Not Feeling 100%" dial-back.
 - **report horizon** - the single `to_date`/window that scopes a digest; daily facts,
-  weekly facts, and weekly signals must all sit at or before this horizon.
+  weekly facts, and weekly signals must all sit at or before this horizon. Sources are
+  bounded by it too, not merely stamped with it (ADR 0017).
+- **matches_horizon** - on a standing block (the digest's `zones` section,
+  `snapshot.json`): whether that singleton row was computed for this report's horizon.
+  `False` means a current standing is being shown beside as-of daily/weekly facts, so
+  the narrative should hedge it; `None` when either date is unknown.
 - **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below
   target while hard-load share is above ("add Z2"). Computed from our buckets;
   cross-checked against Garmin's `training_status_daily.balance_phrase` via
@@ -328,10 +336,16 @@ code, docstrings, PRDs, and ADRs.
 - **partial fields** - the intraday-accumulating mart fields (load, ACWR, zone
   minutes, RHR, stress, body battery) listed in the envelope when today is included.
   Morning-complete streams (sleep, HRV, readiness) are never flagged.
-- **preview-hash handshake** - the MCP push interlock: `push_preview` returns the
-  canonical `spec_hash` alongside the payload, and `push_confirm` refuses any other
-  value without touching the account. The MCP counterpart of the CLI's `--confirm`,
-  strict enough for an agent caller.
+- **preview-hash handshake** - the MCP push interlock: `push_preview` returns a
+  `confirm_token` alongside the payload, and `push_confirm` refuses any other value
+  without touching the account. The MCP counterpart of the CLI's `--confirm`, strict
+  enough for an agent caller.
+- **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
+  (name + steps) is the account-side idempotency marker written into the Garmin
+  workout description; it ignores the date on purpose, so rescheduling a workout is
+  not a different workout. `confirm_token` (name + steps + date) gates
+  preview -> confirm, because the date decides what gets scheduled and which day's
+  activity collision was checked.
 
 ## Process terms
 

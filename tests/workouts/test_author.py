@@ -629,6 +629,31 @@ def test_minutes_via_end_descriptor_matches_the_old_min_key():
     assert spec["steps"][0]["end"] == {"type": "time", "seconds": 300}
 
 
+def test_fractional_minutes_round_rather_than_truncate():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": {"min": 2.5}}
+    spec = author(req, _context())
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 150}
+
+
+def test_fractional_minutes_round_to_the_nearest_second():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"warmup_end": {"min": 1.5}}
+    spec = author(req, _context())
+    assert spec["steps"][0]["end"]["seconds"] == 90
+
+
+def test_fractional_recovery_min_alias_matches_the_end_descriptor():
+    end_req = _request(session_type="quality", pace=270, origin="athlete")
+    end_req["structure"] = {"recovery_end": {"min": 2.5}}
+    alias_req = _request(session_type="quality", pace=270, origin="athlete")
+    alias_req["structure"] = {"recovery_min": 2.5}
+    end_recovery = author(end_req, _context())["steps"][1]["steps"][1]["end"]
+    alias_recovery = author(alias_req, _context())["steps"][1]["steps"][1]["end"]
+    assert end_recovery["seconds"] == 150
+    assert alias_recovery == end_recovery
+
+
 def test_to_garmin_encodes_a_lap_button_end():
     req = _request(session_type="tempo", pace=270, origin="athlete")
     req["structure"] = {"warmup_end": "lap"}

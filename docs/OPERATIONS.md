@@ -169,9 +169,10 @@ homogeneous interval block) beyond its defaults. Keys:
 
 - `reps` - interval count.
 - `<role>_end` for each role (`warmup`/`work`/`recovery`/`cooldown`) - one of `"lap"` (the
-  watch lap button, "on-click"), `{"distance_m": N}` (metres), or `{"min": N}` (minutes). A
-  `work` step may not be `"lap"`. The pre-11a `<role>_min` / `duration_min` keys still work;
-  giving both a `*_end` and its `*_min` for one role is an error.
+  watch lap button, "on-click"), `{"distance_m": N}` (metres), or `{"min": N}` (minutes;
+  fractional minutes are honoured and rounded to the nearest second, so `{"min": 2.5}` is a
+  2:30 step). A `work` step may not be `"lap"`. The pre-11a `<role>_min` / `duration_min`
+  keys still work; giving both a `*_end` and its `*_min` for one role is an error.
 - `work_pace_band: [fast_s_per_km, slow_s_per_km]` (faster bound first) - a custom pace
   window on the work step. It overrides the recommender's `pace_target_s_per_km` and skips
   the pace -> HR -> none degradation. A band clearly faster than the recommender's

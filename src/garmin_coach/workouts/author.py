@@ -564,7 +564,7 @@ def _end_condition(
         return _end_descriptor(end)
     minutes = structure.get(min_key)
     if minutes is not None:
-        return {"type": "time", "seconds": int(minutes) * 60}
+        return {"type": "time", "seconds": round(float(minutes) * 60)}
     return {"type": "time", "seconds": default_s}
 
 
@@ -574,7 +574,7 @@ def _end_descriptor(end: Any) -> dict[str, Any]:
         return {"type": "lap"}
     if "distance_m" in end:
         return {"type": "distance", "metres": int(end["distance_m"])}
-    return {"type": "time", "seconds": int(end["min"]) * 60}
+    return {"type": "time", "seconds": round(float(end["min"]) * 60)}
 
 
 _NO_TARGET = {"type": "none"}

@@ -351,7 +351,8 @@ code, docstrings, PRDs, and ADRs.
   library *and* on the date's calendar), `unscheduled` (in the library, not on that date -
   unpinned or moved), `missing` (gone from the library), `unverified` (the account could
   not be reached). Reported alongside the facts behind it: `scheduled`, `renamed_to`,
-  `checked_at`.
+  and `checked_at` - when reconciliation ran, which on `unverified` is when the attempt
+  was made rather than when an answer came back.
 - **renamed_to** - the account's current workout name when it differs from the receipt's.
   A field, never a state: renaming a pushed workout in Garmin Connect is the athlete's
   prerogative and must not read as a fault.

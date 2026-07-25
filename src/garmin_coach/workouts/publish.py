@@ -20,12 +20,17 @@ next idempotent push to complete - never rolled back.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from . import author as _author
+
+logger = logging.getLogger(__name__)
 
 # The workout ``description`` tag that carries the canonical-spec hash on the account.
 _HASH_PREFIX = "gc-hash:"
@@ -210,6 +215,83 @@ def _find_by_name(publisher: WorkoutPublisher, name: str) -> dict[str, Any] | No
         if workout.get("workoutName") == name:
             return workout
     return None
+
+
+def reconcile(
+    connect: Callable[[], WorkoutPublisher], receipt: Any, date: str
+) -> dict[str, Any] | None:
+    """Resolve a push receipt against the account's library and calendar (issue #41).
+
+    A receipt records what a push did; only the account can say what became of it.
+    Keyed on the receipt's ``workout_id`` alone - the question is whether what was
+    pushed is still there, not whether something like it is - so a workout the
+    library no longer holds is ``missing`` even with a near-identical one beside it.
+
+    Args:
+        connect: Builds the Garmin read surface. Called only once there is something
+            to check, so a receipt-free date never logs in; any failure it raises
+            leaves the receipt ``unverified``.
+        receipt: The parsed ``push.json`` body, or None when the date has no push.
+        date: The day whose calendar decides ``live`` against ``unscheduled``.
+
+    Returns:
+        The finding, or None when the receipt names no workout to check.
+    """
+    workout_id = receipt.get("workout_id") if isinstance(receipt, dict) else None
+    if workout_id is None:
+        return None
+    try:
+        publisher = connect()
+        entry = _library_entry(publisher, workout_id)
+        if entry is None:
+            return _finding("missing", scheduled=False)
+        scheduled = _is_scheduled(publisher, workout_id, date)
+    except Exception as exc:  # noqa: BLE001 - an unreachable account leaves it unverified
+        logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
+        return _finding("unverified")
+    return _finding(
+        "live" if scheduled else "unscheduled",
+        scheduled=scheduled,
+        renamed_to=_renamed_to(entry, receipt),
+    )
+
+
+def _finding(
+    state: str, *, scheduled: bool | None = None, renamed_to: str | None = None
+) -> dict[str, Any]:
+    """One reconciliation finding: the state to branch on, plus the facts behind it."""
+    return {
+        "state": state,
+        "scheduled": scheduled,
+        "renamed_to": renamed_to,
+        "checked_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _library_entry(publisher: WorkoutPublisher, workout_id: int) -> dict[str, Any] | None:
+    """The account's library entry for a workout id, or None when it is gone."""
+    for workout in publisher.list_workouts():
+        if workout.get("workoutId") == workout_id:
+            return workout
+    return None
+
+
+def _is_scheduled(publisher: WorkoutPublisher, workout_id: int, date: str) -> bool:
+    """Whether the workout holds a calendar entry on the date being asked about."""
+    return any(entry["workoutId"] == workout_id for entry in publisher.list_scheduled(date))
+
+
+def _renamed_to(entry: dict[str, Any], receipt: dict[str, Any]) -> str | None:
+    """The account's current name when the athlete renamed the workout, else None.
+
+    A receipt with no name recorded cannot evidence a rename, so it reports none
+    rather than presenting the account's own name as a change.
+    """
+    pushed_as = receipt.get("name")
+    current = entry.get("workoutName")
+    if pushed_as is None or current == pushed_as:
+        return None
+    return current
 
 
 def _existing_hash(workout: dict[str, Any]) -> str | None:

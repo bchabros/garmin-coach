@@ -229,8 +229,19 @@ def _account_with(pub, *, name="GC 2026-07-17 quality", workout_id=1000, schedul
     return pub
 
 
+def _recording_connect(pub):
+    """A publisher factory that records each time the account is contacted."""
+    calls: list[str] = []
+
+    def connect():
+        calls.append("connect")
+        return pub
+
+    return connect, calls
+
+
 def _status(conn, tmp_path, pub, date=PUSH_DATE):
-    return tools.get_workout_status(conn, date=date, publisher=pub, reports_dir=str(tmp_path))
+    return tools.get_workout_status(conn, date=date, connect=lambda: pub, reports_dir=str(tmp_path))
 
 
 def test_status_reports_missing_when_the_account_no_longer_holds_the_workout(conn, tmp_path):
@@ -294,34 +305,50 @@ def test_status_reports_unverified_when_the_account_cannot_be_reached(conn, tmp_
     assert out["data"]["push"]["applied"] is True
 
 
-def test_status_reports_unverified_when_there_is_no_account_access(conn, tmp_path):
-    """A login that failed before the tool was called degrades, it does not raise."""
+def test_status_reports_unverified_when_logging_in_fails(conn, tmp_path):
+    """A failed login is data on this path, not an error: the read degrades."""
     _seed_pushed(tmp_path)
 
-    out = _status(conn, tmp_path, None)
+    def connect():
+        raise RuntimeError("garmin: login failed")
+
+    out = tools.get_workout_status(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
 
     assert out["data"]["reconciled"]["state"] == "unverified"
 
 
-def test_status_without_a_receipt_never_touches_the_account(conn, tmp_path):
-    pub = FakePublisher()
+def test_status_without_a_receipt_never_logs_in(conn, tmp_path):
+    """A date that was never pushed has nothing to check, so it costs no login."""
+    connect, calls = _recording_connect(FakePublisher())
 
-    out = _status(conn, tmp_path, pub)
+    out = tools.get_workout_status(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
 
     assert out["data"]["reconciled"] is None
-    assert pub.reads == []
+    assert calls == []
 
 
-def test_status_with_a_receipt_carrying_no_workout_id_never_touches_the_account(conn, tmp_path):
+def test_status_with_a_receipt_carrying_no_workout_id_never_logs_in(conn, tmp_path):
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir()
     (day_dir / "push.json").write_text(json.dumps({"action": "refuse", "workout_id": None}))
-    pub = FakePublisher()
+    connect, calls = _recording_connect(FakePublisher())
 
-    out = _status(conn, tmp_path, pub)
+    out = tools.get_workout_status(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
 
     assert out["data"]["reconciled"] is None
-    assert pub.reads == []
+    assert calls == []
+
+
+def test_status_reads_the_library_and_the_calendar_once_each(conn, tmp_path):
+    """One login and one read of each surface per date - the cost OPERATIONS.md quotes."""
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+    connect, calls = _recording_connect(pub)
+
+    tools.get_workout_status(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
+
+    assert calls == ["connect"]
+    assert pub.reads == ["list_workouts", "list_scheduled"]
 
 
 def test_status_returns_the_receipt_and_spec_unchanged_beside_the_finding(conn, tmp_path):

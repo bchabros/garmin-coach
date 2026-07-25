@@ -2,10 +2,12 @@
 
 Registered as ``coach`` in the repo's ``.mcp.json`` (stdio). Every tool opens
 its own connection to the finished DB, delegates to a pure function in
-``mcp.tools``, and returns its freshness-enveloped dict. The only tools that
-touch Garmin are ``refresh_today`` (a read through the transport seam) and
+``mcp.tools``, and returns its freshness-enveloped dict. Four tools touch
+Garmin: ``refresh_today`` (a read through the transport seam),
 ``push_preview``/``push_confirm`` (the outbound push path behind the
-preview-hash handshake) - see ADR 0014. No computation happens here.
+preview-hash handshake), and ``get_workout_status``, which checks a push
+receipt against the account rather than reporting it as fact (issue #41) - see
+ADR 0014 and its annex. No computation happens here.
 """
 
 from __future__ import annotations
@@ -162,23 +164,13 @@ def get_workout_status(date: str) -> dict[str, Any]:
     conn = _open()
     try:
         return tools.get_workout_status(
-            conn, date=date, publisher=_publisher_or_none(), reports_dir=_REPORTS_DIR
+            conn,
+            date=date,
+            connect=lambda: publish.connect_publisher(get_settings()),
+            reports_dir=_REPORTS_DIR,
         )
     finally:
         conn.close()
-
-
-def _publisher_or_none() -> publish.WorkoutPublisher | None:
-    """The live Garmin surface, or None when logging in fails.
-
-    A failed login is data on the status path, not an error: the read degrades to
-    ``unverified`` rather than taking the tool down. The push pair keeps raising,
-    because a push that cannot reach the account has nothing to report.
-    """
-    try:
-        return publish.connect_publisher(get_settings())
-    except Exception:  # noqa: BLE001 - an unreachable account leaves the receipt unverified
-        return None
 
 
 @server.tool()

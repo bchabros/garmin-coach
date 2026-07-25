@@ -43,6 +43,10 @@ class WorkoutPublisher(Protocol):
         """Return the account's workout library (each with ``workoutId``/``workoutName``)."""
         ...
 
+    def get_workout(self, workout_id: int) -> dict[str, Any]:
+        """Return one workout in full, including its steps (the listing omits them)."""
+        ...
+
     def upload(self, payload: dict[str, Any]) -> int:
         """Upload a workout payload to the library; return its new ``workoutId``."""
         ...
@@ -218,7 +222,7 @@ def _find_by_name(publisher: WorkoutPublisher, name: str) -> dict[str, Any] | No
 
 
 def reconcile(
-    connect: Callable[[], WorkoutPublisher], receipt: Any, date: str
+    connect: Callable[[], WorkoutPublisher], receipt: Any, spec: Any, date: str
 ) -> dict[str, Any] | None:
     """Resolve a push receipt against the account's library and calendar (issue #41).
 
@@ -232,6 +236,7 @@ def reconcile(
             to check, so a receipt-free date never logs in; any failure it raises
             leaves the receipt ``unverified``.
         receipt: The parsed ``push.json`` body, or None when the date has no push.
+        spec: The authored spec, used to tell an edit from a rename (issue #42).
         date: The day whose calendar decides ``live`` against ``unscheduled``.
 
     Returns:
@@ -246,26 +251,146 @@ def reconcile(
         if entry is None:
             return _finding("missing", scheduled=False)
         scheduled = _is_scheduled(publisher, workout_id, date)
+        steps_changed = _steps_changed(publisher, entry, receipt, spec)
     except Exception as exc:  # noqa: BLE001 - an unreachable account leaves it unverified
         logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
         return _finding("unverified")
     return _finding(
-        "live" if scheduled else "unscheduled",
+        _state(scheduled, steps_changed),
         scheduled=scheduled,
+        steps_changed=steps_changed,
         renamed_to=_renamed_to(entry, receipt),
     )
 
 
+def _state(scheduled: bool, steps_changed: bool | None) -> str:
+    """Collapse the facts to the one state a caller branches on.
+
+    ``unscheduled`` outranks ``edited``: a workout that is not on the day is not on
+    the watch, whatever its steps now say. The edit stays visible in ``steps_changed``.
+    """
+    if not scheduled:
+        return "unscheduled"
+    return "edited" if steps_changed else "live"
+
+
 def _finding(
-    state: str, *, scheduled: bool | None = None, renamed_to: str | None = None
+    state: str,
+    *,
+    scheduled: bool | None = None,
+    steps_changed: bool | None = None,
+    renamed_to: str | None = None,
 ) -> dict[str, Any]:
     """One reconciliation finding: the state to branch on, plus the facts behind it."""
     return {
         "state": state,
         "scheduled": scheduled,
+        "steps_changed": steps_changed,
         "renamed_to": renamed_to,
         "checked_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def _steps_changed(
+    publisher: WorkoutPublisher, entry: dict[str, Any], receipt: dict[str, Any], spec: Any
+) -> bool | None:
+    """Whether the account's steps differ from the ones the receipt says were pushed.
+
+    The ``gc-hash:`` tag cannot answer this: it records what was *pushed* and Garmin
+    leaves the description alone when steps change, so it agrees with the receipt
+    forever. Only the steps themselves can tell, and fetching them costs a call - so
+    ``updateDate`` gates it, and an untouched account copy answers for free.
+
+    Returns:
+        None when it cannot be judged - the local spec no longer hashes to the
+        receipt, so it is not evidence of what the push actually sent.
+    """
+    if not _touched_since_push(entry, receipt):
+        return False
+    if not isinstance(spec, dict) or spec_hash(spec) != receipt.get("spec_hash"):
+        return None
+    account = publisher.get_workout(entry["workoutId"])
+    return _authored_shape(account) != _authored_shape(_author.to_garmin(spec))
+
+
+def _touched_since_push(entry: dict[str, Any], receipt: dict[str, Any]) -> bool:
+    """Whether the account's copy moved after the push that produced the receipt.
+
+    An unreadable timestamp on either side counts as touched: checking properly
+    costs one call, while assuming nothing moved would hide a real edit.
+    """
+    pushed_at = _timestamp(receipt.get("pushed_at"))
+    updated = _timestamp(entry.get("updateDate"))
+    if pushed_at is None or updated is None:
+        return True
+    return updated > pushed_at
+
+
+def _timestamp(value: Any) -> dt.datetime | None:
+    """Parse an ISO timestamp (Garmin's carries a fractional-second suffix), or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _authored_shape(payload: dict[str, Any]) -> list[Any]:
+    """A workout's steps reduced to the fields this system authors.
+
+    The account decorates every step with ids, units, and defaults no upload ever
+    sent (``stepId``, ``weightValue``, ``strokeType``, ``endConditionCompare``), so
+    comparing raw payloads always differs. This keeps only what was authored.
+    """
+    segments = payload.get("workoutSegments") or []
+    steps = segments[0].get("workoutSteps") if segments else []
+    return _authored_steps(steps)
+
+
+def _authored_steps(steps: Any) -> list[Any]:
+    """The authored shape of a step list, recursing into repeat groups."""
+    return [_authored_step(step) for step in steps or []]
+
+
+def _authored_step(step: dict[str, Any]) -> Any:
+    """The authored shape of one step: a repeat group, or one executable step."""
+    if step.get("type") == "RepeatGroupDTO":
+        return ("repeat", step.get("numberOfIterations"), _authored_steps(step.get("workoutSteps")))
+    return (
+        _nested_key(step.get("stepType"), "stepTypeKey"),
+        _nested_key(step.get("endCondition"), "conditionTypeKey"),
+        _rounded(step.get("endConditionValue")),
+        _nested_key(step.get("targetType"), "workoutTargetTypeKey"),
+        _rounded(step.get("targetValueOne")),
+        _rounded(step.get("targetValueTwo")),
+        step.get("zoneNumber"),
+        step.get("exerciseName"),
+        _authored_weight(step.get("weightValue")),
+    )
+
+
+def _authored_weight(value: Any) -> float | None:
+    """A step's authored weight, with the account's ``-1`` no-weight default read as none.
+
+    Garmin stamps ``weightValue: -1`` on every step it returns, including the run
+    steps no upload ever gave a weight to; taking it at face value would make every
+    pushed run look edited.
+    """
+    rounded = _rounded(value)
+    return None if rounded is None or rounded < 0 else rounded
+
+
+def _nested_key(block: Any, field: str) -> Any:
+    """One field out of a Garmin enum block, tolerating a missing block."""
+    return block.get(field) if isinstance(block, dict) else None
+
+
+def _rounded(value: Any) -> float | None:
+    """A number rounded past the noise Garmin's float round-tripping introduces."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return round(float(value), 3)
 
 
 def _library_entry(publisher: WorkoutPublisher, workout_id: int) -> dict[str, Any] | None:
@@ -317,6 +442,10 @@ class GarminWorkoutPublisher:
     def list_workouts(self) -> list[dict[str, Any]]:
         """Return the account's workout library summaries."""
         return list(self._api.get_workouts())
+
+    def get_workout(self, workout_id: int) -> dict[str, Any]:
+        """Return one workout in full, including its steps."""
+        return dict(self._api.get_workout_by_id(workout_id))
 
     def upload(self, payload: dict[str, Any]) -> int:
         """Upload a workout payload; return its new ``workoutId``."""

@@ -226,11 +226,12 @@ def get_workout_status(
     """
     day_dir = pathlib.Path(reports_dir) / date
     push = _read_json(day_dir / "push.json")
+    workout = _read_json(day_dir / "workout.json")
     data = {
         "date": date,
-        "workout": _read_json(day_dir / "workout.json"),
+        "workout": workout,
         "push": push,
-        "reconciled": publish.reconcile(connect, push, date),
+        "reconciled": publish.reconcile(connect, push, workout, date),
     }
     return _wrap(conn, data)
 

@@ -112,6 +112,11 @@ def fake_client():
     return FakeGarminClient
 
 
+# What the account's library listing carries. The real endpoint omits the steps -
+# they only come back from get_workout - so the fake must omit them too.
+_LISTING_FIELDS = ("workoutName", "description", "updateDate")
+
+
 class FakePublisher:
     """An in-memory Garmin account: a workout library and a schedule, recording calls."""
 
@@ -122,10 +127,18 @@ class FakePublisher:
         self._next_schedule = 5000
         self.calls: list[str] = []
         self.reads: list[str] = []
+        self.now = "2026-07-15T17:28:00"
 
     def list_workouts(self):
         self.reads.append("list_workouts")
-        return [{"workoutId": wid, **w} for wid, w in self.workouts.items()]
+        return [
+            {"workoutId": wid, **{k: w.get(k) for k in _LISTING_FIELDS}}
+            for wid, w in self.workouts.items()
+        ]
+
+    def get_workout(self, workout_id):
+        self.reads.append("get_workout")
+        return {"workoutId": workout_id, **self.workouts[workout_id]}
 
     def upload(self, payload):
         self.calls.append("upload")
@@ -134,6 +147,8 @@ class FakePublisher:
         self.workouts[wid] = {
             "workoutName": payload["workoutName"],
             "description": payload.get("description"),
+            "updateDate": self.now,
+            "workoutSegments": payload.get("workoutSegments", []),
         }
         return wid
 

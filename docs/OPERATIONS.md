@@ -291,13 +291,17 @@ Which clients pick it up and how is covered in "Registering the server" below �
 - **`get_workout_status(date)`** — the authored spec, the push receipt, and
   `reconciled`: that receipt checked against the Garmin account (issue #41). Read
   `reconciled.state`, not `push.applied` — the receipt records what the push did,
-  while the state says what the account holds now: `live` (in the library and on that
-  date's calendar), `unscheduled` (in the library, unpinned or moved to another day),
-  `missing` (deleted), or `unverified` (Garmin unreachable — say so rather than
-  quoting the receipt as fact). `renamed_to` names the workout's current title when
-  the athlete renamed it in Connect; that is allowed and is not a fault. This tool
-  reaches Garmin, so it shares the 429 exposure above — one library read per date
-  asked about. A date with no receipt costs nothing and never logs in.
+  while the state says what the account holds now: `live` (in the library, on that
+  date's calendar, steps as pushed), `edited` (scheduled, but rewritten in Connect),
+  `unscheduled` (in the library, unpinned or moved to another day), `missing`
+  (deleted), or `unverified` (Garmin unreachable — say so rather than quoting the
+  receipt as fact). `renamed_to` names the workout's current title when the athlete
+  renamed it in Connect; that is allowed and is not a fault. `steps_changed` stays
+  visible even when the state is `unscheduled`, and is `null` when the local spec was
+  re-authored since the push and so cannot evidence what was sent. This tool reaches
+  Garmin, so it shares the 429 exposure above — one library read plus one calendar
+  read per date, and one extra read only when the account's copy was touched after
+  the push. A date with no receipt costs nothing and never logs in.
 
 **Reading the freshness envelope.** Every response carries
 `{data_through, today_included, partial_fields}`. If `today_included` is true, any

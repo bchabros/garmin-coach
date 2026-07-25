@@ -348,11 +348,25 @@ code, docstrings, PRDs, and ADRs.
   whether what was pushed is still there, not whether something like it is. Hash and name
   lookups belong to the push path.
 - **reconciliation state** - what the account actually holds, one of: `live` (in the
-  library *and* on the date's calendar), `unscheduled` (in the library, not on that date -
-  unpinned or moved), `missing` (gone from the library), `unverified` (the account could
-  not be reached). Reported alongside the facts behind it: `scheduled`, `renamed_to`,
-  and `checked_at` - when reconciliation ran, which on `unverified` is when the attempt
-  was made rather than when an answer came back.
+  library, on the date's calendar, steps as pushed), `edited` (scheduled, but the steps
+  were rewritten in Connect), `unscheduled` (in the library, not on that date - unpinned
+  or moved), `missing` (gone from the library), `unverified` (the account could not be
+  reached). Precedence runs `unverified > missing > unscheduled > edited > live`:
+  `unscheduled` outranks `edited` because a workout that is not on the day is not on the
+  watch whatever its steps say. Reported alongside the facts behind it: `scheduled`,
+  `steps_changed`, `renamed_to`, and `checked_at` - when reconciliation ran, which on
+  `unverified` is when the attempt was made rather than when an answer came back.
+- **steps_changed** - whether the account's steps differ from the ones the receipt says
+  were pushed. `None` means it could not be judged: the local spec no longer hashes to
+  the receipt's `spec_hash`, so it is no longer evidence of what the push sent.
+- **why `gc-hash:` cannot detect an edit** - the tag records what was *pushed*, and
+  Garmin leaves the `description` untouched when steps change, so it agrees with the
+  receipt forever. Detection is therefore two-stage: `updateDate` against `pushed_at`
+  gates a `get_workout` call (an untouched copy answers for free), and the fetched steps
+  are compared field by field on what this system authors - the account decorates every
+  step with `stepId`, `weightValue: -1`, `strokeType`, and `endConditionCompare` that no
+  upload ever sent. Renaming also bumps `updateDate`, which is exactly why the step
+  comparison exists: without it every rename would read as an edit.
 - **renamed_to** - the account's current workout name when it differs from the receipt's.
   A field, never a state: renaming a pushed workout in Garmin Connect is the athlete's
   prerogative and must not read as a fault.

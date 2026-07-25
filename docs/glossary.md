@@ -343,6 +343,14 @@ code, docstrings, PRDs, and ADRs.
 - **push receipt** - `reports/{date}/push.json`: what a push *did* (`action`, `applied`,
   `workout_id`, `spec_hash`, `pushed_at`). A record of an event, never a statement about
   what the Garmin account holds now - that is what reconciliation is for.
+- **reconciled block** - the finding appended to the receipt under `reconciled`, so a
+  later read (offline included) is not thrown back on the stale claim. The receipt's own
+  fields are never mutated: the file ends up saying both what was done and what became
+  of it. Written only on a state change, never by an `unverified` read, and dropped
+  wholesale when a new push rewrites the receipt - a new push is a new event.
+- **last_known** - the previous reconciled block, served under that key when a read
+  cannot reach the account. Degrading to older information beats degrading to none, but
+  it is kept separate from the current finding so stale facts never read as fresh ones.
 - **reconciliation** - resolving a push receipt's `workout_id` against the Garmin account
   on every `get_workout_status` read (issue #41). Keyed on the id alone: the question is
   whether what was pushed is still there, not whether something like it is. Hash and name

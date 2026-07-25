@@ -82,6 +82,14 @@ Consequences specific to this tool:
   case pays nothing.
 - **No opt-out flag.** A `verify=False` parameter was considered and rejected: the
   caller is an agent, and an agent in a hurry would set it and reproduce the incident.
+- **It writes to disk as well** (issue #43). A changed finding is appended to
+  `push.json` under `reconciled`, so a later read - including an offline one - is not
+  thrown back on the stale claim. This is the second boundary the tool crosses: it is a
+  read tool that both reaches the network and writes a local artifact. The receipt's own
+  fields are never mutated, because "we pushed it and it worked" describes an event that
+  did happen; rewriting `applied` to `false` would falsify the history to fix a read and
+  destroy the only trace of the push. Only a state change writes, and an `unverified`
+  read never writes at all - absence of information is not information.
 - **The golden rule is untouched.** No metric consults this path; the finding describes
   the athlete's Garmin account, not their training, and the marts compute identically
   whether or not the tool ever runs.

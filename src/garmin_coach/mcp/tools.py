@@ -227,13 +227,27 @@ def get_workout_status(
     day_dir = pathlib.Path(reports_dir) / date
     push = _read_json(day_dir / "push.json")
     workout = _read_json(day_dir / "workout.json")
-    data = {
-        "date": date,
-        "workout": workout,
-        "push": push,
-        "reconciled": publish.reconcile(connect, push, workout, date),
-    }
+    finding = publish.reconcile(connect, push, workout, date)
+    _persist_finding(day_dir, push, finding)
+    data = {"date": date, "workout": workout, "push": push, "reconciled": finding}
     return _wrap(conn, data)
+
+
+def _persist_finding(day_dir: pathlib.Path, push: Any, finding: dict[str, Any] | None) -> None:
+    """Record a changed finding on the receipt, so a later read is not thrown back on it.
+
+    Only a state change writes: rewriting on every read would churn ``checked_at``
+    with no new information. An unverified read never writes - absence of information
+    is not information, and would erase a known-missing workout. The receipt's own
+    fields are never touched; the finding is appended beside them.
+    """
+    if not isinstance(push, dict) or finding is None or finding["state"] == "unverified":
+        return
+    known = push.get("reconciled")
+    if isinstance(known, dict) and known.get("state") == finding["state"]:
+        return
+    push["reconciled"] = finding
+    (day_dir / "push.json").write_text(json.dumps(push, indent=2))
 
 
 def _read_json(path: pathlib.Path) -> Any:

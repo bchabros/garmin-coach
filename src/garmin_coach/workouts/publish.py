@@ -254,13 +254,26 @@ def reconcile(
         steps_changed = _steps_changed(publisher, entry, receipt, spec)
     except Exception as exc:  # noqa: BLE001 - an unreachable account leaves it unverified
         logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
-        return _finding("unverified")
+        return _unverified(receipt)
     return _finding(
         _state(scheduled, steps_changed),
         scheduled=scheduled,
         steps_changed=steps_changed,
         renamed_to=_renamed_to(entry, receipt),
     )
+
+
+def _unverified(receipt: dict[str, Any]) -> dict[str, Any]:
+    """The finding for a read that could not reach the account.
+
+    Carries whatever the receipt last recorded under ``last_known``, so an offline
+    read degrades to older information rather than to none. Nothing else is filled
+    in: this read confirmed nothing, and stale facts must not read as fresh ones.
+    """
+    known = receipt.get("reconciled")
+    finding = _finding("unverified")
+    finding["last_known"] = known if isinstance(known, dict) else None
+    return finding
 
 
 def _state(scheduled: bool, steps_changed: bool | None) -> str:

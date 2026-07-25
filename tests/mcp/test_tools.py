@@ -486,6 +486,97 @@ def test_status_reports_unverified_when_the_detail_call_fails(conn, tmp_path):
     assert out["data"]["reconciled"]["state"] == "unverified"
 
 
+# --- workout status: the finding persisted to the receipt (issue #43) -------
+
+
+def _receipt(day_dir):
+    return json.loads((day_dir / "push.json").read_text())
+
+
+def test_status_appends_the_finding_to_the_receipt_on_a_state_change(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+
+    _status(conn, tmp_path, FakePublisher())
+
+    assert _receipt(day_dir)["reconciled"]["state"] == "missing"
+
+
+def test_status_leaves_the_receipts_own_fields_untouched_when_it_writes(conn, tmp_path):
+    """The receipt records an event that did happen; only the finding is added."""
+    day_dir = _seed_pushed(tmp_path)
+    before = _receipt(day_dir)
+
+    _status(conn, tmp_path, FakePublisher())
+
+    after = _receipt(day_dir)
+    assert {k: v for k, v in after.items() if k != "reconciled"} == before
+
+
+def test_status_does_not_rewrite_the_receipt_when_the_state_is_unchanged(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+    _status(conn, tmp_path, FakePublisher())
+    stamped = _receipt(day_dir)
+    stamped["reconciled"]["checked_at"] = "2000-01-01T00:00:00"
+    (day_dir / "push.json").write_text(json.dumps(stamped))
+
+    _status(conn, tmp_path, FakePublisher())
+
+    assert _receipt(day_dir)["reconciled"]["checked_at"] == "2000-01-01T00:00:00"
+
+
+def test_status_never_overwrites_a_finding_with_an_unverified_read(conn, tmp_path):
+    """Absence of information is not information: one offline read must not erase it."""
+    day_dir = _seed_pushed(tmp_path)
+    _status(conn, tmp_path, FakePublisher())
+
+    _status(conn, tmp_path, UnreachablePublisher())
+
+    assert _receipt(day_dir)["reconciled"]["state"] == "missing"
+
+
+def test_status_serves_the_last_known_finding_when_the_account_is_unreachable(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    _status(conn, tmp_path, FakePublisher())
+
+    out = _status(conn, tmp_path, UnreachablePublisher())
+
+    assert out["data"]["reconciled"]["state"] == "unverified"
+    assert out["data"]["reconciled"]["last_known"]["state"] == "missing"
+
+
+def test_status_writes_nothing_when_an_unverified_read_has_no_prior_finding(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+
+    out = _status(conn, tmp_path, UnreachablePublisher())
+
+    assert "reconciled" not in _receipt(day_dir)
+    assert out["data"]["reconciled"]["last_known"] is None
+
+
+def test_a_successful_push_replaces_the_receipt_and_drops_the_stale_finding(
+    conn, tmp_path, fixture
+):
+    """A new push is a new event; the previous finding describes a workout that is gone."""
+    request = fixture("tempo_request")
+    tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
+    day_dir = tmp_path / FUTURE
+    spec = json.loads((day_dir / "workout.json").read_text())
+    (day_dir / "push.json").write_text(
+        json.dumps({"workout_id": 1, "reconciled": {"state": "missing"}})
+    )
+    pub = FakePublisher()
+
+    tools.push_confirm(
+        conn,
+        date=FUTURE,
+        confirm_token=publish.confirm_token(spec),
+        publisher=pub,
+        reports_dir=str(tmp_path),
+    )
+
+    assert "reconciled" not in _receipt(day_dir)
+
+
 def test_status_reads_the_library_and_the_calendar_once_each(conn, tmp_path):
     """One login and one read of each surface per date - the cost OPERATIONS.md quotes."""
     _seed_pushed(tmp_path)

@@ -121,8 +121,10 @@ class FakePublisher:
         self._next_workout = 1000
         self._next_schedule = 5000
         self.calls: list[str] = []
+        self.reads: list[str] = []
 
     def list_workouts(self):
+        self.reads.append("list_workouts")
         return [{"workoutId": wid, **w} for wid, w in self.workouts.items()]
 
     def upload(self, payload):
@@ -151,6 +153,7 @@ class FakePublisher:
         self.workouts.pop(workout_id, None)
 
     def list_scheduled(self, date):
+        self.reads.append("list_scheduled")
         return [
             {"scheduleId": sid, "workoutId": wid}
             for sid, (wid, d) in self.scheduled.items()

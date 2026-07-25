@@ -4,8 +4,12 @@ Pure functions over the finished DB and the report artifacts; the protocol
 layer in ``mcp.server`` only wires them up. Every response is wrapped in a
 freshness envelope so a chat session can never mistake partial same-day data
 for final numbers. No new computation happens here: each tool wraps a reader
-or a seam the CLI already uses (the golden rule holds - nothing in this
-module talks to Garmin).
+or a seam the CLI already uses (the golden rule holds - this module never
+constructs a Garmin transport; the tools that need one take it injected).
+
+``get_workout_status`` is the one *read* that needs an injected transport: a
+push receipt describes what a push did, and only the account can say what
+became of it (issue #41, annexed to ADR 0014).
 """
 
 from __future__ import annotations
@@ -194,13 +198,103 @@ def get_events(conn: sqlite3.Connection, today: str | None = None) -> dict[str, 
 
 
 def get_workout_status(
-    conn: sqlite3.Connection, date: str, reports_dir: str = "reports"
+    conn: sqlite3.Connection,
+    date: str,
+    *,
+    publisher: publish.WorkoutPublisher | None,
+    reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Return the authored spec and push receipt for a date (None when absent)."""
+    """Return the authored spec, the push receipt, and the receipt reconciled with Garmin.
+
+    The receipt records what a push did; it is never presented as what the account
+    holds now (issue #41). ``reconciled`` is the fresh account-side finding and sits
+    beside the untouched receipt, because "we pushed it and it worked" stays true
+    even after the athlete deletes the workout.
+
+    Args:
+        conn: The finished DB, for the freshness envelope.
+        date: The day whose workout is being asked about.
+        publisher: The injected Garmin read surface, or None when logging in failed -
+            an unreachable account degrades to ``unverified``, it never raises.
+        reports_dir: Root of the per-day report artifacts.
+
+    Returns:
+        The wrapped ``date``/``workout``/``push``/``reconciled`` block; ``reconciled``
+        is None when there is no receipt to check.
+    """
     day_dir = pathlib.Path(reports_dir) / date
     workout = _read_json(day_dir / "workout.json")
     push = _read_json(day_dir / "push.json")
-    return _wrap(conn, {"date": date, "workout": workout, "push": push})
+    data = {
+        "date": date,
+        "workout": workout,
+        "push": push,
+        "reconciled": _reconcile(publisher, push, date),
+    }
+    return _wrap(conn, data)
+
+
+def _reconcile(
+    publisher: publish.WorkoutPublisher | None, push: Any, date: str
+) -> dict[str, Any] | None:
+    """Resolve the receipt's workout against the account's library and calendar.
+
+    Keyed on the receipt's ``workout_id`` alone: the question is whether what was
+    pushed is still there, not whether something like it is, so a workout the
+    library no longer holds is ``missing`` even with a near-identical one beside it.
+
+    Returns:
+        The finding, or None when the receipt names no workout to check (in which
+        case the account is never contacted).
+    """
+    workout_id = (push or {}).get("workout_id")
+    if workout_id is None:
+        return None
+    if publisher is None:
+        return _finding("unverified")
+    try:
+        entry = _library_entry(publisher, workout_id)
+        if entry is None:
+            return _finding("missing", scheduled=False)
+        scheduled = _is_scheduled(publisher, workout_id, date)
+    except Exception:  # noqa: BLE001 - any transport failure leaves the receipt unverified
+        return _finding("unverified")
+    return _finding(
+        "live" if scheduled else "unscheduled",
+        scheduled=scheduled,
+        renamed_to=_renamed_to(entry, push),
+    )
+
+
+def _finding(
+    state: str, *, scheduled: bool | None = None, renamed_to: str | None = None
+) -> dict[str, Any]:
+    """One reconciliation finding: the state to branch on, plus the facts behind it."""
+    return {
+        "state": state,
+        "scheduled": scheduled,
+        "renamed_to": renamed_to,
+        "checked_at": dt.datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _library_entry(publisher: publish.WorkoutPublisher, workout_id: int) -> dict[str, Any] | None:
+    """The account's library entry for a workout id, or None when it is gone."""
+    for workout in publisher.list_workouts():
+        if workout.get("workoutId") == workout_id:
+            return workout
+    return None
+
+
+def _is_scheduled(publisher: publish.WorkoutPublisher, workout_id: int, date: str) -> bool:
+    """Whether the workout holds a calendar entry on the date being asked about."""
+    return any(entry["workoutId"] == workout_id for entry in publisher.list_scheduled(date))
+
+
+def _renamed_to(entry: dict[str, Any], push: dict[str, Any]) -> str | None:
+    """The account's current name when the athlete renamed the workout, else None."""
+    current = entry.get("workoutName")
+    return current if current != push.get("name") else None
 
 
 def _read_json(path: pathlib.Path) -> Any:

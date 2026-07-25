@@ -15,6 +15,7 @@ from garmin_coach.core import db
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
 from garmin_coach.workouts import publish
+from tests.conftest import FakePublisher
 
 DATA_START = "2026-06-08"
 TODAY = dt.date.today().isoformat()
@@ -184,20 +185,168 @@ def test_get_events_annotates_goal_events(conn):
     assert out["data"][0]["weeks_to_event"] > 0
 
 
-def test_get_workout_status_reads_spec_and_receipt(conn, tmp_path):
-    day_dir = tmp_path / "2026-07-17"
-    day_dir.mkdir()
-    (day_dir / "workout.json").write_text(json.dumps({"name": "GC 2026-07-17 quality"}))
-    (day_dir / "push.json").write_text(json.dumps({"action": "create", "workout_id": 5}))
+# --- workout status: receipt reconciled against the account (issue #41) -----
 
-    out = tools.get_workout_status(conn, date="2026-07-17", reports_dir=str(tmp_path))
+PUSH_DATE = "2026-07-17"
+
+
+class UnreachablePublisher(FakePublisher):
+    """A publisher whose every read fails, to model an unreachable account."""
+
+    def list_workouts(self):
+        raise RuntimeError("garmin: login failed")
+
+    def list_scheduled(self, date):
+        raise RuntimeError("garmin: login failed")
+
+
+def _seed_pushed(tmp_path, *, name="GC 2026-07-17 quality", workout_id=1000, date=PUSH_DATE):
+    """Write a workout spec and an applied push receipt for a date."""
+    day_dir = tmp_path / date
+    day_dir.mkdir(exist_ok=True)
+    (day_dir / "workout.json").write_text(json.dumps({"name": name, "date": date}))
+    (day_dir / "push.json").write_text(
+        json.dumps(
+            {
+                "action": "create",
+                "applied": True,
+                "name": name,
+                "date": date,
+                "workout_id": workout_id,
+                "spec_hash": "297803a3d3505fe3",
+                "pushed_at": "2026-07-15T17:28:00",
+            }
+        )
+    )
+    return day_dir
+
+
+def _account_with(pub, *, name="GC 2026-07-17 quality", workout_id=1000, scheduled_on=None):
+    """Put a workout in the fake library, optionally scheduled on a date."""
+    pub.workouts[workout_id] = {"workoutName": name, "description": "gc-hash:297803a3d3505fe3"}
+    if scheduled_on is not None:
+        pub.scheduled[5000] = (workout_id, scheduled_on)
+    return pub
+
+
+def _status(conn, tmp_path, pub, date=PUSH_DATE):
+    return tools.get_workout_status(conn, date=date, publisher=pub, reports_dir=str(tmp_path))
+
+
+def test_status_reports_missing_when_the_account_no_longer_holds_the_workout(conn, tmp_path):
+    """The live 2026-07-17 case: the receipt claims a workout the account deleted."""
+    _seed_pushed(tmp_path)
+    pub = FakePublisher()
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "missing"
+    assert out["data"]["reconciled"]["scheduled"] is False
+
+
+def test_status_reports_unscheduled_when_the_workout_is_only_in_the_library(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher())
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "unscheduled"
+    assert out["data"]["reconciled"]["scheduled"] is False
+
+
+def test_status_reports_unscheduled_when_the_workout_moved_to_another_date(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on="2026-07-18")
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "unscheduled"
+
+
+def test_status_reports_live_when_scheduled_on_the_date(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "live"
+    assert out["data"]["reconciled"]["scheduled"] is True
+    assert out["data"]["reconciled"]["renamed_to"] is None
+
+
+def test_status_names_the_current_account_name_when_the_athlete_renamed_it(conn, tmp_path):
+    """Renaming in Connect is the athlete's prerogative: reported, never a fault state."""
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), name="Hyrox Tempo", scheduled_on=PUSH_DATE)
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "live"
+    assert out["data"]["reconciled"]["renamed_to"] == "Hyrox Tempo"
+
+
+def test_status_reports_unverified_when_the_account_cannot_be_reached(conn, tmp_path):
+    _seed_pushed(tmp_path)
+
+    out = _status(conn, tmp_path, UnreachablePublisher())
+
+    assert out["data"]["reconciled"]["state"] == "unverified"
+    assert out["data"]["push"]["applied"] is True
+
+
+def test_status_reports_unverified_when_there_is_no_account_access(conn, tmp_path):
+    """A login that failed before the tool was called degrades, it does not raise."""
+    _seed_pushed(tmp_path)
+
+    out = _status(conn, tmp_path, None)
+
+    assert out["data"]["reconciled"]["state"] == "unverified"
+
+
+def test_status_without_a_receipt_never_touches_the_account(conn, tmp_path):
+    pub = FakePublisher()
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"] is None
+    assert pub.reads == []
+
+
+def test_status_with_a_receipt_carrying_no_workout_id_never_touches_the_account(conn, tmp_path):
+    day_dir = tmp_path / PUSH_DATE
+    day_dir.mkdir()
+    (day_dir / "push.json").write_text(json.dumps({"action": "refuse", "workout_id": None}))
+    pub = FakePublisher()
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"] is None
+    assert pub.reads == []
+
+
+def test_status_returns_the_receipt_and_spec_unchanged_beside_the_finding(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _status(conn, tmp_path, pub)
 
     assert out["data"]["workout"]["name"] == "GC 2026-07-17 quality"
     assert out["data"]["push"]["action"] == "create"
+    assert out["data"]["push"]["pushed_at"] == "2026-07-15T17:28:00"
+    assert "partial_fields" in out["freshness"]
+
+
+def test_status_records_when_the_account_was_consulted(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["checked_at"].startswith(dt.date.today().isoformat())
 
 
 def test_get_workout_status_with_no_artifacts_is_explicit(conn, tmp_path):
-    out = tools.get_workout_status(conn, date="2026-07-17", reports_dir=str(tmp_path))
+    out = _status(conn, tmp_path, FakePublisher())
 
     assert out["data"]["workout"] is None
     assert out["data"]["push"] is None

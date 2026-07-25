@@ -152,12 +152,33 @@ def get_events(today: str | None = None) -> dict[str, Any]:
 
 @server.tool()
 def get_workout_status(date: str) -> dict[str, Any]:
-    """The authored workout spec and push receipt for a date (None when absent)."""
+    """The authored spec, the push receipt, and that receipt checked against Garmin.
+
+    ``reconciled.state`` is what the account actually holds: ``live`` (scheduled on
+    the date), ``unscheduled``, ``missing``, or ``unverified`` when Garmin could not
+    be reached. The receipt is returned untouched beside it - it records the push,
+    not what became of it.
+    """
     conn = _open()
     try:
-        return tools.get_workout_status(conn, date=date, reports_dir=_REPORTS_DIR)
+        return tools.get_workout_status(
+            conn, date=date, publisher=_publisher_or_none(), reports_dir=_REPORTS_DIR
+        )
     finally:
         conn.close()
+
+
+def _publisher_or_none() -> publish.WorkoutPublisher | None:
+    """The live Garmin surface, or None when logging in fails.
+
+    A failed login is data on the status path, not an error: the read degrades to
+    ``unverified`` rather than taking the tool down. The push pair keeps raising,
+    because a push that cannot reach the account has nothing to report.
+    """
+    try:
+        return publish.connect_publisher(get_settings())
+    except Exception:  # noqa: BLE001 - an unreachable account leaves the receipt unverified
+        return None
 
 
 @server.tool()

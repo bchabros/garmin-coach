@@ -340,6 +340,21 @@ code, docstrings, PRDs, and ADRs.
   `confirm_token` alongside the payload, and `push_confirm` refuses any other value
   without touching the account. The MCP counterpart of the CLI's `--confirm`, strict
   enough for an agent caller.
+- **push receipt** - `reports/{date}/push.json`: what a push *did* (`action`, `applied`,
+  `workout_id`, `spec_hash`, `pushed_at`). A record of an event, never a statement about
+  what the Garmin account holds now - that is what reconciliation is for.
+- **reconciliation** - resolving a push receipt's `workout_id` against the Garmin account
+  on every `get_workout_status` read (issue #41). Keyed on the id alone: the question is
+  whether what was pushed is still there, not whether something like it is. Hash and name
+  lookups belong to the push path.
+- **reconciliation state** - what the account actually holds, one of: `live` (in the
+  library *and* on the date's calendar), `unscheduled` (in the library, not on that date -
+  unpinned or moved), `missing` (gone from the library), `unverified` (the account could
+  not be reached). Reported alongside the facts behind it: `scheduled`, `renamed_to`,
+  `checked_at`.
+- **renamed_to** - the account's current workout name when it differs from the receipt's.
+  A field, never a state: renaming a pushed workout in Garmin Connect is the athlete's
+  prerogative and must not read as a fault.
 - **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
   (name + steps) is the account-side idempotency marker written into the Garmin
   workout description; it ignores the date on purpose, so rescheduling a workout is

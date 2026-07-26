@@ -112,20 +112,36 @@ _HARDNESS = {
 # the athlete says whether it is run-dominant (run) or station-based (hiit).
 _SPORT_FOR_INTENT = {"strength": "strength", "crossfit": "hiit"}
 
-# Per session type: the (end_key, min_key) pairs whose end a structure override may set.
-# The min_key is the pre-11a minutes alias kept for back-compat (easy uses ``duration_min``).
+
+class _Role(NamedTuple):
+    """One step role a run session type offers, and the structure keys that shape it."""
+
+    name: str
+    end_key: str
+    min_key: str
+
+    @property
+    def target_key(self) -> str:
+        """The structure key setting this role's intensity target."""
+        return f"{self.name}_target"
+
+
+# Per session type: the roles a structure override may shape. The min_key is the pre-11a
+# minutes alias kept for back-compat (easy spells its work role's alias ``duration_min``).
+# This table is the single source of which keys a session type accepts - both the end
+# conditions and the intensity targets are derived from it, so the two cannot drift apart.
 _STRUCTURE_ROLES = {
-    "easy": (("work_end", "duration_min"),),
+    "easy": (_Role("work", "work_end", "duration_min"),),
     "tempo": (
-        ("warmup_end", "warmup_min"),
-        ("work_end", "work_min"),
-        ("cooldown_end", "cooldown_min"),
+        _Role("warmup", "warmup_end", "warmup_min"),
+        _Role("work", "work_end", "work_min"),
+        _Role("cooldown", "cooldown_end", "cooldown_min"),
     ),
     "quality": (
-        ("warmup_end", "warmup_min"),
-        ("work_end", "work_min"),
-        ("recovery_end", "recovery_min"),
-        ("cooldown_end", "cooldown_min"),
+        _Role("warmup", "warmup_end", "warmup_min"),
+        _Role("work", "work_end", "work_min"),
+        _Role("recovery", "recovery_end", "recovery_min"),
+        _Role("cooldown", "cooldown_end", "cooldown_min"),
     ),
 }
 
@@ -363,8 +379,7 @@ def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list
     """
     if request["origin"] != "athlete":
         return []
-    structure = request.get("structure") or {}
-    band = structure.get("work_pace_band")
+    band = _work_pace_band(request.get("structure") or {})
     suggested = request.get("pace_target_s_per_km")
     if not band or suggested is None:
         return []
@@ -375,6 +390,14 @@ def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list
     return [
         f"your pace band {fast}-{slow} s/km is faster than the recommended {suggested} s/km{cite}"
     ]
+
+
+def _work_pace_band(structure: dict[str, Any]) -> list[float] | None:
+    """The work step's explicit pace band from either spelling, or None when unset."""
+    target = structure.get("work_target")
+    if isinstance(target, dict) and "pace_band" in target:
+        return target["pace_band"]
+    return structure.get("work_pace_band")
 
 
 def _rationale_cite(recommendation: dict[str, Any] | None) -> str:
@@ -436,6 +459,7 @@ class _Targets:
     ) -> None:
         self._session_type = session_type
         self._request = request
+        self._structure = request.get("structure") or {}
         self._zones = zones
         self._warnings = warnings
         self._resolved: dict[str, dict[str, Any]] = {}
@@ -447,7 +471,10 @@ class _Targets:
         return self._resolved[role]
 
     def _resolve(self, role: str) -> dict[str, Any]:
-        """Work carries the session type's chain; every other role carries no target."""
+        """An asked-for target wins; otherwise work runs its chain and the rest carry none."""
+        explicit = _explicit_target(self._structure, role)
+        if explicit is not None:
+            return explicit
         if role != "work":
             return _NO_TARGET
         if self._session_type == "easy":
@@ -540,44 +567,97 @@ def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
     unknown = set(structure) - _allowed_structure_keys(session_type)
     if unknown:
         raise ValueError(f"unknown structure keys for {session_type}: {', '.join(sorted(unknown))}")
-    for end_key, min_key in _STRUCTURE_ROLES.get(session_type, ()):
-        end = structure.get(end_key)
+    for role in _STRUCTURE_ROLES.get(session_type, ()):
+        end = structure.get(role.end_key)
         if end is None:
             continue
-        if structure.get(min_key) is not None:
-            raise ValueError(f"structure sets both {end_key} and {min_key}; give only one")
-        _validate_end(end, end_key)
+        if structure.get(role.min_key) is not None:
+            raise ValueError(
+                f"structure sets both {role.end_key} and {role.min_key}; give only one"
+            )
+        _validate_end(end, role.end_key)
     _validate_pace_band(structure)
+    _validate_targets(structure, session_type)
 
 
 def _allowed_structure_keys(session_type: str) -> set[str]:
-    """The structure keys a session type accepts (its role ends/mins, plus band and reps)."""
+    """The structure keys a session type accepts (its role ends/mins/targets, band, reps)."""
     keys = {"work_pace_band"}
     if session_type == "quality":
         keys.add("reps")
-    for end_key, min_key in _STRUCTURE_ROLES.get(session_type, ()):
-        keys.update((end_key, min_key))
+    for role in _STRUCTURE_ROLES.get(session_type, ()):
+        keys.update((role.end_key, role.min_key, role.target_key))
     return keys
 
 
+def _validate_targets(structure: dict[str, Any], session_type: str) -> None:
+    """Check each role's intensity target, and that work carries only one spelling.
+
+    Raises:
+        ValueError: If a target is malformed, or work sets both ``work_target`` and
+            the older ``work_pace_band``.
+    """
+    if structure.get("work_target") is not None and structure.get("work_pace_band") is not None:
+        raise ValueError("structure sets both work_target and work_pace_band; give only one")
+    for role in _STRUCTURE_ROLES.get(session_type, ()):
+        target = structure.get(role.target_key)
+        if target is not None:
+            _validate_target(target, role.target_key)
+
+
+def _validate_target(target: Any, key: str) -> None:
+    """Check one role's target is ``"none"`` or a single well-formed band.
+
+    Raises:
+        ValueError: If the target is neither the no-target word nor a one-key
+            ``hr_band``/``pace_band`` mapping holding a valid window.
+    """
+    if target == _NO_TARGET_WORD:
+        return
+    if not isinstance(target, dict) or len(target) != 1:
+        raise ValueError(
+            f'{key} must be "{_NO_TARGET_WORD}" or one of '
+            f"{{'hr_band': [low_bpm, high_bpm]}} / {{'pace_band': [fast_s_per_km, slow_s_per_km]}}"
+        )
+    kind, band = next(iter(target.items()))
+    if kind not in _BAND_SHAPES:
+        raise ValueError(f"{key} must be a {' or '.join(sorted(_BAND_SHAPES))}, not {kind}")
+    _validate_band(band, f"{key} {kind}", kind)
+
+
 def _validate_pace_band(structure: dict[str, Any]) -> None:
-    """Check an explicit work pace band is a well-formed, faster-first window.
+    """Check the older explicit work pace band is a well-formed, faster-first window.
 
     Raises:
         ValueError: If the band is not a two-element positive ``[fast, slow]`` with
             ``fast < slow``.
     """
     band = structure.get("work_pace_band")
-    if band is None:
-        return
+    if band is not None:
+        _validate_band(band, "work_pace_band", "pace_band")
+
+
+def _validate_band(band: Any, label: str, kind: str) -> None:
+    """Check a target band is a two-element, positive, correctly ordered window.
+
+    Args:
+        band: The candidate ``[first, second]`` bounds.
+        label: How to name the offending key in an error (e.g. ``warmup_target hr_band``).
+        kind: ``hr_band`` or ``pace_band``, selecting the wording of both errors.
+
+    Raises:
+        ValueError: If the band is not two positive numbers, or its bounds are
+            ordered the wrong way round.
+    """
+    shape, order = _BAND_SHAPES[kind]
     if (
         not isinstance(band, list | tuple)
         or len(band) != 2
         or not all(isinstance(x, int | float) and x > 0 for x in band)
     ):
-        raise ValueError("work_pace_band must be [fast_s_per_km, slow_s_per_km], both positive")
+        raise ValueError(f"{label} must be {shape}, both positive")
     if band[0] >= band[1]:
-        raise ValueError("work_pace_band fast bound must be faster (smaller) than the slow bound")
+        raise ValueError(f"{label} {order}")
 
 
 def _validate_end(end: Any, end_key: str) -> None:
@@ -623,6 +703,40 @@ def _end_descriptor(end: Any) -> dict[str, Any]:
 
 
 _NO_TARGET = {"type": "none"}
+
+# What an athlete writes in a ``<role>_target`` to ask for no target at all.
+_NO_TARGET_WORD = "none"
+
+# Per band kind: how to spell its bounds in an error, and how to say they are inverted.
+# Both kinds are narrower-bound-first, so one ordering check serves both.
+_BAND_SHAPES = {
+    "hr_band": ("[low_bpm, high_bpm]", "low bound must be below the high bound"),
+    "pace_band": (
+        "[fast_s_per_km, slow_s_per_km]",
+        "fast bound must be faster (smaller) than the slow bound",
+    ),
+}
+
+
+def _explicit_target(structure: dict[str, Any], role: str) -> dict[str, Any] | None:
+    """The athlete's target for one role as a spec target, or None when unset.
+
+    Args:
+        structure: The request's structure override (already validated).
+        role: The step role being resolved.
+
+    Returns:
+        A spec target, or None to let the role fall through to its default.
+    """
+    target = structure.get(f"{role}_target")
+    if target is None:
+        return None
+    if target == _NO_TARGET_WORD:
+        return _NO_TARGET
+    kind, band = next(iter(target.items()))
+    if kind == "hr_band":
+        return {"type": "hr_band", "low_bpm": band[0], "high_bpm": band[1]}
+    return {"type": "pace_band", "fast_s_per_km": band[0], "slow_s_per_km": band[1]}
 
 
 def _step(kind: str, end: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:

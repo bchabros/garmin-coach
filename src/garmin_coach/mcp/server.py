@@ -156,10 +156,17 @@ def get_events(today: str | None = None) -> dict[str, Any]:
 def get_workout_status(date: str) -> dict[str, Any]:
     """The authored spec, the push receipt, and that receipt checked against Garmin.
 
-    ``reconciled.state`` is what the account actually holds: ``live`` (scheduled on
-    the date), ``unscheduled``, ``missing``, or ``unverified`` when Garmin could not
-    be reached. The receipt is returned untouched beside it - it records the push,
-    not what became of it.
+    Read ``reconciled.state``, not ``push.applied``: the receipt records what a push
+    did, the state what the account holds now. ``live`` (in the library, scheduled on
+    the date, steps as pushed), ``edited`` (scheduled, but rewritten in Connect),
+    ``unscheduled`` (in the library, unpinned or moved to another day), ``missing``
+    (deleted), or ``unverified`` when Garmin could not be reached - say so rather
+    than quoting the receipt as fact.
+
+    Alongside it: ``steps_changed`` (null when the spec was re-authored since the
+    push and so cannot evidence what was sent), ``renamed_to`` (the athlete's own
+    title for it - allowed, not a fault), and ``checked_at``. On ``unverified``,
+    ``last_known`` carries the previous finding.
     """
     conn = _open()
     try:

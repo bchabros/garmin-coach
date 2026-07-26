@@ -418,6 +418,43 @@ def _date_guard(date: str, today: str) -> list[str]:
     return []
 
 
+class _Targets:
+    """Resolves each step role's intensity target for one authored session.
+
+    One resolver serves a whole expansion so that every role asks the same
+    question instead of the expansion sites deciding for themselves. A role
+    resolves at most once: the work chain appends warnings as a side effect,
+    and reusing the answer keeps each warning to a single appearance.
+    """
+
+    def __init__(
+        self,
+        session_type: str,
+        request: dict[str, Any],
+        zones: dict[str, Any] | None,
+        warnings: list[str],
+    ) -> None:
+        self._session_type = session_type
+        self._request = request
+        self._zones = zones
+        self._warnings = warnings
+        self._resolved: dict[str, dict[str, Any]] = {}
+
+    def for_role(self, role: str) -> dict[str, Any]:
+        """The target for one step role, resolved on first ask and reused after."""
+        if role not in self._resolved:
+            self._resolved[role] = self._resolve(role)
+        return self._resolved[role]
+
+    def _resolve(self, role: str) -> dict[str, Any]:
+        """Work carries the session type's chain; every other role carries no target."""
+        if role != "work":
+            return _NO_TARGET
+        if self._session_type == "easy":
+            return _easy_target(self._request, self._zones, self._warnings)
+        return _threshold_target(self._request, self._zones, self._warnings)
+
+
 def _expand(
     session_type: str,
     request: dict[str, Any],
@@ -426,45 +463,53 @@ def _expand(
 ) -> list[dict[str, Any]]:
     """Expand a session type into ordered spec steps, honouring any structure override."""
     structure = request.get("structure") or {}
+    targets = _Targets(session_type, request, zones, warnings)
     if session_type == "easy":
-        target = _easy_target(request, zones, warnings)
         end = _end_condition(structure, "work_end", "duration_min", EASY_DEFAULT_S)
-        return [_step("work", end, target)]
+        return [_step("work", end, targets.for_role("work"))]
     if session_type == "tempo":
-        return _expand_tempo(structure, _threshold_target(request, zones, warnings))
+        return _expand_tempo(structure, targets)
     if session_type == "quality":
-        return _expand_quality(structure, _threshold_target(request, zones, warnings))
+        return _expand_quality(structure, targets)
     raise ValueError(f"unsupported session type: {session_type}")
 
 
-def _expand_tempo(structure: dict[str, Any], work: dict[str, Any]) -> list[dict[str, Any]]:
+def _expand_tempo(structure: dict[str, Any], targets: _Targets) -> list[dict[str, Any]]:
     """Warmup + a continuous threshold block + cooldown."""
     return [
         _step(
             "warmup",
             _end_condition(structure, "warmup_end", "warmup_min", TEMPO_WARMUP_S),
-            _NO_TARGET,
+            targets.for_role("warmup"),
         ),
-        _step("work", _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S), work),
+        _step(
+            "work",
+            _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S),
+            targets.for_role("work"),
+        ),
         _step(
             "cooldown",
             _end_condition(structure, "cooldown_end", "cooldown_min", TEMPO_COOLDOWN_S),
-            _NO_TARGET,
+            targets.for_role("cooldown"),
         ),
     ]
 
 
-def _expand_quality(structure: dict[str, Any], work: dict[str, Any]) -> list[dict[str, Any]]:
+def _expand_quality(structure: dict[str, Any], targets: _Targets) -> list[dict[str, Any]]:
     """Warmup + a homogeneous repeat block of work + recovery + cooldown."""
     interval = {
         "kind": "repeat",
         "reps": int(structure.get("reps", QUALITY_REPS)),
         "steps": [
-            _step("work", _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S), work),
+            _step(
+                "work",
+                _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S),
+                targets.for_role("work"),
+            ),
             _step(
                 "recovery",
                 _end_condition(structure, "recovery_end", "recovery_min", QUALITY_RECOVERY_S),
-                _NO_TARGET,
+                targets.for_role("recovery"),
             ),
         ],
     }
@@ -472,13 +517,13 @@ def _expand_quality(structure: dict[str, Any], work: dict[str, Any]) -> list[dic
         _step(
             "warmup",
             _end_condition(structure, "warmup_end", "warmup_min", QUALITY_WARMUP_S),
-            _NO_TARGET,
+            targets.for_role("warmup"),
         ),
         interval,
         _step(
             "cooldown",
             _end_condition(structure, "cooldown_end", "cooldown_min", QUALITY_COOLDOWN_S),
-            _NO_TARGET,
+            targets.for_role("cooldown"),
         ),
     ]
 

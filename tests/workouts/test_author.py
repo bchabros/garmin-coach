@@ -864,6 +864,110 @@ def test_canonical_tempo_fixture_authors_end_to_end(fixture):
     assert nested_work["targetType"]["workoutTargetTypeKey"] == "pace.zone"
 
 
+# --- issue #45: default targets pinned role by role -------------------------
+#
+# The whole of issue #24 rests on one promise: a request that names no target
+# authors exactly what it authored before. These pin the full spec so a later
+# ticket cannot quietly move a default while the behavioural tests still pass.
+
+
+def test_default_easy_spec_is_unchanged():
+    assert author(_request(session_type="easy"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "easy",
+        "name": "GC 2026-07-17 easy",
+        "steps": [
+            {
+                "kind": "work",
+                "end": {"type": "time", "seconds": 2700},
+                "target": {"type": "pace_band", "fast_s_per_km": 330, "slow_s_per_km": 370},
+            }
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_tempo_spec_is_unchanged():
+    assert author(_request(session_type="tempo"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "tempo",
+        "name": "GC 2026-07-17 tempo",
+        "steps": [
+            {
+                "kind": "warmup",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+            {
+                "kind": "work",
+                "end": {"type": "time", "seconds": 1200},
+                "target": {"type": "pace_band", "fast_s_per_km": 325, "slow_s_per_km": 335},
+            },
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_quality_spec_is_unchanged():
+    assert author(_request(session_type="quality"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "quality",
+        "name": "GC 2026-07-17 quality",
+        "steps": [
+            {
+                "kind": "warmup",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+            {
+                "kind": "repeat",
+                "reps": 4,
+                "steps": [
+                    {
+                        "kind": "work",
+                        "end": {"type": "time", "seconds": 180},
+                        "target": {
+                            "type": "pace_band",
+                            "fast_s_per_km": 325,
+                            "slow_s_per_km": 335,
+                        },
+                    },
+                    {
+                        "kind": "recovery",
+                        "end": {"type": "time", "seconds": 120},
+                        "target": {"type": "none"},
+                    },
+                ],
+            },
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_work_degradation_chain_and_warning_are_unchanged():
+    # no measured pace and no zones: the work role still degrades to no target,
+    # still says so once, and the other roles stay silent.
+    spec = author(_request(session_type="quality", pace=None, cap=None), _context(zones=None))
+    assert spec["steps"][1]["steps"][0]["target"] == {"type": "none"}
+    assert spec["warnings"] == ["no target: no measured pace or heart-rate band; time only"]
+
+
 # The authored-shape projection deliberately has no seam of its own (issue #42):
 # asserting it directly would assert the implementation, so it is exercised through
 # get_workout_status against a fake account - see tests/mcp/test_tools.py.

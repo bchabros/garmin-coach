@@ -2,10 +2,12 @@
 
 Registered as ``coach`` in the repo's ``.mcp.json`` (stdio). Every tool opens
 its own connection to the finished DB, delegates to a pure function in
-``mcp.tools``, and returns its freshness-enveloped dict. The only tools that
-touch Garmin are ``refresh_today`` (a read through the transport seam) and
+``mcp.tools``, and returns its freshness-enveloped dict. Four tools touch
+Garmin: ``refresh_today`` (a read through the transport seam),
 ``push_preview``/``push_confirm`` (the outbound push path behind the
-preview-hash handshake) - see ADR 0014. No computation happens here.
+preview-hash handshake), and ``get_workout_status``, which checks a push
+receipt against the account rather than reporting it as fact (issue #41) - see
+ADR 0014 and its annex. No computation happens here.
 """
 
 from __future__ import annotations
@@ -152,10 +154,31 @@ def get_events(today: str | None = None) -> dict[str, Any]:
 
 @server.tool()
 def get_workout_status(date: str) -> dict[str, Any]:
-    """The authored workout spec and push receipt for a date (None when absent)."""
+    """The authored spec, the push receipt, and that receipt checked against Garmin.
+
+    Read ``reconciled.state``, not ``push.applied``: the receipt records what a push
+    did, the state what the account holds now. ``live`` (in the library and scheduled
+    on the date), ``edited`` (scheduled, but the steps were rewritten in Connect),
+    ``unscheduled`` (in the library, unpinned or moved to another day), ``missing``
+    (deleted), or ``unverified`` when Garmin could not be reached - say so rather
+    than quoting the receipt as fact.
+
+    ``steps_changed`` carries the step verdict beside the state, including on
+    ``unscheduled``: True on a rewrite, False when the account's copy still matches
+    the push, and null when it could not be judged because the local spec was
+    re-authored since - a ``live`` with a null there says nothing about the steps.
+    ``renamed_to`` is the athlete's own title for it (allowed, not a fault), and
+    ``checked_at`` is when the account was consulted. On ``unverified``,
+    ``last_known`` carries the previous finding.
+    """
     conn = _open()
     try:
-        return tools.get_workout_status(conn, date=date, reports_dir=_REPORTS_DIR)
+        return tools.get_workout_status(
+            conn,
+            date=date,
+            connect=lambda: publish.connect_publisher(get_settings()),
+            reports_dir=_REPORTS_DIR,
+        )
     finally:
         conn.close()
 

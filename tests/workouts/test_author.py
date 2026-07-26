@@ -862,3 +862,8 @@ def test_canonical_tempo_fixture_authors_end_to_end(fixture):
     assert nested_work["endCondition"]["conditionTypeKey"] == "distance"
     assert nested_work["endConditionValue"] == 1000.0
     assert nested_work["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+
+
+# The authored-shape projection deliberately has no seam of its own (issue #42):
+# asserting it directly would assert the implementation, so it is exercised through
+# get_workout_status against a fake account - see tests/mcp/test_tools.py.

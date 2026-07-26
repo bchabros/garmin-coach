@@ -9,30 +9,114 @@ from __future__ import annotations
 
 from garmin_coach.workouts.publish import confirm_token, publish, spec_hash
 from tests.conftest import FakePublisher
+from tests.conftest import run_spec as _spec
 
 
-def _spec(date="2026-07-17", name=None, work_s=1200):
-    return {
-        "sport": "run",
-        "origin": "recommender",
-        "date": date,
-        "session_type": "tempo",
-        "name": name or f"GC {date} tempo",
-        "steps": [
-            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
-            {
-                "kind": "work",
-                "end": {"type": "time", "seconds": work_s},
-                "target": {"type": "pace_band", "fast_s_per_km": 265, "slow_s_per_km": 275},
-            },
-            {
-                "kind": "cooldown",
-                "end": {"type": "time", "seconds": 600},
-                "target": {"type": "none"},
-            },
-        ],
-        "warnings": [],
-    }
+# --- account lookup: id, then hash, then name (issue #40) -------------------
+
+
+def _pushed(pub, spec=None):
+    """Push a spec for real, returning the account id it landed on."""
+    result = publish(spec or _spec(), pub, confirm=True)
+    pub.calls.clear()
+    return result.workout_id
+
+
+def test_a_renamed_workout_still_resolves_to_noop():
+    """Renaming in Connect is ordinary; it must not make the same session look new."""
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(), pub, confirm=True)
+
+    assert result.action == "noop"
+    assert pub.calls == []
+    assert len(pub.workouts) == 1
+
+
+def test_a_renamed_workout_with_a_changed_spec_resolves_against_the_receipt_id():
+    """Rename plus edit breaks both mutable keys; only the receipt's id survives it."""
+    pub = FakePublisher()
+    workout_id = _pushed(pub)
+    pub.workouts[workout_id]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(work_s=2400), pub, confirm=True, known_workout_id=workout_id)
+
+    assert result.action == "refuse"
+    assert len(pub.workouts) == 1
+
+
+def test_a_renamed_workout_with_a_changed_spec_replaces_in_place_when_asked():
+    pub = FakePublisher()
+    workout_id = _pushed(pub)
+    pub.workouts[workout_id]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(
+        _spec(work_s=2400), pub, confirm=True, replace=True, known_workout_id=workout_id
+    )
+
+    assert result.action == "replace"
+    assert len(pub.workouts) == 1
+
+
+def test_a_candidate_id_the_account_forgot_falls_through_to_the_hash():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(), pub, confirm=True, known_workout_id=999999)
+
+    assert result.action == "noop"
+
+
+def test_the_name_still_matches_a_workout_carrying_no_hash_tag():
+    """The name fallback is what detects a changed spec; it is not narrowed to untagged."""
+    pub = FakePublisher()
+    pub.workouts[1] = {"workoutName": _spec()["name"], "description": None}
+
+    result = publish(_spec(), pub, confirm=False)
+
+    assert result.action == "refuse"
+
+
+def test_two_workouts_sharing_a_hash_refuse_and_name_both():
+    """Guessing is unsafe: --replace deletes whichever candidate the lookup picked."""
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[2000] = dict(pub.workouts[1000], workoutName="Hyrox Tempo")
+
+    result = publish(_spec(), pub, confirm=True, replace=True)
+
+    assert result.action == "refuse"
+    assert "1000 (GC 2026-07-17 tempo)" in result.message
+    assert "2000 (Hyrox Tempo)" in result.message
+    assert pub.calls == []
+
+
+def test_two_workouts_sharing_a_name_refuse_and_name_both():
+    pub = FakePublisher()
+    for wid in (4242, 7777):
+        pub.workouts[wid] = {"workoutName": _spec()["name"], "description": None}
+
+    result = publish(_spec(), pub, confirm=True, replace=True)
+
+    assert result.action == "refuse"
+    assert "4242 (GC 2026-07-17 tempo)" in result.message
+    assert "7777 (GC 2026-07-17 tempo)" in result.message
+    assert pub.calls == []
+
+
+def test_a_candidate_id_the_account_forgot_falls_all_the_way_through_to_the_name():
+    """Stale id, no hash match (the spec moved on): the name is the last key left."""
+    pub = FakePublisher()
+    _pushed(pub)
+
+    result = publish(_spec(work_s=2400), pub, confirm=True, known_workout_id=999999)
+
+    assert result.action == "refuse"
+    assert result.workout_id == 1000
+    assert len(pub.workouts) == 1
 
 
 class FailingSchedulePublisher(FakePublisher):

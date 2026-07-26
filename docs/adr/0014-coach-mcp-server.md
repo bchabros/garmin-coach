@@ -57,3 +57,42 @@ pushed against that clause once the surrounding system matured:
   cached tokens make it cheap, but a session should call it at most once per read,
   not per tool call.
 - The name "read-MCP" is retired; the roadmap section now points at epic #18.
+
+## Annex: `get_workout_status` joins the transport tools (issue #41)
+
+The tool groups above list three tools that reach Garmin - `refresh_today` and the push
+pair. `get_workout_status` is now a fourth, and it crosses the boundary in the opposite
+direction from the rest: it is a *read* tool that must consult the account to answer
+honestly.
+
+The reason is that its previous answer came entirely from `reports/{date}/push.json`. A
+receipt records what a push did; presenting it as what the account holds now made the
+tool assert `applied: true` for a workout the athlete had deleted, and a coaching session
+repeated that claim back to them. No local artifact can be made truthful here, because
+the fact being reported lives on the account.
+
+Consequences specific to this tool:
+
+- **It degrades instead of failing.** Any transport failure - a login error, a 429, a
+  timeout - resolves to `reconciled.state: "unverified"`, never an exception. A status
+  read is not worth taking the server down for, and the previous behaviour (answering
+  confidently from a stale file) is exactly what must not survive an outage.
+- **It skips transport when there is nothing to check.** A date with no receipt, or a
+  receipt naming no workout, returns a null finding and never logs in, so the common
+  case pays nothing.
+- **No opt-out flag.** A `verify=False` parameter was considered and rejected: the
+  caller is an agent, and an agent in a hurry would set it and reproduce the incident.
+- **It writes to disk as well** (issue #43). A changed finding is appended to
+  `push.json` under `reconciled`, so a later read - including an offline one - is not
+  thrown back on the stale claim. This is the second boundary the tool crosses: it is a
+  read tool that both reaches the network and writes a local artifact. The receipt's own
+  fields are never mutated, because "we pushed it and it worked" describes an event that
+  did happen; rewriting `applied` to `false` would falsify the history to fix a read and
+  destroy the only trace of the push. Only a state change writes, and an `unverified`
+  read never writes at all - absence of information is not information.
+- **The golden rule is untouched.** No metric consults this path; the finding describes
+  the athlete's Garmin account, not their training, and the marts compute identically
+  whether or not the tool ever runs.
+
+The rate-limit note above extends to this tool: a session that asks about several dates
+pays one library read per date.

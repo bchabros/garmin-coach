@@ -20,7 +20,7 @@ per-set steps with rests between sets (issue #16).
 from __future__ import annotations
 
 from itertools import count
-from typing import Any
+from typing import Any, NamedTuple
 
 from garminconnect.workout import (
     ConditionType,
@@ -702,6 +702,104 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
         workoutSegments=[segment],
     )
     return workout.to_dict()
+
+
+# One workout's steps in authored shape: executable steps and repeat groups, nested as
+# the payload nests them. Comparable with ``==`` - that is the whole point of it.
+AuthoredShape = list["AuthoredStep | AuthoredRepeat"]
+
+
+class AuthoredStep(NamedTuple):
+    """One executable step reduced to the fields this module authors."""
+
+    step_type: str | None
+    end_condition: str | None
+    end_value: float | None
+    target_type: str | None
+    target_one: float | None
+    target_two: float | None
+    zone: int | None
+    category: str | None
+    exercise: str | None
+    weight_kg: float | None
+
+
+class AuthoredRepeat(NamedTuple):
+    """A repeat group reduced to its iteration count and the steps it holds."""
+
+    iterations: int | None
+    steps: AuthoredShape
+
+
+def authored_shape(payload: dict[str, Any]) -> AuthoredShape:
+    """A workout payload's steps reduced to the fields this module authors.
+
+    The mirror of :func:`to_garmin`, and it lives here for that reason: it encodes
+    which fields a payload carries because we put them there. Reading a workout back
+    off the account returns the same steps decorated with ids, units, and defaults no
+    upload ever sent (``stepId``, ``childStepId``, ``weightValue``, ``strokeType``,
+    ``endConditionCompare``), so raw payloads never compare equal. Projecting both
+    sides through this makes "are these the same steps?" answerable (issue #42).
+
+    Args:
+        payload: A Garmin workout payload, either built by ``to_garmin`` or read back
+            from the account.
+
+    Returns:
+        One entry per step, nested for repeat groups, comparable with ``==``.
+    """
+    segments = payload.get("workoutSegments") or []
+    steps = segments[0].get("workoutSteps") if segments else []
+    return _authored_steps(steps)
+
+
+def _authored_steps(steps: Any) -> AuthoredShape:
+    """The authored shape of a step list, recursing into repeat groups."""
+    return [_authored_step(step) for step in steps or []]
+
+
+def _authored_step(step: dict[str, Any]) -> AuthoredStep | AuthoredRepeat:
+    """The authored shape of one step: a repeat group, or one executable step."""
+    if step.get("type") == "RepeatGroupDTO":
+        return AuthoredRepeat(
+            iterations=step.get("numberOfIterations"),
+            steps=_authored_steps(step.get("workoutSteps")),
+        )
+    return AuthoredStep(
+        step_type=_nested_key(step.get("stepType"), "stepTypeKey"),
+        end_condition=_nested_key(step.get("endCondition"), "conditionTypeKey"),
+        end_value=_rounded(step.get("endConditionValue")),
+        target_type=_nested_key(step.get("targetType"), "workoutTargetTypeKey"),
+        target_one=_rounded(step.get("targetValueOne")),
+        target_two=_rounded(step.get("targetValueTwo")),
+        zone=step.get("zoneNumber"),
+        category=step.get("category"),
+        exercise=step.get("exerciseName"),
+        weight_kg=_authored_weight(step.get("weightValue")),
+    )
+
+
+def _authored_weight(value: Any) -> float | None:
+    """A step's authored weight, with the account's ``-1`` no-weight default read as none.
+
+    Garmin stamps ``weightValue: -1`` on every step it returns, including the run steps
+    no upload ever gave a weight to; taking it at face value would make every pushed
+    run look edited.
+    """
+    rounded = _rounded(value)
+    return None if rounded is None or rounded < 0 else rounded
+
+
+def _nested_key(block: Any, field: str) -> Any:
+    """One field out of a Garmin enum block, tolerating a missing block."""
+    return block.get(field) if isinstance(block, dict) else None
+
+
+def _rounded(value: Any) -> float | None:
+    """A number rounded past the noise Garmin's float round-tripping introduces."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return round(float(value), 3)
 
 
 def _exercise_payload(spec: dict[str, Any]) -> dict[str, Any]:

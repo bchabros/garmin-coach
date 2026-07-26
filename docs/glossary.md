@@ -340,6 +340,59 @@ code, docstrings, PRDs, and ADRs.
   `confirm_token` alongside the payload, and `push_confirm` refuses any other value
   without touching the account. The MCP counterpart of the CLI's `--confirm`, strict
   enough for an agent caller.
+- **account lookup order** - how a push finds the workout to act on: the receipt's
+  `workout_id`, then the `gc-hash:` tag, then the name (issue #40). Ordered by how
+  stable each key is - the id is the only one the athlete cannot change, and a rename
+  plus an edit defeats the other two at once. The account still decides: an id it no
+  longer knows falls through, so idempotency rests on the account, not the receipt. The
+  name stays a full fallback rather than being narrowed to untagged workouts, because
+  it is what detects a changed spec and yields `refuse`/`replace`. A lookup matching two
+  workouts refuses and names them - an earlier push already duplicated something, and
+  guessing would let `--replace` delete the wrong one.
+- **push receipt** - `reports/{date}/push.json`: what a push *did* (`action`, `applied`,
+  `workout_id`, `spec_hash`, `pushed_at`). A record of an event, never a statement about
+  what the Garmin account holds now - that is what reconciliation is for.
+- **reconciled block** - the finding appended to the receipt under `reconciled`, so a
+  later read (offline included) is not thrown back on the stale claim. The receipt's own
+  fields are never mutated: the file ends up saying both what was done and what became
+  of it. Written only on a state change, never by an `unverified` read, and dropped
+  wholesale when a new push rewrites the receipt - a new push is a new event. In a
+  `get_workout_status` response the receipt is returned without this key: the finding is
+  reported once, under `reconciled`, because two copies in one response invite reading
+  the stale one.
+- **last_known** - the previous reconciled block, served under that key when a read
+  cannot reach the account. Degrading to older information beats degrading to none, but
+  it is kept separate from the current finding so stale facts never read as fresh ones.
+- **reconciliation** - resolving a push receipt's `workout_id` against the Garmin account
+  on every `get_workout_status` read (issue #41). Keyed on the id alone: the question is
+  whether what was pushed is still there, not whether something like it is. Hash and name
+  lookups belong to the push path.
+- **reconciliation state** - what the account actually holds, one of: `live` (in the
+  library and on the date's calendar), `edited` (scheduled, but the steps were rewritten
+  in Connect), `unscheduled` (in the library, not on that date - unpinned or moved),
+  `missing` (gone from the library), `unverified` (the account could not be reached).
+  Precedence runs `unverified > missing > unscheduled > edited > live`: `unscheduled`
+  outranks `edited` because a workout that is not on the day is not on the watch whatever
+  its steps say. `live` claims nothing about the steps on its own - it is where an
+  unjudged comparison reports, because "we could not tell" is not evidence of a rewrite,
+  so read `steps_changed` beside it. Reported alongside the facts behind it: `scheduled`,
+  `steps_changed`, `renamed_to`, and `checked_at` - when reconciliation ran, which on
+  `unverified` is when the attempt was made rather than when an answer came back.
+- **steps_changed** - whether the account's steps differ from the ones the receipt says
+  were pushed. `None` means it could not be judged: the local spec no longer hashes to
+  the receipt's `spec_hash`, so it is no longer evidence of what the push sent. A `live`
+  state carrying `None` therefore means "in the library, on the day, steps unjudged".
+- **why `gc-hash:` cannot detect an edit** - the tag records what was *pushed*, and
+  Garmin leaves the `description` untouched when steps change, so it agrees with the
+  receipt forever. Detection is therefore two-stage: `updateDate` against `pushed_at`
+  gates a `get_workout` call (an untouched copy answers for free), and the fetched steps
+  are compared field by field on what this system authors - the account decorates every
+  step with `stepId`, `weightValue: -1`, `strokeType`, and `endConditionCompare` that no
+  upload ever sent. Renaming also bumps `updateDate`, which is exactly why the step
+  comparison exists: without it every rename would read as an edit.
+- **renamed_to** - the account's current workout name when it differs from the receipt's.
+  A field, never a state: renaming a pushed workout in Garmin Connect is the athlete's
+  prerogative and must not read as a fault.
 - **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
   (name + steps) is the account-side idempotency marker written into the Garmin
   workout description; it ignores the date on purpose, so rescheduling a workout is

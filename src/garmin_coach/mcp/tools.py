@@ -4,8 +4,13 @@ Pure functions over the finished DB and the report artifacts; the protocol
 layer in ``mcp.server`` only wires them up. Every response is wrapped in a
 freshness envelope so a chat session can never mistake partial same-day data
 for final numbers. No new computation happens here: each tool wraps a reader
-or a seam the CLI already uses (the golden rule holds - nothing in this
-module talks to Garmin).
+or a seam the CLI already uses (the golden rule holds - this module never
+constructs a Garmin transport; the tools that need one take it injected).
+
+``get_workout_status`` is the one *read* that needs an injected transport: a
+push receipt describes what a push did, and only the account can say what
+became of it (issue #41, annexed to ADR 0014). It takes a factory rather than a
+publisher, so a date that was never pushed costs no login at all.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import datetime as dt
 import json
 import pathlib
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from .. import cli, daily
@@ -194,19 +200,83 @@ def get_events(conn: sqlite3.Connection, today: str | None = None) -> dict[str, 
 
 
 def get_workout_status(
-    conn: sqlite3.Connection, date: str, reports_dir: str = "reports"
+    conn: sqlite3.Connection,
+    date: str,
+    *,
+    connect: Callable[[], publish.WorkoutPublisher],
+    reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Return the authored spec and push receipt for a date (None when absent)."""
-    day_dir = pathlib.Path(reports_dir) / date
-    workout = _read_json(day_dir / "workout.json")
+    """Return the authored spec, the push receipt, and the receipt reconciled with Garmin.
+
+    The receipt records what a push did; it is never presented as what the account
+    holds now (issue #41). ``reconciled`` is the fresh account-side finding and sits
+    beside the untouched receipt, because "we pushed it and it worked" stays true
+    even after the athlete deletes the workout.
+
+    Args:
+        conn: The finished DB, for the freshness envelope.
+        date: The day whose workout is being asked about.
+        connect: Builds the Garmin read surface, called only when a receipt names a
+            workout to check - so a date with no push never logs in.
+        reports_dir: Root of the per-day report artifacts.
+
+    Returns:
+        The wrapped ``date``/``workout``/``push``/``reconciled`` block; ``reconciled``
+        is None when there is no receipt to check.
+    """
+    day_dir = _day_dir(reports_dir, date)
     push = _read_json(day_dir / "push.json")
-    return _wrap(conn, {"date": date, "workout": workout, "push": push})
+    workout = _read_json(day_dir / "workout.json")
+    finding = publish.reconcile(connect, push, workout, date)
+    _persist_finding(day_dir, push, finding)
+    data = {
+        "date": date,
+        "workout": workout,
+        "push": _receipt_view(push),
+        "reconciled": finding.as_finding() if finding is not None else None,
+    }
+    return _wrap(conn, data)
+
+
+def _receipt_view(push: Any) -> Any:
+    """The receipt as a caller should read it: the push record, without the stored finding.
+
+    The receipt's own fields - what the push did - are returned exactly as they sit on
+    disk. The stored finding is the one key dropped: it is persisted so an offline read
+    can still serve it, but the response reports it once, under ``reconciled``, and two
+    copies in one response invite reading the stale one.
+    """
+    return {k: v for k, v in push.items() if k != "reconciled"} if isinstance(push, dict) else push
+
+
+def _persist_finding(
+    day_dir: pathlib.Path, push: Any, finding: publish.Reconciliation | None
+) -> None:
+    """Record a changed finding on the receipt, so a later read is not thrown back on it.
+
+    Only a state change writes: rewriting on every read would churn ``checked_at``
+    with no new information. An unverified read never writes - absence of information
+    is not information, and would erase a known-missing workout. The receipt's own
+    fields are never touched; the finding is appended beside them.
+    """
+    if not isinstance(push, dict) or finding is None or finding.state == publish.UNVERIFIED:
+        return
+    known = push.get("reconciled")
+    if isinstance(known, dict) and known.get("state") == finding.state:
+        return
+    receipt = {**push, "reconciled": finding.as_finding()}
+    (day_dir / "push.json").write_text(json.dumps(receipt, indent=2))
 
 
 def _read_json(path: pathlib.Path) -> Any:
     if not path.exists():
         return None
     return json.loads(path.read_text())
+
+
+def _day_dir(reports_dir: str, date: str) -> pathlib.Path:
+    """The per-day report directory holding a date's spec and receipt."""
+    return pathlib.Path(reports_dir) / date
 
 
 # --- action tools (local writes, transport, workout push) -------------------
@@ -317,7 +387,7 @@ def author_workout(
     if spec is None:
         return _wrap(conn, {"spec": None, "error": None, "note": "rest - nothing to author"})
 
-    out_dir = pathlib.Path(reports_dir) / date
+    out_dir = _day_dir(reports_dir, date)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "workout.json"
     path.write_text(json.dumps(spec, indent=2))
@@ -424,7 +494,11 @@ def push_preview(
         return _wrap(conn, {"error": error})
 
     result = publish.publish(
-        spec, publisher, confirm=False, activity_dates=_dates_with_activity(conn, date)
+        spec,
+        publisher,
+        confirm=False,
+        activity_dates=_dates_with_activity(conn, date),
+        known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
     )
     data = {
         "date": date,
@@ -473,9 +547,10 @@ def push_confirm(
         confirm=True,
         replace=replace,
         activity_dates=_dates_with_activity(conn, date),
+        known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
     )
     if result.applied or result.error is not None:
-        _write_receipt(result, pathlib.Path(reports_dir) / date)
+        _write_receipt(result, _day_dir(reports_dir, date))
     data = {
         "date": date,
         "action": result.action,
@@ -496,7 +571,7 @@ def _load_spec(date: str, reports_dir: str) -> tuple[dict[str, Any] | None, str 
     ``date``; a disagreement would push a different day than the one whose activity
     collision was checked, so it is refused rather than silently preferred.
     """
-    path = pathlib.Path(reports_dir) / date / "workout.json"
+    path = _day_dir(reports_dir, date) / "workout.json"
     if not path.exists():
         return None, f"no workout.json for {date}; run author_workout first"
     spec = json.loads(path.read_text())

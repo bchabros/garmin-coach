@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import time
 
 import pytest
 
@@ -112,6 +114,11 @@ def fake_client():
     return FakeGarminClient
 
 
+# What the account's library listing carries. The real endpoint omits the steps -
+# they only come back from get_workout - so the fake must omit them too.
+_LISTING_FIELDS = ("workoutName", "description", "updateDate")
+
+
 class FakePublisher:
     """An in-memory Garmin account: a workout library and a schedule, recording calls."""
 
@@ -121,9 +128,19 @@ class FakePublisher:
         self._next_workout = 1000
         self._next_schedule = 5000
         self.calls: list[str] = []
+        self.reads: list[str] = []
+        self.now = "2026-07-15T17:28:00"
 
     def list_workouts(self):
-        return [{"workoutId": wid, **w} for wid, w in self.workouts.items()]
+        self.reads.append("list_workouts")
+        return [
+            {"workoutId": wid, **{k: w.get(k) for k in _LISTING_FIELDS}}
+            for wid, w in self.workouts.items()
+        ]
+
+    def get_workout(self, workout_id):
+        self.reads.append("get_workout")
+        return {"workoutId": workout_id, **self.workouts[workout_id]}
 
     def upload(self, payload):
         self.calls.append("upload")
@@ -132,6 +149,8 @@ class FakePublisher:
         self.workouts[wid] = {
             "workoutName": payload["workoutName"],
             "description": payload.get("description"),
+            "updateDate": self.now,
+            "workoutSegments": payload.get("workoutSegments", []),
         }
         return wid
 
@@ -151,6 +170,7 @@ class FakePublisher:
         self.workouts.pop(workout_id, None)
 
     def list_scheduled(self, date):
+        self.reads.append("list_scheduled")
         return [
             {"scheduleId": sid, "workoutId": wid}
             for sid, (wid, d) in self.scheduled.items()
@@ -161,3 +181,80 @@ class FakePublisher:
 @pytest.fixture
 def fake_publisher():
     return FakePublisher
+
+
+def run_spec(date="2026-07-17", name=None, work_s=1200):
+    """A run spec of the shape ``author`` produces, for pushing and round-tripping.
+
+    Shared by the publish, CLI, and MCP tests so the three cannot drift into three
+    different notions of what a pushed workout looks like.
+    """
+    return {
+        "sport": "run",
+        "origin": "recommender",
+        "date": date,
+        "session_type": "tempo",
+        "name": name or f"GC {date} tempo",
+        "steps": [
+            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
+            {
+                "kind": "work",
+                "end": {"type": "time", "seconds": work_s},
+                "target": {"type": "pace_band", "fast_s_per_km": 265, "slow_s_per_km": 275},
+            },
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def as_account_read_back(payload):
+    """The same payload as Garmin returns it: decorated with fields no upload ever sent.
+
+    Reading a workout back off the account is the only way to see its steps, and the
+    account stamps ids, units, and defaults on every one of them - which is what the
+    authored-shape projection exists to see through (issue #42).
+    """
+    read_back = json.loads(json.dumps(payload))
+    for step in read_back["workoutSegments"][0]["workoutSteps"]:
+        step.setdefault("weightValue", -1)
+        step.update(
+            {
+                "stepId": 13996412277,
+                "childStepId": None,
+                "strokeType": {"strokeTypeId": 0, "strokeTypeKey": None, "displayOrder": 0},
+                "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None},
+                "endConditionCompare": "",
+                "preferredEndConditionUnit": None,
+                "description": None,
+            }
+        )
+    return read_back
+
+
+@pytest.fixture
+def local_timezone():
+    """Pin the process's local clock for a test, restoring it afterwards.
+
+    ``time.tzset()`` reads ``TZ`` from the real environment, so the restore has to run
+    after the variable is put back - which is why this is a fixture rather than a
+    ``monkeypatch.setenv`` at the call site. Needed because the receipt's timestamps
+    are written on the local clock while Garmin answers in UTC: a skew bug is invisible
+    wherever the two happen to agree.
+    """
+    original = os.environ.get("TZ")
+
+    def pin(zone):
+        os.environ["TZ"] = zone
+        time.tzset()
+
+    yield pin
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    time.tzset()

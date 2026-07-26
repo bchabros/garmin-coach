@@ -2,13 +2,66 @@
 
 from __future__ import annotations
 
+import argparse
+import json
+import types
+
 import pytest
 
 from garmin_coach import cli
 from garmin_coach.core import db
 from garmin_coach.cli import build_parser
+from garmin_coach.workouts import publish
+from tests.conftest import FakePublisher, run_spec
 
 DATA_START = "2026-06-08"
+
+
+# --- push: the CLI resolves the account the same way the MCP path does (#40) --
+
+PUSH_DATE = "2026-07-17"
+
+
+def _run_cli_push(tmp_path, monkeypatch, pub, spec, *, replace=False):
+    """Drive _cmd_push with a fake account, exercising the real wiring."""
+    day_dir = tmp_path / PUSH_DATE
+    day_dir.mkdir(exist_ok=True)
+    (day_dir / "workout.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+    )
+    monkeypatch.setattr(cli.publish, "connect_publisher", lambda settings: pub)
+    args = argparse.Namespace(
+        date=PUSH_DATE, reports_dir=str(tmp_path), confirm=True, replace=replace
+    )
+    return cli._cmd_push(args), day_dir
+
+
+def test_cli_push_does_not_duplicate_a_workout_renamed_in_connect(tmp_path, monkeypatch):
+    """The CLI must resolve a renamed workout exactly as push_confirm does (#40)."""
+    pub = FakePublisher()
+    spec = run_spec(date=PUSH_DATE)
+    _run_cli_push(tmp_path, monkeypatch, pub, spec)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+    pub.calls.clear()
+
+    _run_cli_push(tmp_path, monkeypatch, pub, spec)
+
+    assert len(pub.workouts) == 1
+    assert pub.calls == []
+
+
+def test_cli_push_passes_the_receipts_workout_id_as_the_lookup_candidate(tmp_path, monkeypatch):
+    """Rename plus a changed spec: only the receipt's id still finds the workout."""
+    pub = FakePublisher()
+    _, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
+    assert publish.receipt_workout_id(day_dir) == 1000
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    code, _ = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE, work_s=2400))
+
+    assert code == 1  # refused rather than creating a second copy
+    assert len(pub.workouts) == 1
 
 
 def test_parser_accepts_sync_command_with_optional_to_date():

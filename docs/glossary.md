@@ -291,9 +291,8 @@ code, docstrings, PRDs, and ADRs.
   defaults: for runs, `reps` plus, per role (`warmup | work | recovery |
   cooldown`), an end condition and an intensity target; for the
   exercise sports, the `exercises` list (see *exercise entry*), where it is
-  required rather than optional. Which roles a run session type offers is one
-  table, so its ends and its targets can never accept different roles. The
-  recommender never emits one (`request_from_recommendation` sets
+  required rather than optional. A role a session type does not have accepts
+  neither. The recommender never emits one (`request_from_recommendation` sets
   `structure: None`); overrides are the athlete finalizing what the recommender
   suggested (Phase 11a).
 - **intensity target (workout request)** - what a role's `<role>_target` sets:

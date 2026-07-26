@@ -960,6 +960,15 @@ def test_default_quality_spec_is_unchanged():
     }
 
 
+def test_default_athlete_origin_spec_matches_the_recommender_one():
+    # the pins above all run recommender-origin; an athlete request that sets no
+    # target must author the same steps, so origin alone moves nothing.
+    athlete = _request(session_type="quality", pace=270, origin="athlete")
+    athlete["structure"] = {}
+    recommender = _request(session_type="quality", pace=270)
+    assert author(athlete, _context())["steps"] == author(recommender, _context())["steps"]
+
+
 def test_default_work_degradation_chain_and_warning_are_unchanged():
     # no measured pace and no zones: the work role still degrades to no target,
     # still says so once, and the other roles stay silent.
@@ -1171,6 +1180,18 @@ def test_the_work_degradation_warning_keeps_its_own_wording():
     req = _targets(pace=None, warmup_target="z2")
     spec = author(req, _context(zones=None))
     assert "no target: no measured pace or heart-rate band; time only" in spec["warnings"]
+
+
+def test_warnings_read_in_step_order_on_both_session_types():
+    # a dropped warm-up zone and a degrading work step in one spec: the warm-up
+    # runs first, so it must be reported first, on quality as well as tempo.
+    zones = _zones()
+    zones["z2_hi_bpm"] = None
+    for session_type in ("tempo", "quality"):
+        req = _targets(session_type=session_type, pace=None, warmup_target="z2")
+        warnings = author(req, _context(zones=zones))["warnings"]
+        assert warnings[0].startswith("warmup_target:")
+        assert "heart rate" in warnings[1]
 
 
 def test_the_2026_07_16_case_authors_z2_warmup_and_cooldown_on_the_lap_button():

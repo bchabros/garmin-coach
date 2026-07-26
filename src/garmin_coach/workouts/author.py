@@ -472,7 +472,7 @@ class _Targets:
 
     def _resolve(self, role: str) -> dict[str, Any]:
         """An asked-for target wins; otherwise work runs its chain and the rest carry none."""
-        explicit = _explicit_target(self._structure, role)
+        explicit = _explicit_target(self._structure, role, self._zones, self._warnings)
         if explicit is not None:
             return explicit
         if role != "work":
@@ -614,15 +614,40 @@ def _validate_target(target: Any, key: str) -> None:
     """
     if target == _NO_TARGET_WORD:
         return
+    if isinstance(target, str):
+        _validate_zone_name(target, key)
+        return
     if not isinstance(target, dict) or len(target) != 1:
         raise ValueError(
-            f'{key} must be "{_NO_TARGET_WORD}" or one of '
+            f'{key} must be "{_NO_TARGET_WORD}", a zone name, or one of '
             f"{{'hr_band': [low_bpm, high_bpm]}} / {{'pace_band': [fast_s_per_km, slow_s_per_km]}}"
         )
     kind, band = next(iter(target.items()))
     if kind not in _BAND_SHAPES:
         raise ValueError(f"{key} must be a {' or '.join(sorted(_BAND_SHAPES))}, not {kind}")
     _validate_band(band, f"{key} {kind}", kind)
+
+
+def _validate_zone_name(zone: str, key: str) -> None:
+    """Check a named zone is one the heart-rate ladder can actually bound.
+
+    Raises:
+        ValueError: If the zone is one of the open-ended outer zones, or is not a
+            zone name at all.
+    """
+    if zone in _ZONE_BOUNDS:
+        return
+    if zone in _EDGE_ZONE_GAPS:
+        raise ValueError(
+            f"{key} cannot name {zone}: the zone ladder stores no {_EDGE_ZONE_GAPS[zone]} for it; "
+            'give an explicit {"hr_band": [low_bpm, high_bpm]} instead'
+        )
+    raise ValueError(f"{key} unknown zone {zone}; nameable zones are {_nameable_zones()}")
+
+
+def _nameable_zones() -> str:
+    """The zone names a target may use, for an error message."""
+    return ", ".join(sorted(_ZONE_BOUNDS))
 
 
 def _validate_pace_band(structure: dict[str, Any]) -> None:
@@ -707,6 +732,19 @@ _NO_TARGET = {"type": "none"}
 # What an athlete writes in a ``<role>_target`` to ask for no target at all.
 _NO_TARGET_WORD = "none"
 
+# The heart-rate zones a target may name, and the pair of adjacent upper bounds each
+# one spans. A zone name always means heart rate: the ladder in ``athlete_zones`` is a
+# heart-rate ladder, while pace holds two anchors and no ladder at all (ADR 0020).
+_ZONE_BOUNDS = {
+    "z2": ("z1_hi_bpm", "z2_hi_bpm"),
+    "z3": ("z2_hi_bpm", "z3_hi_bpm"),
+    "z4": ("z3_hi_bpm", "z4_hi_bpm"),
+}
+
+# The outer zones are unnameable and why: the ladder stores four upper bounds, so Z1 has
+# no floor and Z5 no ceiling, and no athlete-level maximum heart rate is stored anywhere.
+_EDGE_ZONE_GAPS = {"z1": "floor", "z5": "ceiling"}
+
 # Per band kind: how to spell its bounds in an error, and how to say they are inverted.
 # Both kinds are narrower-bound-first, so one ordering check serves both.
 _BAND_SHAPES = {
@@ -718,25 +756,54 @@ _BAND_SHAPES = {
 }
 
 
-def _explicit_target(structure: dict[str, Any], role: str) -> dict[str, Any] | None:
+def _explicit_target(
+    structure: dict[str, Any],
+    role: str,
+    zones: dict[str, Any] | None,
+    warnings: list[str],
+) -> dict[str, Any] | None:
     """The athlete's target for one role as a spec target, or None when unset.
+
+    Resolving what the athlete asked for is silent - they already know what they
+    asked for. Only a named zone the stored ladder cannot bound has anything to
+    report, and it degrades to no target rather than failing the author.
 
     Args:
         structure: The request's structure override (already validated).
         role: The step role being resolved.
+        zones: The ``athlete_zones`` section, or None when there is no row.
+        warnings: The spec's warning list, appended to when a zone cannot resolve.
 
     Returns:
         A spec target, or None to let the role fall through to its default.
     """
-    target = structure.get(f"{role}_target")
+    key = f"{role}_target"
+    target = structure.get(key)
     if target is None:
         return None
     if target == _NO_TARGET_WORD:
         return _NO_TARGET
+    if isinstance(target, str):
+        return _zone_target(target, key, zones, warnings)
     kind, band = next(iter(target.items()))
     if kind == "hr_band":
         return {"type": "hr_band", "low_bpm": band[0], "high_bpm": band[1]}
     return {"type": "pace_band", "fast_s_per_km": band[0], "slow_s_per_km": band[1]}
+
+
+def _zone_target(
+    zone: str, key: str, zones: dict[str, Any] | None, warnings: list[str]
+) -> dict[str, Any]:
+    """A named zone as a heart-rate band, degrading to no target when unbounded."""
+    low_key, high_key = _ZONE_BOUNDS[zone]
+    low = (zones or {}).get(low_key)
+    high = (zones or {}).get(high_key)
+    if low is None or high is None:
+        warnings.append(
+            f"{key}: no {zone.upper()} heart-rate band in your zones; authored without a target"
+        )
+        return _NO_TARGET
+    return {"type": "hr_band", "low_bpm": low, "high_bpm": high}
 
 
 def _step(kind: str, end: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:

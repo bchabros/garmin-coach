@@ -1093,6 +1093,106 @@ def test_to_garmin_encodes_an_explicit_warmup_pace_band():
     assert warmup["targetType"]["workoutTargetTypeKey"] == "pace.zone"
 
 
+# --- issue #47: zone names resolved from athlete zones -----------------------
+
+
+def test_zone_two_resolves_to_the_athletes_z2_band():
+    spec = author(_targets(warmup_target="z2"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+
+
+def test_zone_three_resolves_to_the_pair_above_it():
+    spec = author(_targets(warmup_target="z3"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 155, "high_bpm": 168}
+
+
+def test_zone_four_resolves_to_the_top_nameable_pair():
+    spec = author(_targets(warmup_target="z4"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178}
+
+
+def test_a_zone_name_works_on_every_role_the_session_type_has():
+    req = _targets(warmup_target="z2", work_target="z4", recovery_target="z2", cooldown_target="z2")
+    spec = author(req, _context())
+    warmup, repeat, cooldown = spec["steps"]
+    work, recovery = repeat["steps"]
+    assert warmup["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert work["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178}
+    assert recovery["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert cooldown["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+
+
+def test_a_resolved_zone_name_adds_no_warning():
+    assert author(_targets(warmup_target="z2"), _context())["warnings"] == []
+
+
+def test_zone_one_is_refused_and_points_at_an_explicit_band():
+    with pytest.raises(ValueError, match="cannot name z1") as exc:
+        author(_targets(warmup_target="z1"), _context())
+    assert "hr_band" in str(exc.value)
+
+
+def test_zone_five_is_refused_and_points_at_an_explicit_band():
+    with pytest.raises(ValueError, match="cannot name z5") as exc:
+        author(_targets(warmup_target="z5"), _context())
+    assert "hr_band" in str(exc.value)
+
+
+def test_an_unknown_zone_name_is_refused():
+    with pytest.raises(ValueError, match="unknown zone"):
+        author(_targets(warmup_target="z9"), _context())
+
+
+def test_a_zone_name_without_any_zones_row_warns_and_drops_the_target():
+    spec = author(_targets(pace=None, warmup_target="z2"), _context(zones=None))
+    assert spec["steps"][0]["target"] == {"type": "none"}
+    warning = next(w for w in spec["warnings"] if "warmup_target" in w)
+    assert "Z2" in warning
+
+
+def test_a_zone_name_whose_bound_is_null_warns_the_same_way():
+    # the row exists and Z2's lower bound is present; only the upper bound is missing
+    zones = _zones()
+    zones["z2_hi_bpm"] = None
+    spec = author(_targets(warmup_target="z2"), _context(zones=zones))
+    assert spec["steps"][0]["target"] == {"type": "none"}
+    assert any("warmup_target" in w for w in spec["warnings"])
+
+
+def test_an_unavailable_zone_target_never_raises():
+    spec = author(_targets(warmup_target="z4"), _context(zones=None))
+    assert spec is not None
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+
+
+def test_the_work_degradation_warning_keeps_its_own_wording():
+    # a zone name on the warm-up and a degrading work step in one spec: two
+    # different events, two different sentences.
+    req = _targets(pace=None, warmup_target="z2")
+    spec = author(req, _context(zones=None))
+    assert "no target: no measured pace or heart-rate band; time only" in spec["warnings"]
+
+
+def test_the_2026_07_16_case_authors_z2_warmup_and_cooldown_on_the_lap_button():
+    req = _targets(
+        warmup_target="z2",
+        warmup_end="lap",
+        cooldown_target="z2",
+        cooldown_end="lap",
+    )
+    spec = author(req, _context())
+    warmup, _repeat, cooldown = spec["steps"]
+    z2 = {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert warmup["target"] == z2
+    assert cooldown["target"] == z2
+    assert warmup["end"] == {"type": "lap"}
+    assert cooldown["end"] == {"type": "lap"}
+    steps = to_garmin(spec)["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert steps[0]["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert steps[-1]["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+
+
 # The authored-shape projection deliberately has no seam of its own (issue #42):
 # asserting it directly would assert the implementation, so it is exercised through
 # get_workout_status against a fake account - see tests/mcp/test_tools.py.

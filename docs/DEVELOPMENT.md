@@ -92,8 +92,9 @@ ones sparingly:
   a normalizer emits must be **scalars** (SQLite can't bind dict/list).
 - Fixtures are anonymized real payloads. Strip PII: `userProfilePK`/`ownerId`,
   `ownerFullName`, lat/lon, `deviceId`, UUIDs, image URLs. Trim per-minute time series.
-- Additional working rules in `.claude/rules/` (no-emoji, code-style) apply to all
-  changes.
+- Additional working rules in `.claude/rules/` (no-emoji, code-style, plain-language)
+  apply to all changes. The whole directory is auto-loaded in Claude Code, so a new rule
+  file needs no `@` import in `CLAUDE.md`; Codex reads the files directly.
 
 ## Gotchas (developer, learned the hard way)
 

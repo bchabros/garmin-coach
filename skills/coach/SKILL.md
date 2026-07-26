@@ -305,6 +305,37 @@ Concrete, numbers first, no filler. Polish prose (matches the athlete). This is 
 reading of recorded data, not medical or coaching prescription - never phrase a signal
 as a diagnosis or an order.
 
+### Plain language
+
+The athlete reads Polish, not the schema. Every instruction above that says "state
+`plan_adherence`" or "state `rise_weeks`, `acwr_end`, and `monotony`" means **state the
+value, named in Polish** - it is never a licence to paste the field name in as the subject
+of a sentence.
+
+- **A field name is a locator, not a subject.** Describe what the number means, then give
+  the identifier in backticks in parentheses so the athlete can find it in `digest.json`.
+  Not "acwr 1.32 przy n_chronic 22", but "Ostatni tydzień ważysz 1,32 razy tyle, ile
+  miesięczna średnia (`acwr`) - ale liczone tylko z 22 dni z 28, więc liczba jest
+  zawyżona". Once per section on first mention, then the Polish name alone; a term
+  returning in a later section takes the parenthetical again, because nobody reads the
+  report top to bottom.
+- **A signal code never opens a paragraph.** The Polish description is the heading's
+  subject; the code and the severity trail it - "**Za mało spokojnej objętości**
+  (`AEROBIC_LOW_SHORTAGE`, ostrzeżenie)." rather than "**AEROBIC_LOW_SHORTAGE (warn).**".
+  Translate `warn`/`info` too. Cross-reference signals in Polish ("patrz sygnał o wpływie
+  snu wyżej"), and never dump a raw field pair like "(`was_deload: false`)" - write the
+  sentence instead. The codes stay in the report, just not in first position: they are the
+  only stable link back to `digest.json`, `docs/glossary.md`, and `signals.py`.
+- **Never reword anything the athlete must type, open, or click.** Commands, flags, paths,
+  and unmapped exercise names (`ROW`) appear verbatim, with no parenthetical - a reworded
+  command cannot be pasted and a reworded path is not clickable.
+- **Give a number its direction when its scale is invented.** Ask whether the athlete can
+  judge the value themselves. `HR <= 154`, `5:32/km`, "12 tygodni do Hyrox" stand bare.
+  `strain`, `monotony`, `load_day`, `acwr`, `hrv_sd`, and Training Effect do not - each
+  arrives with a threshold, a comparison, or one word of assessment ("niska", "w normie",
+  "wysoki"). This is narrower than "always explain" on purpose: glossing a self-evident
+  number is the filler this section forbids.
+
 ## Rules
 
 - Thresholds and signal logic live in Python (`signals.py`, `coach_thresholds`). Do not

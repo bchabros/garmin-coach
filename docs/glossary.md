@@ -356,7 +356,10 @@ code, docstrings, PRDs, and ADRs.
   later read (offline included) is not thrown back on the stale claim. The receipt's own
   fields are never mutated: the file ends up saying both what was done and what became
   of it. Written only on a state change, never by an `unverified` read, and dropped
-  wholesale when a new push rewrites the receipt - a new push is a new event.
+  wholesale when a new push rewrites the receipt - a new push is a new event. In a
+  `get_workout_status` response the receipt is returned without this key: the finding is
+  reported once, under `reconciled`, because two copies in one response invite reading
+  the stale one.
 - **last_known** - the previous reconciled block, served under that key when a read
   cannot reach the account. Degrading to older information beats degrading to none, but
   it is kept separate from the current finding so stale facts never read as fresh ones.
@@ -365,17 +368,20 @@ code, docstrings, PRDs, and ADRs.
   whether what was pushed is still there, not whether something like it is. Hash and name
   lookups belong to the push path.
 - **reconciliation state** - what the account actually holds, one of: `live` (in the
-  library, on the date's calendar, steps as pushed), `edited` (scheduled, but the steps
-  were rewritten in Connect), `unscheduled` (in the library, not on that date - unpinned
-  or moved), `missing` (gone from the library), `unverified` (the account could not be
-  reached). Precedence runs `unverified > missing > unscheduled > edited > live`:
-  `unscheduled` outranks `edited` because a workout that is not on the day is not on the
-  watch whatever its steps say. Reported alongside the facts behind it: `scheduled`,
+  library and on the date's calendar), `edited` (scheduled, but the steps were rewritten
+  in Connect), `unscheduled` (in the library, not on that date - unpinned or moved),
+  `missing` (gone from the library), `unverified` (the account could not be reached).
+  Precedence runs `unverified > missing > unscheduled > edited > live`: `unscheduled`
+  outranks `edited` because a workout that is not on the day is not on the watch whatever
+  its steps say. `live` claims nothing about the steps on its own - it is where an
+  unjudged comparison reports, because "we could not tell" is not evidence of a rewrite,
+  so read `steps_changed` beside it. Reported alongside the facts behind it: `scheduled`,
   `steps_changed`, `renamed_to`, and `checked_at` - when reconciliation ran, which on
   `unverified` is when the attempt was made rather than when an answer came back.
 - **steps_changed** - whether the account's steps differ from the ones the receipt says
   were pushed. `None` means it could not be judged: the local spec no longer hashes to
-  the receipt's `spec_hash`, so it is no longer evidence of what the push sent.
+  the receipt's `spec_hash`, so it is no longer evidence of what the push sent. A `live`
+  state carrying `None` therefore means "in the library, on the day, steps unjudged".
 - **why `gc-hash:` cannot detect an edit** - the tag records what was *pushed*, and
   Garmin leaves the `description` untouched when steps change, so it agrees with the
   receipt forever. Detection is therefore two-stage: `updateDate` against `pushed_at`

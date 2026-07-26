@@ -9,15 +9,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import os
-import time
 
 from garmin_coach import cli
 from garmin_coach.core import db
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
 from garmin_coach.workouts import author, publish
-from tests.conftest import FakePublisher
+from tests.conftest import FakePublisher, as_account_read_back, run_spec
 
 DATA_START = "2026-06-08"
 TODAY = dt.date.today().isoformat()
@@ -203,7 +201,7 @@ class UnreachablePublisher(FakePublisher):
 
 
 PUSHED_AT = "2026-07-15T17:28:00"
-PUSHED_NAME = "GC 2026-07-17 quality"
+PUSHED_NAME = run_spec(date=PUSH_DATE)["name"]
 
 
 def _as_account_clock(local_iso, *, minutes_after=0):
@@ -218,34 +216,9 @@ def _as_account_clock(local_iso, *, minutes_after=0):
     return instant.replace(tzinfo=None).isoformat() + ".0"
 
 
-def _spec(*, name=PUSHED_NAME, date=PUSH_DATE, work_s=1200):
-    """A run spec of the shape ``author`` produces, for round-tripping through to_garmin."""
-    return {
-        "sport": "run",
-        "origin": "recommender",
-        "date": date,
-        "session_type": "tempo",
-        "name": name,
-        "steps": [
-            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
-            {
-                "kind": "work",
-                "end": {"type": "time", "seconds": work_s},
-                "target": {"type": "pace_band", "fast_s_per_km": 265, "slow_s_per_km": 275},
-            },
-            {
-                "kind": "cooldown",
-                "end": {"type": "time", "seconds": 600},
-                "target": {"type": "none"},
-            },
-        ],
-        "warnings": [],
-    }
-
-
 def _seed_pushed(tmp_path, *, spec=None, workout_id=1000, date=PUSH_DATE, spec_hash=None):
     """Write a workout spec and an applied push receipt for a date."""
-    spec = spec or _spec(date=date)
+    spec = spec or run_spec(date=date)
     day_dir = tmp_path / date
     day_dir.mkdir(exist_ok=True)
     (day_dir / "workout.json").write_text(json.dumps(spec))
@@ -275,7 +248,7 @@ def _account_with(
     update_date=None,
 ):
     """Put a workout in the fake library, holding the steps the given spec authors."""
-    payload = author.to_garmin(spec or _spec())
+    payload = author.to_garmin(spec or run_spec())
     update_date = update_date or _as_account_clock(PUSHED_AT)
     pub.workouts[workout_id] = {
         "workoutName": name,
@@ -409,7 +382,7 @@ def test_status_reports_edited_when_the_account_steps_differ_from_the_pushed_spe
     pub = _account_with(
         FakePublisher(),
         scheduled_on=PUSH_DATE,
-        spec=_spec(work_s=2400),
+        spec=run_spec(work_s=2400),
         update_date=TOUCHED_AT,
     )
 
@@ -448,7 +421,7 @@ def test_status_skips_the_detail_call_when_the_account_copy_was_never_touched(co
 
 def test_status_reports_unscheduled_over_edited_but_keeps_the_edit_visible(conn, tmp_path):
     _seed_pushed(tmp_path)
-    pub = _account_with(FakePublisher(), spec=_spec(work_s=2400), update_date=TOUCHED_AT)
+    pub = _account_with(FakePublisher(), spec=run_spec(work_s=2400), update_date=TOUCHED_AT)
 
     out = _status(conn, tmp_path, pub)
 
@@ -460,18 +433,8 @@ def test_status_ignores_account_added_decoration_on_the_steps(conn, tmp_path):
     """The account decorates every step with fields no upload ever sent."""
     _seed_pushed(tmp_path)
     pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE, update_date=TOUCHED_AT)
-    for step in pub.workouts[1000]["workoutSegments"][0]["workoutSteps"]:
-        step.update(
-            {
-                "stepId": 13996412277,
-                "childStepId": None,
-                "weightValue": -1,
-                "strokeType": {"strokeTypeId": 0, "strokeTypeKey": None},
-                "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None},
-                "endConditionCompare": "",
-                "preferredEndConditionUnit": None,
-            }
-        )
+    entry = pub.workouts[1000]
+    entry["workoutSegments"] = as_account_read_back(entry)["workoutSegments"]
 
     out = _status(conn, tmp_path, pub)
 
@@ -557,43 +520,97 @@ def test_status_accepts_an_untouched_repeat_workout(conn, tmp_path):
     assert out["data"]["reconciled"]["steps_changed"] is False
 
 
-def test_an_edit_soon_after_the_push_is_not_hidden_by_the_clock_offset(conn, tmp_path):
+def test_an_edit_soon_after_the_push_is_not_hidden_by_the_clock_offset(
+    conn, tmp_path, local_timezone
+):
     """The receipt's clock is local, Garmin's is UTC; comparing them raw hides an edit.
 
-    Pinned with a fixed zone because the bug is invisible where the two agree: with
-    the offset unhandled, an edit inside the first UTC+2 hours reads as untouched.
+    Pinned to a fixed zone because the bug is invisible where the two agree: with the
+    offset unhandled, an edit inside the first UTC+2 hours reads as untouched.
     """
-    original = os.environ.get("TZ")
-    os.environ["TZ"] = "Europe/Warsaw"
-    time.tzset()
-    try:
-        _seed_pushed(tmp_path)
-        pub = _account_with(
-            FakePublisher(),
-            scheduled_on=PUSH_DATE,
-            spec=_spec(work_s=2400),
-            update_date=_as_account_clock(PUSHED_AT, minutes_after=20),
-        )
+    local_timezone("Europe/Warsaw")
+    _seed_pushed(tmp_path)
+    pub = _account_with(
+        FakePublisher(),
+        scheduled_on=PUSH_DATE,
+        spec=run_spec(work_s=2400),
+        update_date=_as_account_clock(PUSHED_AT, minutes_after=20),
+    )
 
-        out = _status(conn, tmp_path, pub)
+    out = _status(conn, tmp_path, pub)
 
-        assert out["data"]["reconciled"]["state"] == "edited"
-    finally:
-        if original is None:
-            os.environ.pop("TZ", None)
-        else:
-            os.environ["TZ"] = original
-        time.tzset()
+    assert out["data"]["reconciled"]["state"] == "edited"
+
+
+def _strength_spec(weight_kg=100, exercise="back_squat"):
+    """A strength spec: the projection's exercise fields are ones a run never carries."""
+    return author.author(
+        {
+            "sport": "strength",
+            "origin": "athlete",
+            "date": PUSH_DATE,
+            "session_type": "strength",
+            "structure": {
+                "exercises": [{"exercise": exercise, "sets": 2, "reps": 5, "weight_kg": weight_kg}]
+            },
+        },
+        {"zones": None, "today": "2026-07-15"},
+    )
+
+
+def test_status_accepts_a_strength_workout_the_account_only_decorated(conn, tmp_path):
+    """weightValue: -1 and the exercise blocks come back on every read; none is an edit."""
+    _seed_pushed(tmp_path, spec=_strength_spec())
+    pub = _account_with(
+        FakePublisher(), scheduled_on=PUSH_DATE, spec=_strength_spec(), update_date=TOUCHED_AT
+    )
+    entry = pub.workouts[1000]
+    entry["workoutSegments"] = as_account_read_back(entry)["workoutSegments"]
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["steps_changed"] is False
+
+
+def test_status_sees_a_reweighted_strength_set(conn, tmp_path):
+    _seed_pushed(tmp_path, spec=_strength_spec(weight_kg=100))
+    pub = _account_with(
+        FakePublisher(),
+        scheduled_on=PUSH_DATE,
+        spec=_strength_spec(weight_kg=120),
+        update_date=TOUCHED_AT,
+    )
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "edited"
+    assert out["data"]["reconciled"]["steps_changed"] is True
+
+
+def test_status_sees_a_swapped_exercise(conn, tmp_path):
+    _seed_pushed(tmp_path, spec=_strength_spec(exercise="back_squat"))
+    pub = _account_with(
+        FakePublisher(),
+        scheduled_on=PUSH_DATE,
+        spec=_strength_spec(exercise="deadlift"),
+        update_date=TOUCHED_AT,
+    )
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["steps_changed"] is True
+
+
+class UnreadableDetailPublisher(FakePublisher):
+    """A publisher whose library reads work but whose detail call times out."""
+
+    def get_workout(self, workout_id):
+        raise RuntimeError("garmin: timed out")
 
 
 def test_status_reports_unverified_when_the_detail_call_fails(conn, tmp_path):
     _seed_pushed(tmp_path)
-    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE, update_date=TOUCHED_AT)
-
-    def explode(workout_id):
-        raise RuntimeError("garmin: timed out")
-
-    pub.get_workout = explode
+    pub = _account_with(UnreadableDetailPublisher(), scheduled_on=PUSH_DATE, update_date=TOUCHED_AT)
 
     out = _status(conn, tmp_path, pub)
 
@@ -658,6 +675,18 @@ def test_status_serves_the_last_known_finding_when_the_account_is_unreachable(co
     assert out["data"]["reconciled"]["last_known"]["state"] == "missing"
 
 
+def test_status_returns_the_receipt_without_doubling_the_stored_finding(conn, tmp_path):
+    """The receipt is returned as it records the push; the finding is reported once."""
+    day_dir = _seed_pushed(tmp_path)
+    _status(conn, tmp_path, FakePublisher())
+    stored = _receipt(day_dir)
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["push"] == {k: v for k, v in stored.items() if k != "reconciled"}
+    assert out["data"]["reconciled"]["state"] == "missing"
+
+
 def test_status_writes_nothing_when_an_unverified_read_has_no_prior_finding(conn, tmp_path):
     day_dir = _seed_pushed(tmp_path)
 
@@ -709,7 +738,7 @@ def test_status_returns_the_receipt_and_spec_unchanged_beside_the_finding(conn, 
 
     out = _status(conn, tmp_path, pub)
 
-    assert out["data"]["workout"]["name"] == "GC 2026-07-17 quality"
+    assert out["data"]["workout"]["name"] == PUSHED_NAME
     assert out["data"]["push"]["action"] == "create"
     assert out["data"]["push"]["pushed_at"] == "2026-07-15T17:28:00"
     assert "partial_fields" in out["freshness"]
@@ -861,6 +890,53 @@ def test_push_confirm_with_matching_token_uploads_and_schedules(
     assert out["data"]["applied"] is True
     assert "upload" in pub.calls and "schedule" in pub.calls
     assert (tmp_path / FUTURE / "push.json").exists()
+
+
+def _seed_spec(tmp_path, spec):
+    """Write a spec straight to the day's report dir, as ``author_workout`` would."""
+    day_dir = tmp_path / spec["date"]
+    day_dir.mkdir(exist_ok=True)
+    (day_dir / "workout.json").write_text(json.dumps(spec))
+    return spec
+
+
+def _confirm(conn, tmp_path, pub, spec, **kw):
+    return tools.push_confirm(
+        conn,
+        date=spec["date"],
+        confirm_token=publish.confirm_token(spec),
+        publisher=pub,
+        reports_dir=str(tmp_path),
+        **kw,
+    )
+
+
+def test_push_confirm_does_not_duplicate_a_workout_renamed_in_connect(conn, tmp_path):
+    """The MCP push must resolve a renamed workout exactly as `garmin-coach push` does (#40)."""
+    spec = _seed_spec(tmp_path, run_spec(date=FUTURE))
+    pub = FakePublisher()
+    _confirm(conn, tmp_path, pub, spec)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+    pub.calls.clear()
+
+    out = _confirm(conn, tmp_path, pub, spec)
+
+    assert out["data"]["action"] == "noop"
+    assert len(pub.workouts) == 1
+    assert pub.calls == []
+
+
+def test_push_confirm_resolves_a_renamed_workout_by_the_receipts_id(conn, tmp_path):
+    """Rename plus a changed spec: only the receipt's id still finds the workout."""
+    pub = FakePublisher()
+    _confirm(conn, tmp_path, pub, _seed_spec(tmp_path, run_spec(date=FUTURE)))
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    changed = _seed_spec(tmp_path, run_spec(date=FUTURE, work_s=2400))
+    out = _confirm(conn, tmp_path, pub, changed)
+
+    assert out["data"]["action"] == "refuse"  # refused rather than creating a second copy
+    assert len(pub.workouts) == 1
 
 
 def test_push_preview_without_a_spec_is_explicit(conn, tmp_path, fake_publisher):

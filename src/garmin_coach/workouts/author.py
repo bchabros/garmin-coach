@@ -20,7 +20,7 @@ per-set steps with rests between sets (issue #16).
 from __future__ import annotations
 
 from itertools import count
-from typing import Any
+from typing import Any, NamedTuple
 
 from garminconnect.workout import (
     ConditionType,
@@ -704,7 +704,34 @@ def to_garmin(spec: dict[str, Any]) -> dict[str, Any]:
     return workout.to_dict()
 
 
-def authored_shape(payload: dict[str, Any]) -> list[Any]:
+# One workout's steps in authored shape: executable steps and repeat groups, nested as
+# the payload nests them. Comparable with ``==`` - that is the whole point of it.
+AuthoredShape = list["AuthoredStep | AuthoredRepeat"]
+
+
+class AuthoredStep(NamedTuple):
+    """One executable step reduced to the fields this module authors."""
+
+    step_type: str | None
+    end_condition: str | None
+    end_value: float | None
+    target_type: str | None
+    target_one: float | None
+    target_two: float | None
+    zone: int | None
+    category: str | None
+    exercise: str | None
+    weight_kg: float | None
+
+
+class AuthoredRepeat(NamedTuple):
+    """A repeat group reduced to its iteration count and the steps it holds."""
+
+    iterations: int | None
+    steps: AuthoredShape
+
+
+def authored_shape(payload: dict[str, Any]) -> AuthoredShape:
     """A workout payload's steps reduced to the fields this module authors.
 
     The mirror of :func:`to_garmin`, and it lives here for that reason: it encodes
@@ -726,26 +753,29 @@ def authored_shape(payload: dict[str, Any]) -> list[Any]:
     return _authored_steps(steps)
 
 
-def _authored_steps(steps: Any) -> list[Any]:
+def _authored_steps(steps: Any) -> AuthoredShape:
     """The authored shape of a step list, recursing into repeat groups."""
     return [_authored_step(step) for step in steps or []]
 
 
-def _authored_step(step: dict[str, Any]) -> Any:
+def _authored_step(step: dict[str, Any]) -> AuthoredStep | AuthoredRepeat:
     """The authored shape of one step: a repeat group, or one executable step."""
     if step.get("type") == "RepeatGroupDTO":
-        return ("repeat", step.get("numberOfIterations"), _authored_steps(step.get("workoutSteps")))
-    return (
-        _nested_key(step.get("stepType"), "stepTypeKey"),
-        _nested_key(step.get("endCondition"), "conditionTypeKey"),
-        _rounded(step.get("endConditionValue")),
-        _nested_key(step.get("targetType"), "workoutTargetTypeKey"),
-        _rounded(step.get("targetValueOne")),
-        _rounded(step.get("targetValueTwo")),
-        step.get("zoneNumber"),
-        step.get("category"),
-        step.get("exerciseName"),
-        _authored_weight(step.get("weightValue")),
+        return AuthoredRepeat(
+            iterations=step.get("numberOfIterations"),
+            steps=_authored_steps(step.get("workoutSteps")),
+        )
+    return AuthoredStep(
+        step_type=_nested_key(step.get("stepType"), "stepTypeKey"),
+        end_condition=_nested_key(step.get("endCondition"), "conditionTypeKey"),
+        end_value=_rounded(step.get("endConditionValue")),
+        target_type=_nested_key(step.get("targetType"), "workoutTargetTypeKey"),
+        target_one=_rounded(step.get("targetValueOne")),
+        target_two=_rounded(step.get("targetValueTwo")),
+        zone=step.get("zoneNumber"),
+        category=step.get("category"),
+        exercise=step.get("exerciseName"),
+        weight_kg=_authored_weight(step.get("weightValue")),
     )
 
 

@@ -7,14 +7,11 @@ tickets add tempo/quality structure, athlete requests, and hybrid validation.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from garmin_coach.workouts.author import (
     HyroxSplitRequired,
     author,
-    authored_shape,
     request_from_recommendation,
     to_garmin,
 )
@@ -867,53 +864,6 @@ def test_canonical_tempo_fixture_authors_end_to_end(fixture):
     assert nested_work["targetType"]["workoutTargetTypeKey"] == "pace.zone"
 
 
-# --- authored_shape: the projection used to compare against the account (#42) -
-
-
-def _as_account_read_back(payload):
-    """The same payload as Garmin returns it: decorated with fields no upload sent."""
-    read_back = json.loads(json.dumps(payload))
-    for step in read_back["workoutSegments"][0]["workoutSteps"]:
-        step.setdefault("weightValue", -1)
-        step.update(
-            {
-                "stepId": 13996412277,
-                "childStepId": None,
-                "strokeType": {"strokeTypeId": 0, "strokeTypeKey": None, "displayOrder": 0},
-                "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None},
-                "endConditionCompare": "",
-                "preferredEndConditionUnit": None,
-                "description": None,
-            }
-        )
-    return read_back
-
-
-def test_authored_shape_sees_through_the_accounts_decoration_on_a_strength_workout():
-    payload = to_garmin(author(_strength_request(), _context()))
-
-    assert authored_shape(_as_account_read_back(payload)) == authored_shape(payload)
-
-
-def test_authored_shape_notices_a_changed_exercise():
-    pushed = to_garmin(author(_strength_request(), _context()))
-    swapped = to_garmin(
-        author(
-            _strength_request([{"exercise": "deadlift", "sets": 2, "reps": 5, "weight_kg": 100}]),
-            _context(),
-        )
-    )
-
-    assert authored_shape(_as_account_read_back(swapped)) != authored_shape(pushed)
-
-
-def test_authored_shape_notices_a_changed_weight():
-    pushed = to_garmin(author(_strength_request(), _context()))
-    heavier = to_garmin(
-        author(
-            _strength_request([{"exercise": "back_squat", "sets": 2, "reps": 5, "weight_kg": 120}]),
-            _context(),
-        )
-    )
-
-    assert authored_shape(_as_account_read_back(heavier)) != authored_shape(pushed)
+# The authored-shape projection deliberately has no seam of its own (issue #42):
+# asserting it directly would assert the implementation, so it is exercised through
+# get_workout_status against a fake account - see tests/mcp/test_tools.py.

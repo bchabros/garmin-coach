@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import pytest
-
 import argparse
 import json
 import types
+
+import pytest
 
 from garmin_coach import cli
 from garmin_coach.core import db
 from garmin_coach.cli import build_parser
 from garmin_coach.workouts import publish
-from tests.conftest import FakePublisher
+from tests.conftest import FakePublisher, run_spec
 
 DATA_START = "2026-06-08"
 
@@ -20,25 +20,6 @@ DATA_START = "2026-06-08"
 # --- push: the CLI resolves the account the same way the MCP path does (#40) --
 
 PUSH_DATE = "2026-07-17"
-
-
-def _push_spec(work_s=1200):
-    return {
-        "sport": "run",
-        "origin": "recommender",
-        "date": PUSH_DATE,
-        "session_type": "tempo",
-        "name": f"GC {PUSH_DATE} tempo",
-        "steps": [
-            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
-            {
-                "kind": "work",
-                "end": {"type": "time", "seconds": work_s},
-                "target": {"type": "none"},
-            },
-        ],
-        "warnings": [],
-    }
 
 
 def _run_cli_push(tmp_path, monkeypatch, pub, spec, *, replace=False):
@@ -59,7 +40,7 @@ def _run_cli_push(tmp_path, monkeypatch, pub, spec, *, replace=False):
 def test_cli_push_does_not_duplicate_a_workout_renamed_in_connect(tmp_path, monkeypatch):
     """The CLI must resolve a renamed workout exactly as push_confirm does (#40)."""
     pub = FakePublisher()
-    spec = _push_spec()
+    spec = run_spec(date=PUSH_DATE)
     _run_cli_push(tmp_path, monkeypatch, pub, spec)
     pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
     pub.calls.clear()
@@ -73,11 +54,11 @@ def test_cli_push_does_not_duplicate_a_workout_renamed_in_connect(tmp_path, monk
 def test_cli_push_passes_the_receipts_workout_id_as_the_lookup_candidate(tmp_path, monkeypatch):
     """Rename plus a changed spec: only the receipt's id still finds the workout."""
     pub = FakePublisher()
-    _, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, _push_spec())
+    _, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
     assert publish.receipt_workout_id(day_dir) == 1000
     pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
 
-    code, _ = _run_cli_push(tmp_path, monkeypatch, pub, _push_spec(work_s=2400))
+    code, _ = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE, work_s=2400))
 
     assert code == 1  # refused rather than creating a second copy
     assert len(pub.workouts) == 1

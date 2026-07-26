@@ -44,8 +44,13 @@ logger = logging.getLogger(__name__)
 # The workout ``description`` tag that carries the canonical-spec hash on the account.
 _HASH_PREFIX = "gc-hash:"
 
-# The reconciliation state for a read that could not reach the account. Named because
-# it is the one state callers branch on without having learned anything.
+# The reconciliation states a status read resolves to (issue #41). Named rather than
+# spelled out at each site: a caller branches on them, and a bare literal invites a typo
+# that would read as an unknown state. Precedence is decided in :func:`_state`.
+LIVE = "live"
+EDITED = "edited"
+UNSCHEDULED = "unscheduled"
+MISSING = "missing"
 UNVERIFIED = "unverified"
 
 
@@ -109,6 +114,44 @@ class PublishResult:
             "error": self.error,
             "warnings": self.warnings,
         }
+
+
+@dataclass(frozen=True)
+class Reconciliation:
+    """What the account holds for a pushed workout: one state, plus the facts behind it.
+
+    The state is what a caller branches on; the fields are what stop it from hiding the
+    detail (issue #41). The dataclass is what this module passes around and
+    :meth:`as_finding` is what crosses the MCP boundary and lands on the receipt - the
+    same split ``PublishResult``/:meth:`PublishResult.as_receipt` already uses.
+
+    ``checked_at`` is stamped when the finding is built, so the response and the
+    persisted copy of one read always carry the same timestamp.
+    """
+
+    state: str
+    scheduled: bool | None = None
+    steps_changed: bool | None = None
+    renamed_to: str | None = None
+    last_known: dict[str, Any] | None = None
+    checked_at: str = field(default_factory=lambda: dt.datetime.now().isoformat(timespec="seconds"))
+
+    def as_finding(self) -> dict[str, Any]:
+        """The finding as the MCP response reports it and the receipt stores it.
+
+        ``last_known`` appears only on ``unverified``, where it is the point: a read that
+        reached the account has just replaced whatever came before it.
+        """
+        finding: dict[str, Any] = {
+            "state": self.state,
+            "scheduled": self.scheduled,
+            "steps_changed": self.steps_changed,
+            "renamed_to": self.renamed_to,
+            "checked_at": self.checked_at,
+        }
+        if self.state == UNVERIFIED:
+            finding["last_known"] = self.last_known
+        return finding
 
 
 def receipt_workout_id(day_dir: pathlib.Path | str) -> int | None:
@@ -293,8 +336,8 @@ def _ambiguous(candidates: list[dict[str, Any]], key: str) -> str:
 
 
 def reconcile(
-    connect: Callable[[], WorkoutPublisher], receipt: Any, spec: Any, date: str
-) -> dict[str, Any] | None:
+    connect: Callable[[], WorkoutPublisher], receipt: object, spec: object, date: str
+) -> Reconciliation | None:
     """Resolve a push receipt against the account's library and calendar (issue #41).
 
     A receipt records what a push did; only the account can say what became of it.
@@ -302,39 +345,99 @@ def reconcile(
     pushed is still there, not whether something like it is - so a workout the
     library no longer holds is ``missing`` even with a near-identical one beside it.
 
+    Only :func:`_walk_account` runs under the transport catch; the finding is derived
+    from what it found, outside it, so a bug in the deriving never reads as an
+    unreachable account.
+
     Args:
         connect: Builds the Garmin read surface. Called only once there is something
             to check, so a receipt-free date never logs in; any failure it raises
             leaves the receipt ``unverified``.
-        receipt: The parsed ``push.json`` body, or None when the date has no push.
-        spec: The authored spec, used to tell an edit from a rename (issue #42).
+        receipt: The parsed ``push.json`` body - whatever the file held, so its shape
+            is checked here rather than assumed. None when the date has no push.
+        spec: The parsed authored spec, checked the same way; used to tell an edit
+            from a rename (issue #42).
         date: The day whose calendar decides ``live`` against ``unscheduled``.
 
     Returns:
         The finding, or None when the receipt names no workout to check.
     """
-    workout_id = receipt.get("workout_id") if isinstance(receipt, dict) else None
-    if workout_id is None:
+    body = _json_object(receipt)
+    workout_id = body.get("workout_id") if body is not None else None
+    if body is None or workout_id is None:
         return None
+    pushed = _pushed_shape(body, spec)
     try:
-        publisher = connect()
-        entry = _library_entry(publisher, workout_id)
-        if entry is None:
-            return _finding("missing", scheduled=False)
-        scheduled = _is_scheduled(publisher, workout_id, date)
-        steps_changed = _steps_changed(publisher, entry, receipt, spec)
+        facts = _walk_account(connect(), workout_id, date, body, compare_steps=pushed is not None)
     except Exception as exc:  # noqa: BLE001 - an unreachable account leaves it unverified
         logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
-        return _unverified(receipt)
-    return _finding(
-        _state(scheduled, steps_changed),
-        scheduled=scheduled,
+        return _unverified(body)
+    return _finding(facts, body, pushed)
+
+
+@dataclass(frozen=True)
+class _AccountFacts:
+    """What one walk of the account found: read results only, nothing derived from them."""
+
+    entry: dict[str, Any] | None
+    scheduled: bool = False
+    touched: bool = False
+    detail: dict[str, Any] | None = None
+
+
+def _walk_account(
+    publisher: WorkoutPublisher,
+    workout_id: int,
+    date: str,
+    receipt: dict[str, Any],
+    *,
+    compare_steps: bool,
+) -> _AccountFacts:
+    """Read what the account holds for a workout id: library, calendar, and its steps.
+
+    Every Garmin call on the reconciliation path happens here, so the caller can wrap
+    one call in the transport catch and derive the finding outside it. The
+    ``updateDate`` gate lives here for the same reason: it exists only to avoid a
+    call, so it belongs beside the calls.
+
+    Args:
+        publisher: The account read surface.
+        workout_id: The id the receipt recorded.
+        date: The day whose calendar entries are read.
+        receipt: The push receipt, for the ``updateDate`` gate's ``pushed_at``.
+        compare_steps: Whether the steps can settle anything - False skips the detail
+            call, because fetching steps nothing will be compared against is waste.
+
+    Returns:
+        The library entry (None when the account no longer holds it), whether it is
+        scheduled on the date, whether it moved since the push, and its steps when
+        they were worth fetching.
+    """
+    entry = _library_entry(publisher, workout_id)
+    if entry is None:
+        return _AccountFacts(entry=None)
+    scheduled = _is_scheduled(publisher, workout_id, date)
+    touched = _touched_since_push(entry, receipt)
+    detail = publisher.get_workout(workout_id) if touched and compare_steps else None
+    return _AccountFacts(entry=entry, scheduled=scheduled, touched=touched, detail=detail)
+
+
+def _finding(
+    facts: _AccountFacts, receipt: dict[str, Any], pushed: _author.AuthoredShape | None
+) -> Reconciliation:
+    """Turn what the account walk found into the one finding a caller reads."""
+    if facts.entry is None:
+        return Reconciliation(state=MISSING, scheduled=False)
+    steps_changed = _steps_changed(facts, pushed)
+    return Reconciliation(
+        state=_state(facts.scheduled, steps_changed),
+        scheduled=facts.scheduled,
         steps_changed=steps_changed,
-        renamed_to=_renamed_to(entry, receipt),
+        renamed_to=_renamed_to(facts.entry, receipt),
     )
 
 
-def _unverified(receipt: dict[str, Any]) -> dict[str, Any]:
+def _unverified(receipt: dict[str, Any]) -> Reconciliation:
     """The finding for a read that could not reach the account.
 
     Carries whatever the receipt last recorded under ``last_known``, so an offline
@@ -342,9 +445,7 @@ def _unverified(receipt: dict[str, Any]) -> dict[str, Any]:
     in: this read confirmed nothing, and stale facts must not read as fresh ones.
     """
     known = receipt.get("reconciled")
-    finding = _finding(UNVERIFIED)
-    finding["last_known"] = known if isinstance(known, dict) else None
-    return finding
+    return Reconciliation(state=UNVERIFIED, last_known=known if isinstance(known, dict) else None)
 
 
 def _state(scheduled: bool, steps_changed: bool | None) -> str:
@@ -352,32 +453,17 @@ def _state(scheduled: bool, steps_changed: bool | None) -> str:
 
     ``unscheduled`` outranks ``edited``: a workout that is not on the day is not on
     the watch, whatever its steps now say. The edit stays visible in ``steps_changed``.
+
+    ``live`` claims the workout is in the library and on the date, and nothing about
+    its steps: an unjudged comparison (``steps_changed`` null) reports there rather
+    than as an edit, because "we could not tell" is not evidence of a rewrite.
     """
     if not scheduled:
-        return "unscheduled"
-    return "edited" if steps_changed else "live"
+        return UNSCHEDULED
+    return EDITED if steps_changed else LIVE
 
 
-def _finding(
-    state: str,
-    *,
-    scheduled: bool | None = None,
-    steps_changed: bool | None = None,
-    renamed_to: str | None = None,
-) -> dict[str, Any]:
-    """One reconciliation finding: the state to branch on, plus the facts behind it."""
-    return {
-        "state": state,
-        "scheduled": scheduled,
-        "steps_changed": steps_changed,
-        "renamed_to": renamed_to,
-        "checked_at": dt.datetime.now().isoformat(timespec="seconds"),
-    }
-
-
-def _steps_changed(
-    publisher: WorkoutPublisher, entry: dict[str, Any], receipt: dict[str, Any], spec: Any
-) -> bool | None:
+def _steps_changed(facts: _AccountFacts, pushed: _author.AuthoredShape | None) -> bool | None:
     """Whether the account's steps differ from the ones the receipt says were pushed.
 
     The ``gc-hash:`` tag cannot answer this: it records what was *pushed* and Garmin
@@ -386,15 +472,43 @@ def _steps_changed(
     ``updateDate`` gates it, and an untouched account copy answers for free.
 
     Returns:
-        None when it cannot be judged - the local spec no longer hashes to the
-        receipt, so it is not evidence of what the push actually sent.
+        None when it could not be judged, either because the local spec is no longer
+        evidence of what was pushed (see :func:`_pushed_shape`) or because that made
+        the detail call not worth spending.
     """
-    if not _touched_since_push(entry, receipt):
+    if not facts.touched:
         return False
-    if not isinstance(spec, dict) or spec_hash(spec) != receipt.get("spec_hash"):
+    if pushed is None or facts.detail is None:
         return None
-    account = publisher.get_workout(entry["workoutId"])
-    return _author.authored_shape(account) != _author.authored_shape(_author.to_garmin(spec))
+    return _author.authored_shape(facts.detail) != pushed
+
+
+def _pushed_shape(receipt: dict[str, Any], spec: object) -> _author.AuthoredShape | None:
+    """The steps the receipt says were pushed, in the shape the account compares against.
+
+    Built before the account is walked, so a spec that cannot settle the question saves
+    the detail call rather than paying for it.
+
+    Returns:
+        None when the local spec no longer hashes to the receipt's ``spec_hash`` - it
+        has been re-authored since, so it is not evidence of what the push sent - or
+        when it is too malformed to project, which says the same thing.
+    """
+    authored = _json_object(spec)
+    if authored is None:
+        return None
+    try:
+        if spec_hash(authored) != receipt.get("spec_hash"):
+            return None
+        return _author.authored_shape(_author.to_garmin(authored))
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.info("reconcile: spec for %s cannot be projected: %s", receipt.get("date"), exc)
+        return None
+
+
+def _json_object(value: object) -> dict[str, Any] | None:
+    """A parsed JSON artifact when it holds an object, else None - a file can hold anything."""
+    return value if isinstance(value, dict) else None
 
 
 def _touched_since_push(entry: dict[str, Any], receipt: dict[str, Any]) -> bool:
@@ -409,35 +523,31 @@ def _touched_since_push(entry: dict[str, Any], receipt: dict[str, Any]) -> bool:
     An unreadable timestamp on either side counts as touched: checking properly costs
     one call, while assuming nothing moved would hide a real edit.
     """
-    pushed_at = _local_instant(receipt.get("pushed_at"))
-    updated = _account_instant(entry.get("updateDate"))
+    pushed_at = _instant(receipt.get("pushed_at"), naive_tz=None)
+    updated = _instant(entry.get("updateDate"), naive_tz=dt.UTC)
     if pushed_at is None or updated is None:
         return True
     return updated > pushed_at
 
 
-def _local_instant(value: Any) -> dt.datetime | None:
-    """A receipt timestamp, written on this machine's clock, as a UTC instant."""
-    parsed = _timestamp(value)
-    return parsed.astimezone(dt.UTC) if parsed is not None else None
+def _instant(value: object, *, naive_tz: dt.tzinfo | None) -> dt.datetime | None:
+    """Parse an ISO timestamp to a UTC instant, or None when it is unreadable.
 
-
-def _account_instant(value: Any) -> dt.datetime | None:
-    """A Garmin timestamp, which the account reports in UTC, as a UTC instant."""
-    parsed = _timestamp(value)
-    if parsed is None:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
-
-
-def _timestamp(value: Any) -> dt.datetime | None:
-    """Parse an ISO timestamp (Garmin's carries a fractional-second suffix), or None."""
+    Args:
+        value: An ISO timestamp; Garmin's carries a fractional-second suffix.
+        naive_tz: The zone to read a timestamp that carries no offset in. None means
+            this machine's local clock - which is what writes the receipt, while the
+            account answers in UTC.
+    """
     if not isinstance(value, str):
         return None
     try:
-        return dt.datetime.fromisoformat(value)
+        parsed = dt.datetime.fromisoformat(value)
     except ValueError:
         return None
+    if parsed.tzinfo is None and naive_tz is not None:
+        parsed = parsed.replace(tzinfo=naive_tz)
+    return parsed.astimezone(dt.UTC)
 
 
 def _library_entry(publisher: WorkoutPublisher, workout_id: int) -> dict[str, Any] | None:

@@ -9,30 +9,7 @@ from __future__ import annotations
 
 from garmin_coach.workouts.publish import confirm_token, publish, spec_hash
 from tests.conftest import FakePublisher
-
-
-def _spec(date="2026-07-17", name=None, work_s=1200):
-    return {
-        "sport": "run",
-        "origin": "recommender",
-        "date": date,
-        "session_type": "tempo",
-        "name": name or f"GC {date} tempo",
-        "steps": [
-            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
-            {
-                "kind": "work",
-                "end": {"type": "time", "seconds": work_s},
-                "target": {"type": "pace_band", "fast_s_per_km": 265, "slow_s_per_km": 275},
-            },
-            {
-                "kind": "cooldown",
-                "end": {"type": "time", "seconds": 600},
-                "target": {"type": "none"},
-            },
-        ],
-        "warnings": [],
-    }
+from tests.conftest import run_spec as _spec
 
 
 # --- account lookup: id, then hash, then name (issue #40) -------------------

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
+import time
 
 from garmin_coach import cli
 from garmin_coach.core import db
@@ -204,6 +206,18 @@ PUSHED_AT = "2026-07-15T17:28:00"
 PUSHED_NAME = "GC 2026-07-17 quality"
 
 
+def _as_account_clock(local_iso, *, minutes_after=0):
+    """The same instant as Garmin renders it: naive UTC, fractional-second suffix.
+
+    The receipt's clock is this machine's local time and the account's is UTC, so a
+    fake that reuses one literal for both cannot see a skew bug (issue #42).
+    """
+    instant = dt.datetime.fromisoformat(local_iso).astimezone(dt.UTC) + dt.timedelta(
+        minutes=minutes_after
+    )
+    return instant.replace(tzinfo=None).isoformat() + ".0"
+
+
 def _spec(*, name=PUSHED_NAME, date=PUSH_DATE, work_s=1200):
     """A run spec of the shape ``author`` produces, for round-tripping through to_garmin."""
     return {
@@ -258,10 +272,11 @@ def _account_with(
     workout_id=1000,
     scheduled_on=None,
     spec=None,
-    update_date=PUSHED_AT,
+    update_date=None,
 ):
     """Put a workout in the fake library, holding the steps the given spec authors."""
     payload = author.to_garmin(spec or _spec())
+    update_date = update_date or _as_account_clock(PUSHED_AT)
     pub.workouts[workout_id] = {
         "workoutName": name,
         "description": "gc-hash:297803a3d3505fe3",
@@ -420,7 +435,9 @@ def test_status_reports_live_when_only_the_name_changed(conn, tmp_path):
 
 def test_status_skips_the_detail_call_when_the_account_copy_was_never_touched(conn, tmp_path):
     _seed_pushed(tmp_path)
-    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE, update_date=PUSHED_AT)
+    pub = _account_with(
+        FakePublisher(), scheduled_on=PUSH_DATE, update_date=_as_account_clock(PUSHED_AT)
+    )
 
     out = _status(conn, tmp_path, pub)
 
@@ -470,6 +487,103 @@ def test_status_cannot_judge_the_steps_when_the_spec_was_re_authored(conn, tmp_p
 
     assert out["data"]["reconciled"]["state"] == "live"
     assert out["data"]["reconciled"]["steps_changed"] is None
+
+
+def _repeat_spec(reps=4, work_s=180):
+    """A quality spec, so the projection's repeat-group recursion is exercised."""
+    return {
+        "sport": "run",
+        "origin": "recommender",
+        "date": PUSH_DATE,
+        "session_type": "quality",
+        "name": PUSHED_NAME,
+        "steps": [
+            {"kind": "warmup", "end": {"type": "time", "seconds": 600}, "target": {"type": "none"}},
+            {
+                "kind": "repeat",
+                "reps": reps,
+                "steps": [
+                    {
+                        "kind": "work",
+                        "end": {"type": "time", "seconds": work_s},
+                        "target": {"type": "hr_band", "low_bpm": 164, "high_bpm": 173},
+                    },
+                    {
+                        "kind": "recovery",
+                        "end": {"type": "time", "seconds": 120},
+                        "target": {"type": "none"},
+                    },
+                ],
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def test_status_sees_an_edit_inside_a_repeat_group(conn, tmp_path):
+    """The interval itself was shortened; nothing outside the repeat block moved."""
+    _seed_pushed(tmp_path, spec=_repeat_spec())
+    pub = _account_with(
+        FakePublisher(),
+        scheduled_on=PUSH_DATE,
+        spec=_repeat_spec(work_s=90),
+        update_date=TOUCHED_AT,
+    )
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["steps_changed"] is True
+
+
+def test_status_sees_a_changed_repeat_count(conn, tmp_path):
+    _seed_pushed(tmp_path, spec=_repeat_spec(reps=4))
+    pub = _account_with(
+        FakePublisher(), scheduled_on=PUSH_DATE, spec=_repeat_spec(reps=6), update_date=TOUCHED_AT
+    )
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["steps_changed"] is True
+
+
+def test_status_accepts_an_untouched_repeat_workout(conn, tmp_path):
+    _seed_pushed(tmp_path, spec=_repeat_spec())
+    pub = _account_with(
+        FakePublisher(), scheduled_on=PUSH_DATE, spec=_repeat_spec(), update_date=TOUCHED_AT
+    )
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["steps_changed"] is False
+
+
+def test_an_edit_soon_after_the_push_is_not_hidden_by_the_clock_offset(conn, tmp_path):
+    """The receipt's clock is local, Garmin's is UTC; comparing them raw hides an edit.
+
+    Pinned with a fixed zone because the bug is invisible where the two agree: with
+    the offset unhandled, an edit inside the first UTC+2 hours reads as untouched.
+    """
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Warsaw"
+    time.tzset()
+    try:
+        _seed_pushed(tmp_path)
+        pub = _account_with(
+            FakePublisher(),
+            scheduled_on=PUSH_DATE,
+            spec=_spec(work_s=2400),
+            update_date=_as_account_clock(PUSHED_AT, minutes_after=20),
+        )
+
+        out = _status(conn, tmp_path, pub)
+
+        assert out["data"]["reconciled"]["state"] == "edited"
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
 
 
 def test_status_reports_unverified_when_the_detail_call_fails(conn, tmp_path):

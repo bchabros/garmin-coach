@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 # The workout ``description`` tag that carries the canonical-spec hash on the account.
 _HASH_PREFIX = "gc-hash:"
 
+# The reconciliation state for a read that could not reach the account. Named because
+# it is the one state callers branch on without having learned anything.
+UNVERIFIED = "unverified"
+
 
 class WorkoutPublisher(Protocol):
     """The Garmin write surface the orchestration depends on (injected, mockable)."""
@@ -338,7 +342,7 @@ def _unverified(receipt: dict[str, Any]) -> dict[str, Any]:
     in: this read confirmed nothing, and stale facts must not read as fresh ones.
     """
     known = receipt.get("reconciled")
-    finding = _finding("unverified")
+    finding = _finding(UNVERIFIED)
     finding["last_known"] = known if isinstance(known, dict) else None
     return finding
 
@@ -390,20 +394,40 @@ def _steps_changed(
     if not isinstance(spec, dict) or spec_hash(spec) != receipt.get("spec_hash"):
         return None
     account = publisher.get_workout(entry["workoutId"])
-    return _authored_shape(account) != _authored_shape(_author.to_garmin(spec))
+    return _author.authored_shape(account) != _author.authored_shape(_author.to_garmin(spec))
 
 
 def _touched_since_push(entry: dict[str, Any], receipt: dict[str, Any]) -> bool:
     """Whether the account's copy moved after the push that produced the receipt.
 
-    An unreadable timestamp on either side counts as touched: checking properly
-    costs one call, while assuming nothing moved would hide a real edit.
+    The two timestamps come off different clocks: the receipt's ``pushed_at`` is
+    written with this machine's local time, while Garmin reports ``updateDate`` in
+    UTC. Comparing them raw hides every edit made within the local offset of a push -
+    for a UTC+2 athlete, the first two hours - which is exactly the window an edit is
+    most likely to land in. Both are normalised to an instant before comparing.
+
+    An unreadable timestamp on either side counts as touched: checking properly costs
+    one call, while assuming nothing moved would hide a real edit.
     """
-    pushed_at = _timestamp(receipt.get("pushed_at"))
-    updated = _timestamp(entry.get("updateDate"))
+    pushed_at = _local_instant(receipt.get("pushed_at"))
+    updated = _account_instant(entry.get("updateDate"))
     if pushed_at is None or updated is None:
         return True
     return updated > pushed_at
+
+
+def _local_instant(value: Any) -> dt.datetime | None:
+    """A receipt timestamp, written on this machine's clock, as a UTC instant."""
+    parsed = _timestamp(value)
+    return parsed.astimezone(dt.UTC) if parsed is not None else None
+
+
+def _account_instant(value: Any) -> dt.datetime | None:
+    """A Garmin timestamp, which the account reports in UTC, as a UTC instant."""
+    parsed = _timestamp(value)
+    if parsed is None:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
 
 
 def _timestamp(value: Any) -> dt.datetime | None:
@@ -414,63 +438,6 @@ def _timestamp(value: Any) -> dt.datetime | None:
         return dt.datetime.fromisoformat(value)
     except ValueError:
         return None
-
-
-def _authored_shape(payload: dict[str, Any]) -> list[Any]:
-    """A workout's steps reduced to the fields this system authors.
-
-    The account decorates every step with ids, units, and defaults no upload ever
-    sent (``stepId``, ``weightValue``, ``strokeType``, ``endConditionCompare``), so
-    comparing raw payloads always differs. This keeps only what was authored.
-    """
-    segments = payload.get("workoutSegments") or []
-    steps = segments[0].get("workoutSteps") if segments else []
-    return _authored_steps(steps)
-
-
-def _authored_steps(steps: Any) -> list[Any]:
-    """The authored shape of a step list, recursing into repeat groups."""
-    return [_authored_step(step) for step in steps or []]
-
-
-def _authored_step(step: dict[str, Any]) -> Any:
-    """The authored shape of one step: a repeat group, or one executable step."""
-    if step.get("type") == "RepeatGroupDTO":
-        return ("repeat", step.get("numberOfIterations"), _authored_steps(step.get("workoutSteps")))
-    return (
-        _nested_key(step.get("stepType"), "stepTypeKey"),
-        _nested_key(step.get("endCondition"), "conditionTypeKey"),
-        _rounded(step.get("endConditionValue")),
-        _nested_key(step.get("targetType"), "workoutTargetTypeKey"),
-        _rounded(step.get("targetValueOne")),
-        _rounded(step.get("targetValueTwo")),
-        step.get("zoneNumber"),
-        step.get("exerciseName"),
-        _authored_weight(step.get("weightValue")),
-    )
-
-
-def _authored_weight(value: Any) -> float | None:
-    """A step's authored weight, with the account's ``-1`` no-weight default read as none.
-
-    Garmin stamps ``weightValue: -1`` on every step it returns, including the run
-    steps no upload ever gave a weight to; taking it at face value would make every
-    pushed run look edited.
-    """
-    rounded = _rounded(value)
-    return None if rounded is None or rounded < 0 else rounded
-
-
-def _nested_key(block: Any, field: str) -> Any:
-    """One field out of a Garmin enum block, tolerating a missing block."""
-    return block.get(field) if isinstance(block, dict) else None
-
-
-def _rounded(value: Any) -> float | None:
-    """A number rounded past the noise Garmin's float round-tripping introduces."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return round(float(value), 3)
 
 
 def _library_entry(publisher: WorkoutPublisher, workout_id: int) -> dict[str, Any] | None:
@@ -603,8 +570,8 @@ def _message(action: str) -> str:
     """A human summary line for a resolved action."""
     return {
         "create": "will create and schedule a new workout",
-        "replace": "a different workout with this name exists; will replace and reschedule it",
+        "replace": "this date's workout on the account differs; will replace and reschedule it",
         "noop": "already scheduled with an identical workout; nothing to do",
         "schedule": "workout exists in the library; will schedule it to the date",
-        "refuse": "a different workout with this name exists; re-run with --replace to overwrite",
+        "refuse": "this date's workout on the account differs; re-run with --replace to overwrite",
     }[action]

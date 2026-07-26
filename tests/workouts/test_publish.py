@@ -112,20 +112,34 @@ def test_two_workouts_sharing_a_hash_refuse_and_name_both():
     result = publish(_spec(), pub, confirm=True, replace=True)
 
     assert result.action == "refuse"
-    assert "1000" in result.message and "2000" in result.message
+    assert "1000 (GC 2026-07-17 tempo)" in result.message
+    assert "2000 (Hyrox Tempo)" in result.message
     assert pub.calls == []
 
 
 def test_two_workouts_sharing_a_name_refuse_and_name_both():
     pub = FakePublisher()
-    for wid in (1, 2):
+    for wid in (4242, 7777):
         pub.workouts[wid] = {"workoutName": _spec()["name"], "description": None}
 
     result = publish(_spec(), pub, confirm=True, replace=True)
 
     assert result.action == "refuse"
-    assert "1" in result.message and "2" in result.message
+    assert "4242 (GC 2026-07-17 tempo)" in result.message
+    assert "7777 (GC 2026-07-17 tempo)" in result.message
     assert pub.calls == []
+
+
+def test_a_candidate_id_the_account_forgot_falls_all_the_way_through_to_the_name():
+    """Stale id, no hash match (the spec moved on): the name is the last key left."""
+    pub = FakePublisher()
+    _pushed(pub)
+
+    result = publish(_spec(work_s=2400), pub, confirm=True, known_workout_id=999999)
+
+    assert result.action == "refuse"
+    assert result.workout_id == 1000
+    assert len(pub.workouts) == 1
 
 
 class FailingSchedulePublisher(FakePublisher):

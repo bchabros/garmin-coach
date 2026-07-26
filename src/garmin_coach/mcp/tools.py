@@ -229,8 +229,23 @@ def get_workout_status(
     workout = _read_json(day_dir / "workout.json")
     finding = publish.reconcile(connect, push, workout, date)
     _persist_finding(day_dir, push, finding)
-    data = {"date": date, "workout": workout, "push": push, "reconciled": finding}
+    data = {
+        "date": date,
+        "workout": workout,
+        "push": _receipt_view(push),
+        "reconciled": finding,
+    }
     return _wrap(conn, data)
+
+
+def _receipt_view(push: Any) -> Any:
+    """The receipt as a caller should read it: the push record, without the stored finding.
+
+    The finding is persisted onto the receipt so an offline read can still serve it,
+    but the response reports it once, under ``reconciled``. Two copies in one response
+    invite reading the stale one.
+    """
+    return {k: v for k, v in push.items() if k != "reconciled"} if isinstance(push, dict) else push
 
 
 def _persist_finding(day_dir: pathlib.Path, push: Any, finding: dict[str, Any] | None) -> None:
@@ -241,13 +256,12 @@ def _persist_finding(day_dir: pathlib.Path, push: Any, finding: dict[str, Any] |
     is not information, and would erase a known-missing workout. The receipt's own
     fields are never touched; the finding is appended beside them.
     """
-    if not isinstance(push, dict) or finding is None or finding["state"] == "unverified":
+    if not isinstance(push, dict) or finding is None or finding["state"] == publish.UNVERIFIED:
         return
     known = push.get("reconciled")
     if isinstance(known, dict) and known.get("state") == finding["state"]:
         return
-    push["reconciled"] = finding
-    (day_dir / "push.json").write_text(json.dumps(push, indent=2))
+    (day_dir / "push.json").write_text(json.dumps({**push, "reconciled": finding}, indent=2))
 
 
 def _read_json(path: pathlib.Path) -> Any:

@@ -420,7 +420,12 @@ def _cmd_push(args: argparse.Namespace) -> int:
         return 2
 
     result = publish.publish(
-        spec, publisher, confirm=args.confirm, replace=args.replace, activity_dates=activity_dates
+        spec,
+        publisher,
+        confirm=args.confirm,
+        replace=args.replace,
+        activity_dates=activity_dates,
+        known_workout_id=publish.receipt_workout_id(spec_path.parent),
     )
     for warning in result.warnings:
         print(f"  warning: {warning}")

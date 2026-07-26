@@ -35,6 +35,99 @@ def _spec(date="2026-07-17", name=None, work_s=1200):
     }
 
 
+# --- account lookup: id, then hash, then name (issue #40) -------------------
+
+
+def _pushed(pub, spec=None):
+    """Push a spec for real, returning the account id it landed on."""
+    result = publish(spec or _spec(), pub, confirm=True)
+    pub.calls.clear()
+    return result.workout_id
+
+
+def test_a_renamed_workout_still_resolves_to_noop():
+    """Renaming in Connect is ordinary; it must not make the same session look new."""
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(), pub, confirm=True)
+
+    assert result.action == "noop"
+    assert pub.calls == []
+    assert len(pub.workouts) == 1
+
+
+def test_a_renamed_workout_with_a_changed_spec_resolves_against_the_receipt_id():
+    """Rename plus edit breaks both mutable keys; only the receipt's id survives it."""
+    pub = FakePublisher()
+    workout_id = _pushed(pub)
+    pub.workouts[workout_id]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(work_s=2400), pub, confirm=True, known_workout_id=workout_id)
+
+    assert result.action == "refuse"
+    assert len(pub.workouts) == 1
+
+
+def test_a_renamed_workout_with_a_changed_spec_replaces_in_place_when_asked():
+    pub = FakePublisher()
+    workout_id = _pushed(pub)
+    pub.workouts[workout_id]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(
+        _spec(work_s=2400), pub, confirm=True, replace=True, known_workout_id=workout_id
+    )
+
+    assert result.action == "replace"
+    assert len(pub.workouts) == 1
+
+
+def test_a_candidate_id_the_account_forgot_falls_through_to_the_hash():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    result = publish(_spec(), pub, confirm=True, known_workout_id=999999)
+
+    assert result.action == "noop"
+
+
+def test_the_name_still_matches_a_workout_carrying_no_hash_tag():
+    """The name fallback is what detects a changed spec; it is not narrowed to untagged."""
+    pub = FakePublisher()
+    pub.workouts[1] = {"workoutName": _spec()["name"], "description": None}
+
+    result = publish(_spec(), pub, confirm=False)
+
+    assert result.action == "refuse"
+
+
+def test_two_workouts_sharing_a_hash_refuse_and_name_both():
+    """Guessing is unsafe: --replace deletes whichever candidate the lookup picked."""
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[2000] = dict(pub.workouts[1000], workoutName="Hyrox Tempo")
+
+    result = publish(_spec(), pub, confirm=True, replace=True)
+
+    assert result.action == "refuse"
+    assert "1000" in result.message and "2000" in result.message
+    assert pub.calls == []
+
+
+def test_two_workouts_sharing_a_name_refuse_and_name_both():
+    pub = FakePublisher()
+    for wid in (1, 2):
+        pub.workouts[wid] = {"workoutName": _spec()["name"], "description": None}
+
+    result = publish(_spec(), pub, confirm=True, replace=True)
+
+    assert result.action == "refuse"
+    assert "1" in result.message and "2" in result.message
+    assert pub.calls == []
+
+
 class FailingSchedulePublisher(FakePublisher):
     """A publisher whose first schedule call fails, to model a partial push."""
 

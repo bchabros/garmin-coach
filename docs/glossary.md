@@ -340,6 +340,15 @@ code, docstrings, PRDs, and ADRs.
   `confirm_token` alongside the payload, and `push_confirm` refuses any other value
   without touching the account. The MCP counterpart of the CLI's `--confirm`, strict
   enough for an agent caller.
+- **account lookup order** - how a push finds the workout to act on: the receipt's
+  `workout_id`, then the `gc-hash:` tag, then the name (issue #40). Ordered by how
+  stable each key is - the id is the only one the athlete cannot change, and a rename
+  plus an edit defeats the other two at once. The account still decides: an id it no
+  longer knows falls through, so idempotency rests on the account, not the receipt. The
+  name stays a full fallback rather than being narrowed to untagged workouts, because
+  it is what detects a changed spec and yields `refuse`/`replace`. A lookup matching two
+  workouts refuses and names them - an earlier push already duplicated something, and
+  guessing would let `--replace` delete the wrong one.
 - **push receipt** - `reports/{date}/push.json`: what a push *did* (`action`, `applied`,
   `workout_id`, `spec_hash`, `pushed_at`). A record of an event, never a statement about
   what the Garmin account holds now - that is what reconciliation is for.

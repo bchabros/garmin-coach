@@ -471,7 +471,11 @@ def push_preview(
         return _wrap(conn, {"error": error})
 
     result = publish.publish(
-        spec, publisher, confirm=False, activity_dates=_dates_with_activity(conn, date)
+        spec,
+        publisher,
+        confirm=False,
+        activity_dates=_dates_with_activity(conn, date),
+        known_workout_id=publish.receipt_workout_id(pathlib.Path(reports_dir) / date),
     )
     data = {
         "date": date,
@@ -520,6 +524,7 @@ def push_confirm(
         confirm=True,
         replace=replace,
         activity_dates=_dates_with_activity(conn, date),
+        known_workout_id=publish.receipt_workout_id(pathlib.Path(reports_dir) / date),
     )
     if result.applied or result.error is not None:
         _write_receipt(result, pathlib.Path(reports_dir) / date)

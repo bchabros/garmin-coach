@@ -9,8 +9,16 @@ tested offline against a fake, and the live wrapper is wired in a later ticket.
 Idempotency uses the Garmin account as the source of truth, never a local ledger:
 each system-authored workout carries a hash of its canonical spec in the workout
 ``description`` (``gc-hash:...``), so a re-push compares against what the account
-actually holds. ``author`` owns the pure spec; ``publish`` reads it and calls
-``author.to_garmin`` to build the payload. ``author`` never imports ``publish``.
+actually holds. The receipt may offer a ``known_workout_id`` as the first lookup
+candidate (issue #40) - the athlete can rename a workout and edit its steps, which
+defeats the other two keys at once - but the account still decides: an id it no
+longer knows falls through to the hash, and then to the name. ``author`` owns the
+pure spec; ``publish`` reads it and calls ``author.to_garmin`` to build the payload.
+``author`` never imports ``publish``.
+
+The same account reads answer the other direction too: :func:`reconcile` resolves a
+push receipt against the library and the calendar, so a status read reports what the
+account holds rather than what a past push claimed (issues #41-#43).
 
 The account state resolves to one action: create, no-op, schedule (a library-only
 match), refuse (a changed workout without ``--replace``), or replace (unschedule +
@@ -24,6 +32,7 @@ import datetime as dt
 import hashlib
 import json
 import logging
+import pathlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -98,6 +107,28 @@ class PublishResult:
         }
 
 
+def receipt_workout_id(day_dir: pathlib.Path | str) -> int | None:
+    """The workout id a previous push recorded for a date, as a lookup candidate.
+
+    The receipt's shape is defined here (:meth:`PublishResult.as_receipt`), so reading
+    it back belongs here too - and keeping it in one place stops the CLI and the MCP
+    push pair from drifting into two different lookups. ``publish`` itself still takes
+    the id as an argument and touches no file.
+
+    Returns:
+        The recorded id, or None when the date has no receipt, the file is unreadable,
+        or the push never got as far as naming a workout.
+    """
+    path = pathlib.Path(day_dir) / "push.json"
+    if not path.exists():
+        return None
+    try:
+        receipt = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return receipt.get("workout_id") if isinstance(receipt, dict) else None
+
+
 def publish(
     spec: dict[str, Any],
     publisher: WorkoutPublisher,
@@ -105,6 +136,7 @@ def publish(
     confirm: bool,
     replace: bool = False,
     activity_dates: frozenset[str] | set[str] = frozenset(),
+    known_workout_id: int | None = None,
 ) -> PublishResult:
     """Push a workout spec to Garmin, idempotently and behind a confirm interlock.
 
@@ -115,6 +147,9 @@ def publish(
         replace: Overwrite a different workout of the same name (unschedule + delete +
             upload + schedule) instead of refusing.
         activity_dates: Dates that already have a logged activity, to warn on collision.
+        known_workout_id: The id a previous push recorded for this date, offered as the
+            first lookup candidate (issue #40). The caller reads it from the receipt;
+            this function does no file IO.
 
     Returns:
         A ``PublishResult`` describing the resolved action and, when confirmed, the
@@ -129,15 +164,15 @@ def publish(
     if date in activity_dates:
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
-    existing = _find_by_name(publisher, spec["name"])
-    action = _resolve_action(existing, marker, publisher, date, replace)
+    existing, conflict = _find_target(publisher, spec["name"], marker, known_workout_id)
+    action = "refuse" if conflict else _resolve_action(existing, marker, publisher, date, replace)
     result = PublishResult(
         action=action,
         applied=False,
         spec_hash=marker,
         date=date,
         payload=payload,
-        message=_message(action),
+        message=conflict or _message(action),
         warnings=warnings,
     )
     if existing is not None:
@@ -213,12 +248,44 @@ def _unschedule_existing(publisher: WorkoutPublisher, workout_id: int, date: str
             publisher.unschedule(entry["scheduleId"])
 
 
-def _find_by_name(publisher: WorkoutPublisher, name: str) -> dict[str, Any] | None:
-    """The account's workout with this exact name, or None."""
-    for workout in publisher.list_workouts():
-        if workout.get("workoutName") == name:
-            return workout
-    return None
+def _find_target(
+    publisher: WorkoutPublisher, name: str, marker: str, known_workout_id: int | None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The account workout this push should act on, or the conflict that stops it.
+
+    Ordered by how stable each key is. The receipt's ``workout_id`` comes first: it is
+    the only key the athlete cannot change, and it survives a rename and an edit
+    together, which defeat the other two. The account still decides - an id it no
+    longer knows falls through - so idempotency rests on the account, not the receipt.
+    The ``gc-hash:`` tag comes next, and the name last, where it is what detects a
+    changed spec and yields ``refuse``/``replace``.
+
+    Returns:
+        The matched workout (or None), and a message when the lookup was ambiguous -
+        two candidates mean an earlier push already duplicated something, and guessing
+        would let ``--replace`` delete the wrong one.
+    """
+    library = publisher.list_workouts()
+    if known_workout_id is not None:
+        for workout in library:
+            if workout.get("workoutId") == known_workout_id:
+                return workout, None
+    by_hash = [w for w in library if _existing_hash(w) == marker]
+    if by_hash:
+        return (by_hash[0], None) if len(by_hash) == 1 else (None, _ambiguous(by_hash, "hash"))
+    by_name = [w for w in library if w.get("workoutName") == name]
+    if len(by_name) > 1:
+        return None, _ambiguous(by_name, "name")
+    return (by_name[0] if by_name else None), None
+
+
+def _ambiguous(candidates: list[dict[str, Any]], key: str) -> str:
+    """The refusal message for a lookup that matched more than one workout."""
+    listed = ", ".join(f"{w.get('workoutId')} ({w.get('workoutName')})" for w in candidates)
+    return (
+        f"{len(candidates)} workouts on the account share this {key}: {listed}; "
+        "delete the duplicates in Garmin Connect, then push again"
+    )
 
 
 def reconcile(

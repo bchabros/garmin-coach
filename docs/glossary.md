@@ -303,7 +303,8 @@ code, docstrings, PRDs, and ADRs.
   bounds a whole session rather than one step.
 - **nameable zone (intensity target)** - a zone the target vocabulary can name:
   `z2`, `z3`, `z4`, each resolved to the heart-rate band spanning a pair of
-  adjacent `athlete_zones` upper bounds. A zone name **always** means heart rate -
+  adjacent `athlete_zones` upper bounds and each written in any case (`Z2` reads as
+  `z2`). A zone name **always** means heart rate -
   the stored ladder is a heart-rate ladder, while pace holds two anchors and no
   ladder to name rungs on. `z1` and `z5` are not nameable: the ladder stores four
   upper bounds, so the outer zones have no floor and no ceiling, and no

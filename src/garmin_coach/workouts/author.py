@@ -19,6 +19,7 @@ per-set steps with rests between sets (issue #16).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from itertools import count
 from typing import Any, NamedTuple
 
@@ -113,12 +114,43 @@ _HARDNESS = {
 _SPORT_FOR_INTENT = {"strength": "strength", "crossfit": "hiit"}
 
 
+class _WorkChain(NamedTuple):
+    """What a work role falls back to when the athlete asks for no target.
+
+    Turns the recommender's suggested pace into a band by widening it each way, and
+    names the zone the band degrades to when no pace was measured at all.
+    """
+
+    fast_margin_s: int
+    slow_margin_s: int
+    zone: str
+    label: str
+
+
+# An easy work step runs at or slower than the suggestion; threshold work sits in a
+# symmetric window around it. Each degrades to the heart-rate zone it is named for.
+_EASY_CHAIN = _WorkChain(0, EASY_PACE_SLOW_MARGIN_S, "z2", "easy (Z2 band)")
+_THRESHOLD_CHAIN = _WorkChain(
+    THRESHOLD_PACE_MARGIN_S, THRESHOLD_PACE_MARGIN_S, "z4", "threshold (Z4 band)"
+)
+
+
 class _Role(NamedTuple):
-    """One step role a run session type offers, and the structure keys that shape it."""
+    """One step role a run session type offers: what shapes it, and what it defaults to.
+
+    The keys are derived from the role name, bar the pre-11a minutes alias, which is
+    irregular on ``easy`` and so is spelled out.
+    """
 
     name: str
-    end_key: str
     min_key: str
+    default_s: int
+    default_target: _WorkChain | None = None
+
+    @property
+    def end_key(self) -> str:
+        """The structure key setting this role's end condition."""
+        return f"{self.name}_end"
 
     @property
     def target_key(self) -> str:
@@ -126,27 +158,23 @@ class _Role(NamedTuple):
         return f"{self.name}_target"
 
 
-# Per session type: the roles a structure override may shape. The min_key is the pre-11a
-# minutes alias kept for back-compat (easy spells its work role's alias ``duration_min``).
-# This table is the single source of which keys a session type accepts - both the end
-# conditions and the intensity targets are derived from it, so the two cannot drift apart.
+# Per session type: the roles a structure override may shape, in the order they are run.
+# This table is the single source of everything a role carries - the keys it accepts, its
+# default length, and the target it falls back to - so no two of those can drift apart.
 _STRUCTURE_ROLES = {
-    "easy": (_Role("work", "work_end", "duration_min"),),
+    "easy": (_Role("work", "duration_min", EASY_DEFAULT_S, _EASY_CHAIN),),
     "tempo": (
-        _Role("warmup", "warmup_end", "warmup_min"),
-        _Role("work", "work_end", "work_min"),
-        _Role("cooldown", "cooldown_end", "cooldown_min"),
+        _Role("warmup", "warmup_min", TEMPO_WARMUP_S),
+        _Role("work", "work_min", TEMPO_WORK_S, _THRESHOLD_CHAIN),
+        _Role("cooldown", "cooldown_min", TEMPO_COOLDOWN_S),
     ),
     "quality": (
-        _Role("warmup", "warmup_end", "warmup_min"),
-        _Role("work", "work_end", "work_min"),
-        _Role("recovery", "recovery_end", "recovery_min"),
-        _Role("cooldown", "cooldown_end", "cooldown_min"),
+        _Role("warmup", "warmup_min", QUALITY_WARMUP_S),
+        _Role("work", "work_min", QUALITY_WORK_S, _THRESHOLD_CHAIN),
+        _Role("recovery", "recovery_min", QUALITY_RECOVERY_S),
+        _Role("cooldown", "cooldown_min", QUALITY_COOLDOWN_S),
     ),
 }
-
-
-_NO_TARGET = {"type": "none"}
 
 # What an athlete writes in a ``<role>_target`` to ask for no target at all.
 _NO_TARGET_WORD = "none"
@@ -165,21 +193,31 @@ _ZONE_BOUNDS = {
 _EDGE_ZONE_GAPS = {"z1": "floor", "z5": "ceiling"}
 
 
-class _BandShape(NamedTuple):
-    """How to name one band kind's bounds when refusing a malformed one."""
+class _BandKind(NamedTuple):
+    """One band kind's error wording: how its bounds are spelled, and their ordering rule."""
 
-    bounds: str
-    inverted: str
+    bounds_spelling: str
+    order_rule: str
 
 
 # Both kinds are narrower-bound-first, so one ordering check serves both.
-_BAND_SHAPES = {
-    "hr_band": _BandShape("[low_bpm, high_bpm]", "low bound must be below the high bound"),
-    "pace_band": _BandShape(
+_BAND_KINDS = {
+    "hr_band": _BandKind("[low_bpm, high_bpm]", "low bound must be below the high bound"),
+    "pace_band": _BandKind(
         "[fast_s_per_km, slow_s_per_km]",
         "fast bound must be faster (smaller) than the slow bound",
     ),
 }
+
+
+def _no_target() -> dict[str, Any]:
+    """A fresh no-target descriptor.
+
+    Built per step rather than shared: a spec step is a plain dict that later stages
+    copy and decorate, so one module-level literal would alias across every untargeted
+    step in the workout.
+    """
+    return {"type": "none"}
 
 
 class HyroxSplitRequired(Exception):
@@ -340,17 +378,17 @@ def _expand_exercises(
     steps: list[dict[str, Any]] = []
     for entry in structure["exercises"]:
         work = _exercise_work_step(entry, warnings)
-        rest = {"kind": "rest", "end": _rest_end(entry, sport), "target": _NO_TARGET}
+        rest_end = _rest_end(entry, sport)
         for _ in range(entry["sets"]):
-            steps.append(dict(work))
-            steps.append(dict(rest))
+            steps.append(dict(work, target=_no_target()))
+            steps.append({"kind": "rest", "end": rest_end, "target": _no_target()})
     steps.pop()
     return steps
 
 
 def _exercise_work_step(entry: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
     """One entry's work step: end condition, resolved exercise label, optional weight."""
-    step: dict[str, Any] = {"kind": "work", "end": _exercise_end(entry), "target": _NO_TARGET}
+    step: dict[str, Any] = {"kind": "work", "end": _exercise_end(entry), "target": _no_target()}
     pair = exercises.resolve(entry["exercise"])
     if pair is None:
         warnings.append(
@@ -428,7 +466,7 @@ def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list
     ]
 
 
-def _work_pace_band(structure: dict[str, Any]) -> list[float] | None:
+def _work_pace_band(structure: dict[str, Any]) -> Sequence[float] | None:
     """The work step's explicit pace band from either spelling, or None when unset."""
     target = structure.get("work_target")
     if isinstance(target, dict) and "pace_band" in target:
@@ -488,50 +526,46 @@ class _Targets:
 
     def __init__(
         self,
-        session_type: str,
         request: dict[str, Any],
         zones: dict[str, Any] | None,
         warnings: list[str],
     ) -> None:
-        self._session_type = session_type
         self._request = request
         self._structure = request.get("structure") or {}
         self._zones = zones
         self._warnings = warnings
         self._resolved: dict[str, dict[str, Any]] = {}
 
-    def for_role(self, role: str) -> dict[str, Any]:
+    def for_role(self, role: _Role) -> dict[str, Any]:
         """The target for one step role, resolved on first ask and reused after."""
-        if role not in self._resolved:
-            self._resolved[role] = self._resolve(role)
-        return self._resolved[role]
+        if role.name not in self._resolved:
+            self._resolved[role.name] = self._resolve(role)
+        return self._resolved[role.name]
 
-    def _resolve(self, role: str) -> dict[str, Any]:
-        """An asked-for target wins; otherwise work runs its chain and the rest carry none."""
+    def _resolve(self, role: _Role) -> dict[str, Any]:
+        """An asked-for target wins; otherwise the role falls back to its table default."""
         asked = self._asked_for(role)
         if asked is not None:
             return asked
-        if role != "work":
-            return _NO_TARGET
-        if self._session_type == "easy":
-            return _easy_target(self._request, self._zones, self._warnings)
-        return _threshold_target(self._request, self._zones, self._warnings)
+        if role.default_target is None:
+            return _no_target()
+        return self._chain(role.default_target)
 
-    def _asked_for(self, role: str) -> dict[str, Any] | None:
+    def _asked_for(self, role: _Role) -> dict[str, Any] | None:
         """The target the athlete set on this role, or None when they set none.
 
         Honouring what was asked for is silent - the athlete already knows what
         they asked. Only a named zone the stored ladder cannot bound has anything
         to report, and it degrades to no target rather than failing the author.
         """
-        key = f"{role}_target"
-        target = self._structure.get(key)
+        target = self._structure.get(role.target_key)
         if target is None:
             return None
-        if target == _NO_TARGET_WORD:
-            return _NO_TARGET
         if isinstance(target, str):
-            return self._zone_band(target, key)
+            word = target.lower()
+            if word == _NO_TARGET_WORD:
+                return _no_target()
+            return self._zone_band(word, role.target_key)
         kind, band = next(iter(target.items()))
         return _band_target(kind, band)
 
@@ -544,8 +578,37 @@ class _Targets:
             self._warnings.append(
                 f"{key}: no {zone.upper()} heart-rate band in your zones; authored without a target"
             )
-            return _NO_TARGET
+            return _no_target()
         return {"type": "hr_band", "low_bpm": low, "high_bpm": high}
+
+    def _chain(self, chain: _WorkChain) -> dict[str, Any]:
+        """A work role's default: an explicit band, else the suggested pace widened to one.
+
+        The recommender only carries a measured pace when zones are regression-backed, so
+        an absent ``pace_target_s_per_km`` is the signal to degrade. An explicit athlete
+        band wins over both and suppresses the degradation.
+        """
+        band = _work_pace_band(self._structure)
+        if band is not None:
+            return _band_target("pace_band", band)
+        pace = self._request.get("pace_target_s_per_km")
+        if pace is None:
+            return self._degrade_to_hr(chain)
+        return _band_target("pace_band", [pace - chain.fast_margin_s, pace + chain.slow_margin_s])
+
+    def _degrade_to_hr(self, chain: _WorkChain) -> dict[str, Any]:
+        """Degrade a missing pace target to the chain's heart-rate band, then to none at all.
+
+        Its wording stays distinct from an unavailable asked-for target: here a
+        degradation genuinely happened, so the two events do not share one sentence.
+        """
+        low_key, high_key = _ZONE_BOUNDS[chain.zone]
+        zones = self._zones
+        if zones and zones.get(high_key) is not None:
+            self._warnings.append(f"no measured pace; targeting {chain.label} by heart rate")
+            return {"type": "hr_band", "low_bpm": zones[low_key], "high_bpm": zones[high_key]}
+        self._warnings.append("no target: no measured pace or heart-rate band; time only")
+        return _no_target()
 
 
 def _expand(
@@ -554,74 +617,40 @@ def _expand(
     zones: dict[str, Any] | None,
     warnings: list[str],
 ) -> list[dict[str, Any]]:
-    """Expand a session type into ordered spec steps, honouring any structure override."""
+    """Expand a session type into ordered spec steps, honouring any structure override.
+
+    Raises:
+        ValueError: If the session type has no run structure to expand.
+    """
+    roles = _STRUCTURE_ROLES.get(session_type)
+    if roles is None:
+        raise ValueError(f"unsupported session type: {session_type}")
     structure = request.get("structure") or {}
-    targets = _Targets(session_type, request, zones, warnings)
-    if session_type == "easy":
-        end = _end_condition(structure, "work_end", "duration_min", EASY_DEFAULT_S)
-        return [_step("work", end, targets.for_role("work"))]
-    if session_type == "tempo":
-        return _expand_tempo(structure, targets)
+    targets = _Targets(request, zones, warnings)
+    # Built in run order, so any warning a role raises reads in the order the athlete
+    # will run the session rather than in the order the payload nests them.
+    steps = [_role_step(structure, role, targets) for role in roles]
     if session_type == "quality":
-        return _expand_quality(structure, targets)
-    raise ValueError(f"unsupported session type: {session_type}")
+        return _with_repeat_block(steps, structure)
+    return steps
 
 
-def _expand_tempo(structure: dict[str, Any], targets: _Targets) -> list[dict[str, Any]]:
-    """Warmup + a continuous threshold block + cooldown."""
-    return [
-        _step(
-            "warmup",
-            _end_condition(structure, "warmup_end", "warmup_min", TEMPO_WARMUP_S),
-            targets.for_role("warmup"),
-        ),
-        _step(
-            "work",
-            _end_condition(structure, "work_end", "work_min", TEMPO_WORK_S),
-            targets.for_role("work"),
-        ),
-        _step(
-            "cooldown",
-            _end_condition(structure, "cooldown_end", "cooldown_min", TEMPO_COOLDOWN_S),
-            targets.for_role("cooldown"),
-        ),
-    ]
+def _role_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any]:
+    """One role's spec step: its resolved end condition and its resolved intensity target."""
+    return _step(role.name, _end_condition(structure, role), targets.for_role(role))
 
 
-def _expand_quality(structure: dict[str, Any], targets: _Targets) -> list[dict[str, Any]]:
-    """Warmup + a homogeneous repeat block of work + recovery + cooldown."""
-    # Built in step order so any warnings a role raises read in the order the
-    # athlete will run the session, the same way tempo's already do.
-    warmup = _step(
-        "warmup",
-        _end_condition(structure, "warmup_end", "warmup_min", QUALITY_WARMUP_S),
-        targets.for_role("warmup"),
-    )
+def _with_repeat_block(
+    steps: list[dict[str, Any]], structure: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Fold quality's work and recovery steps into the repeat block they run inside."""
+    warmup, work, recovery, cooldown = steps
     interval = {
         "kind": "repeat",
         "reps": int(structure.get("reps", QUALITY_REPS)),
-        "steps": [
-            _step(
-                "work",
-                _end_condition(structure, "work_end", "work_min", QUALITY_WORK_S),
-                targets.for_role("work"),
-            ),
-            _step(
-                "recovery",
-                _end_condition(structure, "recovery_end", "recovery_min", QUALITY_RECOVERY_S),
-                targets.for_role("recovery"),
-            ),
-        ],
+        "steps": [work, recovery],
     }
-    return [
-        warmup,
-        interval,
-        _step(
-            "cooldown",
-            _end_condition(structure, "cooldown_end", "cooldown_min", QUALITY_COOLDOWN_S),
-            targets.for_role("cooldown"),
-        ),
-    ]
+    return [warmup, interval, cooldown]
 
 
 def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
@@ -645,7 +674,6 @@ def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
                 f"structure sets both {role.end_key} and {role.min_key}; give only one"
             )
         _validate_end(end, role.end_key)
-    _validate_pace_band(structure)
     _validate_targets(structure, session_type)
 
 
@@ -666,8 +694,11 @@ def _validate_targets(structure: dict[str, Any], session_type: str) -> None:
         ValueError: If a target is malformed, or work sets both ``work_target`` and
             the older ``work_pace_band``.
     """
-    if structure.get("work_target") is not None and structure.get("work_pace_band") is not None:
-        raise ValueError("structure sets both work_target and work_pace_band; give only one")
+    legacy_band = structure.get("work_pace_band")
+    if legacy_band is not None:
+        _validate_band(legacy_band, "work_pace_band", "pace_band")
+        if structure.get("work_target") is not None:
+            raise ValueError("structure sets both work_target and work_pace_band; give only one")
     for role in _STRUCTURE_ROLES.get(session_type, ()):
         target = structure.get(role.target_key)
         if target is not None:
@@ -675,16 +706,14 @@ def _validate_targets(structure: dict[str, Any], session_type: str) -> None:
 
 
 def _validate_target(target: Any, key: str) -> None:
-    """Check one role's target is ``"none"`` or a single well-formed band.
+    """Check one role's target is a spelled-out word or a single well-formed band.
 
     Raises:
-        ValueError: If the target is neither the no-target word nor a one-key
-            ``hr_band``/``pace_band`` mapping holding a valid window.
+        ValueError: If the target is neither the no-target word, nor a nameable zone,
+            nor a one-key ``hr_band``/``pace_band`` mapping holding a valid window.
     """
-    if target == _NO_TARGET_WORD:
-        return
     if isinstance(target, str):
-        _validate_zone_name(target, key)
+        _validate_target_word(target, key)
         return
     if not isinstance(target, dict) or len(target) != 1:
         raise ValueError(
@@ -692,19 +721,22 @@ def _validate_target(target: Any, key: str) -> None:
             f"{{'hr_band': [low_bpm, high_bpm]}} / {{'pace_band': [fast_s_per_km, slow_s_per_km]}}"
         )
     kind, band = next(iter(target.items()))
-    if kind not in _BAND_SHAPES:
-        raise ValueError(f"{key} must be a {' or '.join(sorted(_BAND_SHAPES))}, not {kind}")
+    if kind not in _BAND_KINDS:
+        raise ValueError(f"{key} must be a {' or '.join(sorted(_BAND_KINDS))}, not {kind}")
     _validate_band(band, f"{key} {kind}", kind)
 
 
-def _validate_zone_name(zone: str, key: str) -> None:
-    """Check a named zone is one the heart-rate ladder can actually bound.
+def _validate_target_word(word: str, key: str) -> None:
+    """Check a spelled-out target is the no-target word or a zone the ladder can bound.
+
+    Case is not significant - the athlete says "Z3" as readily as "z3".
 
     Raises:
-        ValueError: If the zone is one of the open-ended outer zones, or is not a
-            zone name at all.
+        ValueError: If the zone is one of the open-ended outer zones, or the word is
+            neither the no-target word nor a zone name at all.
     """
-    if zone in _ZONE_BOUNDS:
+    zone = word.lower()
+    if zone == _NO_TARGET_WORD or zone in _ZONE_BOUNDS:
         return
     if zone in _EDGE_ZONE_GAPS:
         raise ValueError(
@@ -712,18 +744,6 @@ def _validate_zone_name(zone: str, key: str) -> None:
             'give an explicit {"hr_band": [low_bpm, high_bpm]} instead'
         )
     raise ValueError(f"{key} unknown zone {zone}; nameable zones are {', '.join(_ZONE_BOUNDS)}")
-
-
-def _validate_pace_band(structure: dict[str, Any]) -> None:
-    """Check the older explicit work pace band is a well-formed, faster-first window.
-
-    Raises:
-        ValueError: If the band is not a two-element positive ``[fast, slow]`` with
-            ``fast < slow``.
-    """
-    band = structure.get("work_pace_band")
-    if band is not None:
-        _validate_band(band, "work_pace_band", "pace_band")
 
 
 def _validate_band(band: Any, label: str, kind: str) -> None:
@@ -738,15 +758,15 @@ def _validate_band(band: Any, label: str, kind: str) -> None:
         ValueError: If the band is not two positive numbers, or its bounds are
             ordered the wrong way round.
     """
-    shape = _BAND_SHAPES[kind]
+    wording = _BAND_KINDS[kind]
     if (
         not isinstance(band, list | tuple)
         or len(band) != 2
         or not all(isinstance(x, int | float) and x > 0 for x in band)
     ):
-        raise ValueError(f"{label} must be {shape.bounds}, both positive")
+        raise ValueError(f"{label} must be {wording.bounds_spelling}, both positive")
     if band[0] >= band[1]:
-        raise ValueError(f"{label} {shape.inverted}")
+        raise ValueError(f"{label} {wording.order_rule}")
 
 
 def _validate_end(end: Any, end_key: str) -> None:
@@ -769,17 +789,15 @@ def _validate_end(end: Any, end_key: str) -> None:
         raise ValueError(f"{end_key} min must be positive")
 
 
-def _end_condition(
-    structure: dict[str, Any], end_key: str, min_key: str, default_s: int
-) -> dict[str, Any]:
+def _end_condition(structure: dict[str, Any], role: _Role) -> dict[str, Any]:
     """Resolve a role's end: an explicit end descriptor, an old ``*_min`` alias, or default."""
-    end = structure.get(end_key)
+    end = structure.get(role.end_key)
     if end is not None:
         return _end_descriptor(end)
-    minutes = structure.get(min_key)
+    minutes = structure.get(role.min_key)
     if minutes is not None:
         return {"type": "time", "seconds": round(float(minutes) * 60)}
-    return {"type": "time", "seconds": default_s}
+    return {"type": "time", "seconds": role.default_s}
 
 
 def _end_descriptor(end: Any) -> dict[str, Any]:
@@ -791,7 +809,7 @@ def _end_descriptor(end: Any) -> dict[str, Any]:
     return {"type": "time", "seconds": round(float(end["min"]) * 60)}
 
 
-def _band_target(kind: str, band: list[float]) -> dict[str, Any]:
+def _band_target(kind: str, band: Sequence[float]) -> dict[str, Any]:
     """An explicit band as a spec target, in the bound order its kind spells."""
     if kind == "hr_band":
         return {"type": "hr_band", "low_bpm": band[0], "high_bpm": band[1]}
@@ -801,70 +819,6 @@ def _band_target(kind: str, band: list[float]) -> dict[str, Any]:
 def _step(kind: str, end: dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
     """A spec step with an explicit end descriptor (time / distance / lap)."""
     return {"kind": kind, "end": end, "target": target}
-
-
-def _easy_target(
-    request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
-) -> dict[str, Any]:
-    """The easy step's target: at or slower than the Z2 ceiling, degrading to HR -> none.
-
-    The recommender only carries a measured pace when zones are regression-backed,
-    so an absent ``pace_target_s_per_km`` is the signal to degrade. An explicit
-    athlete band wins over both and suppresses the degradation.
-    """
-    explicit = _explicit_band(request)
-    if explicit is not None:
-        return explicit
-    pace = request.get("pace_target_s_per_km")
-    if pace is not None:
-        return {
-            "type": "pace_band",
-            "fast_s_per_km": pace,
-            "slow_s_per_km": pace + EASY_PACE_SLOW_MARGIN_S,
-        }
-    return _hr_or_none(zones, "z1_hi_bpm", "z2_hi_bpm", "easy (Z2 band)", warnings)
-
-
-def _threshold_target(
-    request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
-) -> dict[str, Any]:
-    """A threshold work target: an explicit band, else a band around threshold pace, else HR."""
-    explicit = _explicit_band(request)
-    if explicit is not None:
-        return explicit
-    pace = request.get("pace_target_s_per_km")
-    if pace is not None:
-        return {
-            "type": "pace_band",
-            "fast_s_per_km": pace - THRESHOLD_PACE_MARGIN_S,
-            "slow_s_per_km": pace + THRESHOLD_PACE_MARGIN_S,
-        }
-    return _hr_or_none(zones, "z3_hi_bpm", "z4_hi_bpm", "threshold (Z4 band)", warnings)
-
-
-def _explicit_band(request: dict[str, Any]) -> dict[str, Any] | None:
-    """The athlete's custom work pace band as a target, or None when not given."""
-    structure = request.get("structure") or {}
-    band = structure.get("work_pace_band")
-    if band is None:
-        return None
-    fast, slow = band
-    return {"type": "pace_band", "fast_s_per_km": fast, "slow_s_per_km": slow}
-
-
-def _hr_or_none(
-    zones: dict[str, Any] | None,
-    low_key: str,
-    high_key: str,
-    label: str,
-    warnings: list[str],
-) -> dict[str, Any]:
-    """Degrade a missing pace target to a heart-rate band, then to no target at all."""
-    if zones and zones.get(high_key) is not None:
-        warnings.append(f"no measured pace; targeting {label} by heart rate")
-        return {"type": "hr_band", "low_bpm": zones[low_key], "high_bpm": zones[high_key]}
-    warnings.append("no target: no measured pace or heart-rate band; time only")
-    return {"type": "none"}
 
 
 # Garmin sport-type descriptors for the exercise sports.

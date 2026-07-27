@@ -183,11 +183,13 @@ homogeneous interval block) beyond its defaults. Keys:
   `{"pace_band": [fast_s_per_km, slow_s_per_km]}`, narrower bound first. A zone name
   always means heart rate. `"z1"` and `"z5"` are refused - the ladder stores four upper
   bounds, so the outer zones have no floor and no ceiling; give them as an explicit
-  `hr_band`. Omitting the key keeps the role's default: no target on `warmup`, `recovery`,
-  and `cooldown`, the pace -> HR -> none chain on `work`. `work_target` and
-  `work_pace_band` are two spellings of one thing; giving both is an error. A named zone
-  with no stored band is a (non-blocking) warning and a step with no target - authoring
-  never fails over an unavailable target.
+  `hr_band`. Zone names and `"none"` are case-insensitive (`"Z2"` reads as `"z2"`).
+  Omitting the key keeps the role's default: no target on `warmup`, `recovery`, and
+  `cooldown`, the pace -> HR -> none chain on `work`. `work_target` and `work_pace_band`
+  are two spellings of one thing; giving both is an error, and either spelling triggers the
+  faster-than-advised warning above. Asking for a target and getting it is otherwise
+  silent; a named zone with no stored band is a (non-blocking) warning and a step with no
+  target - authoring never fails over an unavailable target.
 
 **Strength / HIIT sessions (issue #16).** `sport: strength` (session type `strength`) and
 `sport: hiit` (session types `hyrox` / `crossfit`) author from a `structure.exercises`

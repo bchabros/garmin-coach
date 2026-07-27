@@ -1102,6 +1102,34 @@ def test_to_garmin_encodes_an_explicit_warmup_pace_band():
     assert warmup["targetType"]["workoutTargetTypeKey"] == "pace.zone"
 
 
+def test_to_garmin_encodes_an_explicit_cooldown_hr_band():
+    spec = author(
+        _targets(session_type="tempo", cooldown_target={"hr_band": [110, 140]}), _context()
+    )
+    cooldown = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][2]
+    assert cooldown["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert cooldown["targetValueOne"] == 110
+    assert cooldown["targetValueTwo"] == 140
+
+
+def test_to_garmin_encodes_a_recovery_hr_band_inside_the_repeat():
+    spec = author(_targets(recovery_target={"hr_band": [115, 135]}), _context())
+    recovery = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][1]["workoutSteps"][1]
+    assert recovery["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert recovery["targetValueOne"] == 115
+    assert recovery["targetValueTwo"] == 135
+
+
+def test_untargeted_steps_do_not_share_one_target():
+    # every step's target is its own dict; a shared literal would let a later
+    # stage editing one untargeted step silently retarget all the others.
+    spec = author(_targets(session_type="tempo", pace=None), _context(zones=None))
+    warmup, work, cooldown = spec["steps"]
+    assert warmup["target"] == work["target"] == cooldown["target"] == {"type": "none"}
+    assert warmup["target"] is not cooldown["target"]
+    assert warmup["target"] is not work["target"]
+
+
 # --- issue #47: zone names resolved from athlete zones -----------------------
 
 
@@ -1150,6 +1178,19 @@ def test_zone_five_is_refused_and_points_at_an_explicit_band():
 def test_an_unknown_zone_name_is_refused():
     with pytest.raises(ValueError, match="unknown zone"):
         author(_targets(warmup_target="z9"), _context())
+
+
+def test_a_zone_name_is_read_whatever_its_case():
+    # the athlete writes "Z2" as readily as "z2"; both name the same rung.
+    spec = author(_targets(warmup_target="Z2", cooldown_target="NONE"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert spec["steps"][2]["target"] == {"type": "none"}
+    assert spec["warnings"] == []
+
+
+def test_an_upper_case_edge_zone_is_refused_the_same_way():
+    with pytest.raises(ValueError, match="cannot name z5"):
+        author(_targets(warmup_target="Z5"), _context())
 
 
 def test_a_zone_name_without_any_zones_row_warns_and_drops_the_target():

@@ -68,6 +68,13 @@ anchors only (threshold pace, the Z2 pace ceiling) - no ladder.
   with no target rather than failing the session. The work chain's pace-to-heart-rate
   degradation keeps its own wording, because there a degradation genuinely happened.
 
+  One warning survives that rule by not being about resolution at all. A work pace band
+  clearly faster than the recommender's suggestion is still cited, under either spelling.
+  It does not report that the athlete failed to get what they asked for - they got exactly
+  it - it reports that the pace they asked for is harder than the day's advice. Silencing
+  it for `work_target` alone would let the newer spelling escape a check its older synonym
+  triggers, which is the kind of silent hole this ADR exists to close.
+
 Default values are deliberately **not** recorded here. An absent key preserves today's
 behaviour on every role, and that is ordinary behaviour, reversible in one line, not an
 architectural commitment.

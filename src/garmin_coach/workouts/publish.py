@@ -171,14 +171,8 @@ def receipt_workout_id(day_dir: pathlib.Path | str) -> int | None:
         The recorded id, or None when the date has no receipt, the file is unreadable,
         or the push never got as far as naming a workout.
     """
-    path = pathlib.Path(day_dir) / "push.json"
-    if not path.exists():
-        return None
-    try:
-        receipt = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    return receipt.get("workout_id") if isinstance(receipt, dict) else None
+    receipt = _json_object(_read_artifact(pathlib.Path(day_dir) / "push.json"))
+    return receipt.get("workout_id") if receipt is not None else None
 
 
 def publish(
@@ -435,6 +429,45 @@ def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[
         "planned_intent": planned,
         "pushed_at": body.get("pushed_at"),
     }
+
+
+def invalidated_pushes(
+    reports_dir: pathlib.Path | str, planned_by_date: dict[str, str | None]
+) -> list[dict[str, Any]]:
+    """The dates in a week whose already-pushed workout the plan no longer allows.
+
+    The import-time half of :func:`plan_divergence` (issue #22): revising a week is
+    when a divergence is created, so it is reported there rather than waiting for
+    someone to ask about that day.
+
+    Args:
+        reports_dir: Root of the per-day report artifacts.
+        planned_by_date: Each date of the week mapped to its planned intent (see
+            ``core.plan.planned_by_date``).
+
+    Returns:
+        One ``{date, pushed_type, planned_intent, pushed_at}`` per conflicting date,
+        in date order. Empty when the plan still allows everything already pushed.
+    """
+    conflicts = []
+    for date in sorted(planned_by_date):
+        day_dir = pathlib.Path(reports_dir) / date
+        divergence = plan_divergence(
+            _read_artifact(day_dir / "push.json"),
+            _read_artifact(day_dir / "workout.json"),
+            planned_by_date[date],
+        )
+        if divergence is not None:
+            conflicts.append({"date": date, **divergence})
+    return conflicts
+
+
+def _read_artifact(path: pathlib.Path) -> object | None:
+    """A parsed report artifact, or None when it is absent or unreadable."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)

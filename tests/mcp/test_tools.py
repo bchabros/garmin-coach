@@ -1378,3 +1378,39 @@ def test_a_date_that_was_never_pushed_has_nothing_to_diverge(conn, tmp_path):
     out = _status(conn, tmp_path, FakePublisher())
 
     assert out["data"]["plan_divergence"] is None
+
+
+def test_plan_confirm_reports_a_pushed_workout_the_new_plan_invalidates(conn, tmp_path):
+    """Confirming a week that drops Friday to easy must surface the tempo session
+    already sitting on the watch for that Friday."""
+    reports, plans = tmp_path / "reports", tmp_path / "plans"
+    reports.mkdir()
+    plans.mkdir()
+    _seed_pushed(reports, session_type="tempo")
+
+    out = tools.plan_confirm(
+        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+    )
+
+    assert out["data"]["written"] is True
+    assert out["data"]["invalidated_pushes"] == [
+        {
+            "date": PUSH_DATE,
+            "pushed_type": "tempo",
+            "planned_intent": "easy",
+            "pushed_at": PUSHED_AT,
+        }
+    ]
+
+
+def test_plan_confirm_reports_nothing_when_the_new_plan_still_allows_the_push(conn, tmp_path):
+    reports, plans = tmp_path / "reports", tmp_path / "plans"
+    reports.mkdir()
+    plans.mkdir()
+    _seed_pushed(reports, session_type="easy")
+
+    out = tools.plan_confirm(
+        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+    )
+
+    assert out["data"]["invalidated_pushes"] == []

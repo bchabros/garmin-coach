@@ -256,6 +256,15 @@ def guard_error(date: str, session_type: str | None, planned: str | None) -> str
     )
 
 
+def planned_by_date(conn: sqlite3.Connection, week_start: str) -> dict[str, str | None]:
+    """Every date of one week mapped to its planned intent.
+
+    What a reader outside the DB needs to judge a whole week at once - checking the
+    week's already-pushed workouts against a freshly imported plan (issue #22).
+    """
+    return {day["date"]: day.get("intent") for day in resolve_week(conn, week_start)}
+
+
 def has_override(conn: sqlite3.Connection, week_start: str) -> bool:
     """Return True when the week has authored ``plan_week`` rows."""
     row = conn.execute(

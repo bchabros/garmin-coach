@@ -426,6 +426,7 @@ def plan_confirm(
     week_start: str,
     days: list[dict[str, Any]],
     plans_dir: str = "plans",
+    reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Write a previewed week to ``plans/<monday>_week.md`` and cache it.
 
@@ -434,6 +435,10 @@ def plan_confirm(
     revising an authored week stays a manual edit + re-import (issue #21). The
     written file goes back through the same parser as a hand-written plan, so
     there is exactly one ingestion path.
+
+    ``invalidated_pushes`` names the days of the confirmed week whose already-pushed
+    workout the new plan no longer allows (issue #22) - the write succeeded, and
+    those days need re-authoring.
     """
     resolved, error = _validate_proposal(week_start, days, plans_dir)
     if error is not None:
@@ -451,6 +456,9 @@ def plan_confirm(
         "written": True,
         "path": str(path),
         "days": resolved,
+        "invalidated_pushes": publish.invalidated_pushes(
+            reports_dir, plan.planned_by_date(conn, week_start)
+        ),
         "error": None,
     }
     return _wrap(conn, data)

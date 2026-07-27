@@ -487,6 +487,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         conn.close()
         print(f"plan import failed: {exc}")
         return 1
+    conflicts = [
+        conflict
+        for week in imported
+        for conflict in publish.invalidated_pushes(
+            args.reports_dir, _plan.planned_by_date(conn, week)
+        )
+    ]
     conn.close()
 
     if not imported:
@@ -494,6 +501,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(f"plan import: no plan file for {target} in {plans_dir}")
         return 1
     print(f"plan import complete: {', '.join(imported)} ({len(imported)} week(s) from {plans_dir})")
+    for conflict in conflicts:
+        print(
+            f"  conflict: {conflict['date']} has a pushed {conflict['pushed_type']} workout, "
+            f"but the plan now says {conflict['planned_intent']}; re-author and re-push it"
+        )
     return 0
 
 
@@ -825,6 +837,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="plans_dir",
         default=None,
         help="Directory of plan files (default: the configured plans_dir).",
+    )
+    pl_imp.add_argument(
+        "--reports-dir",
+        dest="reports_dir",
+        default="./reports",
+        help="Root directory for dated report folders (checked for invalidated pushes).",
     )
     pl_imp.set_defaults(func=_cmd_plan)
 

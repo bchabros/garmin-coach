@@ -124,10 +124,20 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
 
     Refused when the week already has a plan file - revise that one by hand and
     re-import, so its prose and revision log are never clobbered.
+
+    ``invalidated_pushes`` lists days of the confirmed week that already have a
+    workout on the account harder than the new plan allows. The week is written
+    either way; tell the athlete which days need re-authoring.
     """
     conn = _open()
     try:
-        return tools.plan_confirm(conn, week_start=week_start, days=days, plans_dir=_PLANS_DIR)
+        return tools.plan_confirm(
+            conn,
+            week_start=week_start,
+            days=days,
+            plans_dir=_PLANS_DIR,
+            reports_dir=_REPORTS_DIR,
+        )
     finally:
         conn.close()
 

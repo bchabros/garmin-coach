@@ -219,25 +219,30 @@ def _as_account_clock(local_iso, *, minutes_after=0):
     return instant.replace(tzinfo=None).isoformat() + ".0"
 
 
-def _seed_pushed(tmp_path, *, spec=None, workout_id=1000, date=PUSH_DATE, spec_hash=None):
-    """Write a workout spec and an applied push receipt for a date."""
+def _seed_pushed(
+    tmp_path, *, spec=None, workout_id=1000, date=PUSH_DATE, spec_hash=None, session_type=None
+):
+    """Write a workout spec and an applied push receipt for a date.
+
+    ``session_type`` is left off by default: receipts written before issue #22 carry
+    no such field, and the divergence check has to keep working on them.
+    """
     spec = spec or run_spec(date=date)
     day_dir = tmp_path / date
     day_dir.mkdir(exist_ok=True)
     (day_dir / "workout.json").write_text(json.dumps(spec))
-    (day_dir / "push.json").write_text(
-        json.dumps(
-            {
-                "action": "create",
-                "applied": True,
-                "name": spec["name"],
-                "date": date,
-                "workout_id": workout_id,
-                "spec_hash": spec_hash or publish.spec_hash(spec),
-                "pushed_at": PUSHED_AT,
-            }
-        )
-    )
+    receipt = {
+        "action": "create",
+        "applied": True,
+        "name": spec["name"],
+        "date": date,
+        "workout_id": workout_id,
+        "spec_hash": spec_hash or publish.spec_hash(spec),
+        "pushed_at": PUSHED_AT,
+    }
+    if session_type is not None:
+        receipt["session_type"] = session_type
+    (day_dir / "push.json").write_text(json.dumps(receipt))
     return day_dir
 
 
@@ -1332,3 +1337,44 @@ def test_the_push_receipt_records_the_plan_it_was_measured_against(
 
     receipt = json.loads((tmp_path / FUTURE / "push.json").read_text())
     assert receipt["planned_intent"] == "quality"
+
+
+def test_status_reports_no_divergence_while_the_plan_still_allows_the_push(conn, tmp_path):
+    _seed_pushed(tmp_path)  # a tempo push; 2026-07-17 is a quality day by template
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] is None
+
+
+def test_status_reports_divergence_once_the_plan_drops_below_the_pushed_session(conn, tmp_path):
+    """The 2026-07-17 case as a read: the session is on the watch and the plan that
+    would have justified it is gone."""
+    _seed_pushed(tmp_path)
+    _seed_plan(conn, PUSH_DATE, "easy")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] == {
+        "pushed_type": "tempo",
+        "planned_intent": "easy",
+        "pushed_at": PUSHED_AT,
+    }
+
+
+def test_the_divergence_reads_the_type_the_receipt_recorded_over_a_respec(conn, tmp_path):
+    """A spec re-authored after the push says nothing about what is on the watch."""
+    _seed_pushed(tmp_path, session_type="quality")
+    _seed_plan(conn, PUSH_DATE, "easy")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"]["pushed_type"] == "quality"
+
+
+def test_a_date_that_was_never_pushed_has_nothing_to_diverge(conn, tmp_path):
+    _seed_plan(conn, PUSH_DATE, "rest")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] is None

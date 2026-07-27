@@ -206,23 +206,27 @@ def get_workout_status(
     connect: Callable[[], publish.WorkoutPublisher],
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Return the authored spec, the push receipt, and the receipt reconciled with Garmin.
+    """Return the authored spec, the push receipt, the account finding, and the plan check.
 
     The receipt records what a push did; it is never presented as what the account
     holds now (issue #41). ``reconciled`` is the fresh account-side finding and sits
     beside the untouched receipt, because "we pushed it and it worked" stays true
     even after the athlete deletes the workout.
 
+    ``plan_divergence`` answers the other question a receipt cannot: whether the plan
+    of record still allows what is on the watch (issue #22). It needs no account read -
+    the plan lives in the DB - so it is reported even when Garmin is unreachable.
+
     Args:
-        conn: The finished DB, for the freshness envelope.
+        conn: The finished DB, for the plan of record and the freshness envelope.
         date: The day whose workout is being asked about.
         connect: Builds the Garmin read surface, called only when a receipt names a
             workout to check - so a date with no push never logs in.
         reports_dir: Root of the per-day report artifacts.
 
     Returns:
-        The wrapped ``date``/``workout``/``push``/``reconciled`` block; ``reconciled``
-        is None when there is no receipt to check.
+        The wrapped ``date``/``workout``/``push``/``reconciled``/``plan_divergence``
+        block; the last two are None when there is no receipt to check.
     """
     day_dir = _day_dir(reports_dir, date)
     push = _read_json(day_dir / "push.json")
@@ -234,6 +238,7 @@ def get_workout_status(
         "workout": workout,
         "push": _receipt_view(push),
         "reconciled": finding.as_finding() if finding is not None else None,
+        "plan_divergence": publish.plan_divergence(push, workout, plan.planned_intent(conn, date)),
     }
     return _wrap(conn, data)
 

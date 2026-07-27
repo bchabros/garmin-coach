@@ -328,6 +328,16 @@ def test_a_spec_at_or_below_the_plan_pushes_normally():
     assert result.applied is True
 
 
+def test_the_receipt_records_the_session_that_was_pushed():
+    """The spec on disk can be re-authored later; the receipt is what still says
+    which session actually went to the account."""
+    pub = FakePublisher()
+
+    receipt = publish(_spec(), pub, confirm=True, planned_intent="quality").as_receipt()
+
+    assert receipt["session_type"] == "tempo"
+
+
 def test_the_receipt_records_the_plan_the_push_was_measured_against():
     """So a later read can tell a plan that changed under a workout from one that
     was already wrong when it was pushed."""

@@ -101,6 +101,7 @@ class PublishResult:
     schedule_id: int | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    session_type: str | None = None
     planned_intent: str | None = None
 
     def as_receipt(self) -> dict[str, Any]:
@@ -113,6 +114,7 @@ class PublishResult:
             "workout_id": self.workout_id,
             "schedule_id": self.schedule_id,
             "spec_hash": self.spec_hash,
+            "session_type": self.session_type,
             "planned_intent": self.planned_intent,
             "error": self.error,
             "warnings": self.warnings,
@@ -219,7 +221,8 @@ def publish(
     if date in activity_dates:
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
-    too_hard = _plan.guard_error(date, spec.get("session_type"), planned_intent)
+    session_type = spec.get("session_type")
+    too_hard = _plan.guard_error(date, session_type, planned_intent)
     if too_hard is not None:
         return PublishResult(
             action="refuse",
@@ -229,6 +232,7 @@ def publish(
             payload=payload,
             message=too_hard,
             warnings=warnings,
+            session_type=session_type,
             planned_intent=planned_intent,
         )
 
@@ -242,6 +246,7 @@ def publish(
         payload=payload,
         message=conflict or _message(action),
         warnings=warnings,
+        session_type=session_type,
         planned_intent=planned_intent,
     )
     if existing is not None:
@@ -395,6 +400,41 @@ def reconcile(
         logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
         return _unverified(body)
     return _finding(facts, body, pushed)
+
+
+def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[str, Any] | None:
+    """Report a pushed workout the plan of record no longer allows (issue #22).
+
+    Divergence means *harder than* the plan, not merely different from it: a session
+    below the plan is the sanctioned downgrade the recommender produces daily, and
+    reporting that would drown the real case. This is the same comparison the author
+    and push guards refuse on, asked of a workout already on the account - which is
+    the only way it can arise, by the plan being revised after the push.
+
+    Pure over parsed artifacts, so both readers of it - a status read and a plan
+    import - answer the same question about the same date.
+
+    Args:
+        receipt: The parsed ``push.json`` body, or None when the date has no push.
+        spec: The parsed authored spec; consulted only for receipts written before
+            the receipt carried its own ``session_type``.
+        planned: The plan of record's intent for the date *now*.
+
+    Returns:
+        ``{pushed_type, planned_intent, pushed_at}``, or None when nothing was
+        pushed, the session is at or below the plan, or the type is unknowable.
+    """
+    body = _json_object(receipt)
+    if body is None or body.get("workout_id") is None:
+        return None
+    pushed_type = body.get("session_type") or (_json_object(spec) or {}).get("session_type")
+    if not _plan.is_harder(pushed_type, planned):
+        return None
+    return {
+        "pushed_type": pushed_type,
+        "planned_intent": planned,
+        "pushed_at": body.get("pushed_at"),
+    }
 
 
 @dataclass(frozen=True)

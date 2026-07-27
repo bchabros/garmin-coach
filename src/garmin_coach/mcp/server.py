@@ -170,6 +170,12 @@ def get_workout_status(date: str) -> dict[str, Any]:
     ``renamed_to`` is the athlete's own title for it (allowed, not a fault), and
     ``checked_at`` is when the account was consulted. On ``unverified``,
     ``last_known`` carries the previous finding.
+
+    ``plan_divergence`` is the separate, offline question: non-null when the session
+    on the account is *harder* than the plan of record now says for that date, naming
+    the pushed type, the current planned intent, and when it was pushed. It means the
+    plan was revised after the push - report it and offer to re-author; nothing is
+    changed on the watch automatically.
     """
     conn = _open()
     try:
@@ -252,6 +258,11 @@ def author_workout(
     date, its intent picking the sport unless an explicit ``sport`` overrides
     it; with one, the athlete/hybrid request (including a custom ``structure``
     block) is authored as-is. Pure - nothing touches Garmin.
+
+    A session harder than the plan of record for that date is refused, naming both
+    intents: the plan is the coaching decision, so change the plan first (a manual
+    edit of ``plans/<monday>_week.md`` plus ``plan import``, or ``plan_confirm`` for
+    a week with no plan yet). Anything at or below the plan authors normally.
     """
     conn = _open()
     try:
@@ -267,8 +278,13 @@ def push_preview(date: str) -> dict[str, Any]:
     """Dry-run the push for a date: resolved action, Garmin payload, and confirm token.
 
     Nothing is written. Show the result to the athlete; the returned
-    ``confirm_token`` is what ``push_confirm`` requires. It covers the workout and
-    the date it is scheduled for, so retargeting the spec invalidates the preview.
+    ``confirm_token`` is what ``push_confirm`` requires. It covers the workout, the
+    date it is scheduled for, and the plan of record for that date, so retargeting
+    the spec or revising the plan invalidates the preview.
+
+    ``action: refuse`` with a message about the plan means the spec is harder than
+    the plan of record now allows - the plan was revised after it was authored.
+    Re-author the date instead of pushing.
     """
     settings = get_settings()
     conn = _open()
@@ -285,7 +301,8 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
 
     Requires the ``confirm_token`` returned by ``push_preview`` - any other value
     is refused without touching the account. ``replace`` overwrites a changed
-    same-name workout, mirroring the CLI's --replace.
+    same-name workout, mirroring the CLI's --replace; it does not override the plan
+    guard, which refuses a session harder than the plan of record either way.
     """
     settings = get_settings()
     conn = _open()

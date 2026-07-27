@@ -153,6 +153,12 @@ code, docstrings, PRDs, and ADRs.
   otherwise read `easy`), `easy` for any lighter activity, `rest` for no activity. A
   day the athlete trained without wearing the watch is invisible to the system and
   reads as `rest` (an ETL limitation, by decision, not a bug).
+- **intent rank (hardness ladder)** - how hard each planned intent is, as one order
+  over the whole vocabulary: `rest 0 < easy 1 < tempo = strength 2 < hyrox =
+  crossfit = quality 3`. The top three share a rank because they are different
+  sessions, not different intensities. One ladder read in two directions: the
+  recommender only ever descends it (see *downgrade*), and the *plan guard* refuses
+  to climb it. See ADR 0021.
 - **intent class** - the measurable class a planned intent collapses to for
   comparison: `rest`, `easy`, `strength`, or `quality` (which absorbs `tempo`,
   `hyrox`, `crossfit`). The planned vocabulary is deliberately richer than the mart
@@ -338,6 +344,21 @@ code, docstrings, PRDs, and ADRs.
 - **rest default (exercise sports)** - the between-sets rest applied when an
   exercise entry gives none: 90 s for `strength`, 60 s for `hiit`; overridable
   per entry (`{"min"/"s"}` or `"lap"`). The session's trailing rest is dropped.
+- **plan guard** - the refusal of any session harder than the plan of record for its
+  date, measured on the *intent rank* ladder (issue #22, ADR 0021). It runs twice:
+  `author` refuses to write such a spec, and `publish` refuses to send one, because a
+  spec authored before the plan was revised is exactly what the author-time check
+  cannot see. Softer is never refused - that is the recommender's downgrade. Not
+  overridable by `--replace`; the remedy is to change the plan for that date.
+- **plan divergence** - a workout already on the account that is harder than the plan
+  of record now says for its date, reported (never repaired) as `{pushed_type,
+  planned_intent, pushed_at}`. It can only arise from a plan revised after the push,
+  since both guards refuse it at write time. Read from the DB and the receipt, so it
+  is answered even when the account is unreachable.
+- **invalidated push** - the same divergence found at plan-ingestion time: `plan
+  import` and `plan_confirm` check the imported week's dates against their receipts
+  and name the days that now need re-authoring. Revising a week is when a divergence
+  is created, so it is reported there rather than waiting to be asked about.
 - **exercise whitelist** - the curated map from the athlete's exercise names to
   Garmin `category`/`exerciseName` pairs, held to Garmin Connect's public
   exercise taxonomy by contract tests (the athlete's logged sets carry no enums,
@@ -373,8 +394,11 @@ code, docstrings, PRDs, and ADRs.
   workouts refuses and names them - an earlier push already duplicated something, and
   guessing would let `--replace` delete the wrong one.
 - **push receipt** - `reports/{date}/push.json`: what a push *did* (`action`, `applied`,
-  `workout_id`, `spec_hash`, `pushed_at`). A record of an event, never a statement about
-  what the Garmin account holds now - that is what reconciliation is for.
+  `workout_id`, `spec_hash`, `session_type`, `planned_intent`, `pushed_at`). A record of
+  an event, never a statement about what the Garmin account holds now - that is what
+  reconciliation is for. `session_type` and `planned_intent` are what went up and the
+  plan it was measured against, so a spec re-authored later cannot be mistaken for what
+  is on the watch (ADR 0021); receipts written before them fall back to the local spec.
 - **reconciled block** - the finding appended to the receipt under `reconciled`, so a
   later read (offline included) is not thrown back on the stale claim. The receipt's own
   fields are never mutated: the file ends up saying both what was done and what became
@@ -419,9 +443,10 @@ code, docstrings, PRDs, and ADRs.
 - **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
   (name + steps) is the account-side idempotency marker written into the Garmin
   workout description; it ignores the date on purpose, so rescheduling a workout is
-  not a different workout. `confirm_token` (name + steps + date) gates
-  preview -> confirm, because the date decides what gets scheduled and which day's
-  activity collision was checked.
+  not a different workout. `confirm_token` (name + steps + date + planned intent)
+  gates preview -> confirm, because the date decides what gets scheduled and which
+  day's activity collision was checked, and the planned intent decides whether the
+  push is allowed at all (ADR 0021).
 
 ## Process terms
 

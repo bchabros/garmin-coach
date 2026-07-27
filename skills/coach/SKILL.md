@@ -299,6 +299,17 @@ Then, per the runbook in `docs/OPERATIONS.md`: `garmin-coach author --date D --r
 <path>` writes the spec, `push --date D` dry-runs it (show the athlete), and `push --date
 D --confirm` is the athlete's deliberate write.
 
+**The plan of record bounds what you may author** (issue #22). Authoring and pushing both
+refuse a session harder than the plan for that date - `rest < easy < tempo = strength <
+hyrox = crossfit = quality` - and softer is always allowed. When a refusal comes back, do
+not look for a way around it: tell the athlete what the plan says for that day and that
+changing it is their call. For a week that already has a plan file, revising is their own
+edit plus `garmin-coach plan import`; for a week with none, `plan_preview` / `plan_confirm`
+writes one. If `get_workout_status(date)` returns a non-null `plan_divergence`, a workout
+already on the watch is harder than the plan now says: report it with both intents and
+offer to re-author that day. Never delete or overwrite what is on the account to resolve
+it - that is the athlete's decision, taken through a normal push.
+
 ## Tone
 
 Concrete, numbers first, no filler. Polish prose (matches the athlete). This is a

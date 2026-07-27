@@ -44,7 +44,11 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   rebuilds the marts.
 - **After editing a plan:** `plan import` caches `plans/*.md` immediately (idempotent;
   re-importing a mid-week revision just overwrites). The nightly run does the same scan,
-  so an edit takes effect by morning at the latest.
+  so an edit takes effect by morning at the latest. A revision that leaves an
+  already-pushed workout harder than the new plan prints a `conflict:` line naming that
+  date (issue #22) -- the import still succeeds; re-author and re-push that day. It reads
+  the receipts under `--reports-dir` (default `./reports`); the nightly scan does not
+  perform this check.
 - **Nightly:** `daily` (or `scripts/daily.sh`) chains plans -> sync -> features -> alerts.
   Alerts are the digest's `warn`/`alert` signals, logged; **no charts** on the nightly path.
   A malformed plan file **degrades** the run (exit 1) and names the file -- it never falls
@@ -147,6 +151,12 @@ never run from the nightly automation, and it bends the golden rule deliberately
    pace, an override of the recommender's advice, an unknown exercise) are printed and
    written into the spec.
 
+   **A session harder than the plan of record for that date is refused** (issue #22,
+   ADR 0021), naming both intents; softer is always allowed. The hardness order is
+   `rest < easy < tempo = strength < hyrox = crossfit = quality`. To author above the
+   plan, change the plan first: edit `plans/<monday>_week.md` and re-run
+   `garmin-coach plan import`.
+
 2. **Push** -- **dry-run unless `--confirm`.** No `--confirm` prints the payload and exits
    without touching the account; there is no `--dry-run` flag to forget:
 
@@ -162,6 +172,11 @@ never run from the nightly automation, and it bends the golden rule deliberately
    running `push` again -- it skips the upload. Exit codes: `0` success/dry-run/no-op, `1`
    refused (needs `--replace`) or missing spec, `2` a partial push (see the `error` in
    `push.json`).
+
+   The plan guard runs here **again**, against the plan as it stands at push time: a spec
+   authored before the plan was revised is refused (exit `1`), and `--replace` does not
+   override it -- that flag overwrites a different workout, it is not a licence to outrank
+   the plan. Re-author the date instead.
 
 **Custom run structure (Phase 11a).** An `athlete`/hybrid request may carry a `structure`
 block that shapes the run template (`warmup + reps x (work + recovery) + cooldown`, one
@@ -290,17 +305,22 @@ Which clients pick it up and how is covered in "Registering the server" below �
   to validate and **show the table to the athlete**, then `plan_confirm(week_start,
   days)` to write `plans/<monday>_week.md` and cache it. Confirm **refuses an
   already-authored week** — revise that file by hand and re-import, so its paces,
-  rationale, and revision log survive (see ADR 0015).
+  rationale, and revision log survive (see ADR 0015). A confirmed week that leaves an
+  already-pushed workout too hard comes back with `invalidated_pushes` naming those
+  days — the week is written either way; tell the athlete which days to re-author.
 - **`refresh_today`** — the MCP form of `refresh-today` (see above): pulls today
   partial, rebuilds the mart, never advances watermarks. Call it at most once per
   coach read; it shares the login rate-limit exposure (429) of any transport call.
 - **Workout push** — `author_workout(date, request?)` writes `workout.json`;
   `push_preview(date)` returns the resolved action, the Garmin payload, and a
   `confirm_token`; `push_confirm(date, confirm_token, replace?)` writes to the account
-  and **refuses any token other than the previewed one**. The token covers the workout
-  *and* its date, so a spec retargeted after the preview cannot be confirmed. Show the
-  preview to the athlete before confirming — the handshake exists so an agent cannot
-  push what it has not displayed.
+  and **refuses any token other than the previewed one**. The token covers the workout,
+  its date, *and* the plan of record for that date, so a spec retargeted or a plan
+  revised after the preview cannot be confirmed. Show the preview to the athlete before
+  confirming — the handshake exists so an agent cannot push what it has not displayed.
+  Both `author_workout` and the push pair **refuse a session harder than the plan of
+  record** (issue #22, ADR 0021), and `replace` does not override that; change the plan
+  for the date first.
 - **`get_workout_status(date)`** — the authored spec, the push receipt, and
   `reconciled`: that receipt checked against the Garmin account (issue #41). Read
   `reconciled.state`, not `push.applied` — the receipt records what the push did,
@@ -312,10 +332,14 @@ Which clients pick it up and how is covered in "Registering the server" below �
   allowed and is not a fault. `steps_changed` carries the step verdict beside the
   state — visible even when the state is `unscheduled`, and `null` when the local spec
   was re-authored since the push and so cannot evidence what was sent, which is why
-  `live` claims nothing about the steps on its own. This tool reaches
-  Garmin, so it shares the 429 exposure above — one library read plus one calendar
-  read per date, and one extra read only when the account's copy was touched after
-  the push. A date with no receipt costs nothing and never logs in.
+  `live` claims nothing about the steps on its own. `plan_divergence` answers the
+  separate, offline question — non-null when the session on the account is *harder*
+  than the plan of record now says for that date, naming the pushed type, the current
+  planned intent, and when it was pushed. It means the plan was revised after the push;
+  report it and offer to re-author, nothing on the watch is changed automatically. This
+  tool reaches Garmin, so it shares the 429 exposure above — one library read plus one
+  calendar read per date, and one extra read only when the account's copy was touched
+  after the push. A date with no receipt costs nothing and never logs in.
 
 **Reading the freshness envelope.** Every response carries
 `{data_through, today_included, partial_fields}`. If `today_included` is true, any

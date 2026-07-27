@@ -289,11 +289,32 @@ code, docstrings, PRDs, and ADRs.
 - **structure override (workout request)** - the optional `structure` block in an
   `athlete`/hybrid request that shapes the session type's template beyond its
   defaults: for runs, `reps` plus, per role (`warmup | work | recovery |
-  cooldown`), an end condition and (for work) a custom pace band; for the
+  cooldown`), an end condition and an intensity target; for the
   exercise sports, the `exercises` list (see *exercise entry*), where it is
-  required rather than optional. The recommender never emits one
-  (`request_from_recommendation` sets `structure: None`); overrides are the
-  athlete finalizing what the recommender suggested (Phase 11a).
+  required rather than optional. A role a session type does not have accepts
+  neither. The recommender never emits one (`request_from_recommendation` sets
+  `structure: None`); overrides are the athlete finalizing what the recommender
+  suggested (Phase 11a).
+- **intensity target (workout request)** - what a role's `<role>_target` sets:
+  how hard that step should be, as `none`, a *nameable zone*, or an explicit
+  *target band*. Absent means the role's default - no target on `warmup`,
+  `recovery`, and `cooldown`; the pace -> HR -> none chain on `work` (issue #24,
+  ADR 0020). Distinct from the `intensity_cap` the recommender carries, which
+  bounds a whole session rather than one step.
+- **nameable zone (intensity target)** - a zone the target vocabulary can name:
+  `z2`, `z3`, `z4`, each resolved to the heart-rate band spanning a pair of
+  adjacent `athlete_zones` upper bounds and each written in any case (`Z2` reads as
+  `z2`). A zone name **always** means heart rate -
+  the stored ladder is a heart-rate ladder, while pace holds two anchors and no
+  ladder to name rungs on. `z1` and `z5` are not nameable: the ladder stores four
+  upper bounds, so the outer zones have no floor and no ceiling, and no
+  athlete-level maximum heart rate is stored anywhere. Both are reachable as an
+  explicit *target band* (ADR 0020).
+- **target band (intensity target)** - an explicit window given as
+  `{"hr_band": [low_bpm, high_bpm]}` or
+  `{"pace_band": [fast_s_per_km, slow_s_per_km]}`, narrower bound first. Reads
+  nothing from the database, so it authors with no `athlete_zones` row at all -
+  which is what makes it the way to express the outer zones.
 - **end condition (spec step)** - how a step finishes: `time` (seconds), `distance`
   (metres), `reps` (repetition count, exercise sports only), or `lap` (the watch
   lap button, "on-click"). Exactly one per step. `warmup`, `cooldown`, and
@@ -304,7 +325,9 @@ code, docstrings, PRDs, and ADRs.
 - **custom pace band (spec step)** - an explicit `[fast_s_per_km, slow_s_per_km]`
   target the athlete sets on the work step, e.g. 3:40-4:00 as `[220, 240]`. It
   wins over the recommender's `pace_target_s_per_km` and suppresses the
-  pace -> HR -> none degradation (it is already fully specified).
+  pace -> HR -> none degradation (it is already fully specified). Spelled
+  `work_pace_band`; the same band is `work_target: {"pace_band": [...]}` in the
+  newer per-role vocabulary (see *target band*), and setting both is refused.
 - **exercise entry (workout request)** - one element of an exercise sport's
   `structure.exercises` list: an `exercise` name, `sets`, exactly one of `reps`
   or `time`, optional `weight_kg` (always kilograms) and `rest`. Sets within one

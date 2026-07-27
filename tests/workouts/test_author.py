@@ -864,6 +864,397 @@ def test_canonical_tempo_fixture_authors_end_to_end(fixture):
     assert nested_work["targetType"]["workoutTargetTypeKey"] == "pace.zone"
 
 
+# --- issue #45: default targets pinned role by role -------------------------
+#
+# The whole of issue #24 rests on one promise: a request that names no target
+# authors exactly what it authored before. These pin the full spec so a later
+# ticket cannot quietly move a default while the behavioural tests still pass.
+
+
+def test_default_easy_spec_is_unchanged():
+    assert author(_request(session_type="easy"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "easy",
+        "name": "GC 2026-07-17 easy",
+        "steps": [
+            {
+                "kind": "work",
+                "end": {"type": "time", "seconds": 2700},
+                "target": {"type": "pace_band", "fast_s_per_km": 330, "slow_s_per_km": 370},
+            }
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_tempo_spec_is_unchanged():
+    assert author(_request(session_type="tempo"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "tempo",
+        "name": "GC 2026-07-17 tempo",
+        "steps": [
+            {
+                "kind": "warmup",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+            {
+                "kind": "work",
+                "end": {"type": "time", "seconds": 1200},
+                "target": {"type": "pace_band", "fast_s_per_km": 325, "slow_s_per_km": 335},
+            },
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_quality_spec_is_unchanged():
+    assert author(_request(session_type="quality"), _context()) == {
+        "sport": "run",
+        "origin": "recommender",
+        "date": "2026-07-17",
+        "session_type": "quality",
+        "name": "GC 2026-07-17 quality",
+        "steps": [
+            {
+                "kind": "warmup",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+            {
+                "kind": "repeat",
+                "reps": 4,
+                "steps": [
+                    {
+                        "kind": "work",
+                        "end": {"type": "time", "seconds": 180},
+                        "target": {
+                            "type": "pace_band",
+                            "fast_s_per_km": 325,
+                            "slow_s_per_km": 335,
+                        },
+                    },
+                    {
+                        "kind": "recovery",
+                        "end": {"type": "time", "seconds": 120},
+                        "target": {"type": "none"},
+                    },
+                ],
+            },
+            {
+                "kind": "cooldown",
+                "end": {"type": "time", "seconds": 600},
+                "target": {"type": "none"},
+            },
+        ],
+        "warnings": [],
+    }
+
+
+def test_default_athlete_origin_spec_matches_the_recommender_one():
+    # the pins above all run recommender-origin; an athlete request that sets no
+    # target must author the same steps, so origin alone moves nothing.
+    athlete = _request(session_type="quality", pace=270, origin="athlete")
+    athlete["structure"] = {}
+    recommender = _request(session_type="quality", pace=270)
+    assert author(athlete, _context())["steps"] == author(recommender, _context())["steps"]
+
+
+def test_default_work_degradation_chain_and_warning_are_unchanged():
+    # no measured pace and no zones: the work role still degrades to no target,
+    # still says so once, and the other roles stay silent.
+    spec = author(_request(session_type="quality", pace=None, cap=None), _context(zones=None))
+    assert spec["steps"][1]["steps"][0]["target"] == {"type": "none"}
+    assert spec["warnings"] == ["no target: no measured pace or heart-rate band; time only"]
+
+
+# --- issue #46: explicit intensity bands on every step role ------------------
+
+
+def _targets(session_type="quality", pace=270, **structure):
+    """Author a session whose structure carries only the given target keys."""
+    req = _request(session_type=session_type, pace=pace, origin="athlete")
+    req["structure"] = structure
+    return req
+
+
+def test_explicit_hr_band_on_a_warmup():
+    spec = author(_targets(warmup_target={"hr_band": [120, 145]}), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 120, "high_bpm": 145}
+
+
+def test_explicit_hr_band_on_a_cooldown():
+    spec = author(_targets(cooldown_target={"hr_band": [110, 140]}), _context())
+    assert spec["steps"][2]["target"] == {"type": "hr_band", "low_bpm": 110, "high_bpm": 140}
+
+
+def test_explicit_hr_band_on_a_recovery_inside_the_repeat():
+    spec = author(_targets(recovery_target={"hr_band": [115, 135]}), _context())
+    recovery = spec["steps"][1]["steps"][1]
+    assert recovery["target"] == {"type": "hr_band", "low_bpm": 115, "high_bpm": 135}
+
+
+def test_explicit_pace_band_on_a_warmup():
+    spec = author(
+        _targets(session_type="tempo", warmup_target={"pace_band": [330, 360]}), _context()
+    )
+    assert spec["steps"][0]["target"] == {
+        "type": "pace_band",
+        "fast_s_per_km": 330,
+        "slow_s_per_km": 360,
+    }
+
+
+def test_explicit_band_needs_no_zones_row():
+    req = _targets(pace=None, warmup_target={"hr_band": [120, 145]})
+    spec = author(req, _context(zones=None))
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 120, "high_bpm": 145}
+
+
+def test_none_target_authors_no_target():
+    spec = author(_targets(warmup_target="none"), _context())
+    assert spec["steps"][0]["target"] == {"type": "none"}
+
+
+def test_easy_gains_a_work_target():
+    req = _targets(session_type="easy", pace=330, work_target={"hr_band": [130, 150]})
+    spec = author(req, _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 130, "high_bpm": 150}
+
+
+def test_work_target_pace_band_matches_the_older_spelling():
+    band = author(_targets(work_target={"pace_band": [220, 240]}), _context())
+    legacy = author(_targets(work_pace_band=[220, 240]), _context())
+    assert band["steps"][1]["steps"][0]["target"] == legacy["steps"][1]["steps"][0]["target"]
+
+
+def test_work_target_and_work_pace_band_clash_is_refused():
+    req = _targets(work_target={"pace_band": [220, 240]}, work_pace_band=[220, 240])
+    with pytest.raises(ValueError, match="both work_target and work_pace_band"):
+        author(req, _context())
+
+
+def test_work_target_pace_band_still_warns_when_faster_than_advised():
+    ctx = _context_with_rec("quality", ["ACWR_OUT_OF_RANGE"])
+    req = _targets(work_target={"pace_band": [220, 240]})
+    spec = author(req, ctx)
+    assert any("faster than the recommended" in w for w in spec["warnings"])
+
+
+def test_a_resolved_explicit_target_adds_no_warning():
+    spec = author(_targets(warmup_target={"hr_band": [120, 145]}), _context())
+    assert spec["warnings"] == []
+
+
+def test_target_key_for_a_role_the_session_type_lacks_is_refused():
+    req = _targets(session_type="tempo", recovery_target={"hr_band": [115, 135]})
+    with pytest.raises(ValueError, match="recovery_target"):
+        author(req, _context())
+
+
+def test_unknown_band_kind_is_refused():
+    with pytest.raises(ValueError, match="warmup_target must be"):
+        author(_targets(warmup_target={"power_band": [200, 240]}), _context())
+
+
+def test_target_band_with_wrong_arity_is_refused():
+    with pytest.raises(ValueError, match="warmup_target hr_band must be"):
+        author(_targets(warmup_target={"hr_band": [120]}), _context())
+
+
+def test_non_positive_target_band_is_refused():
+    with pytest.raises(ValueError, match="warmup_target hr_band must be"):
+        author(_targets(warmup_target={"hr_band": [0, 145]}), _context())
+
+
+def test_inverted_target_hr_band_is_refused():
+    with pytest.raises(ValueError, match="low bound must be below"):
+        author(_targets(warmup_target={"hr_band": [145, 120]}), _context())
+
+
+def test_inverted_target_pace_band_is_refused():
+    with pytest.raises(ValueError, match="fast bound must be faster"):
+        author(_targets(warmup_target={"pace_band": [360, 330]}), _context())
+
+
+def test_to_garmin_encodes_an_explicit_warmup_hr_band():
+    spec = author(_targets(session_type="tempo", warmup_target={"hr_band": [120, 145]}), _context())
+    warmup = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+    assert warmup["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert warmup["targetValueOne"] == 120
+    assert warmup["targetValueTwo"] == 145
+
+
+def test_to_garmin_encodes_an_explicit_warmup_pace_band():
+    spec = author(
+        _targets(session_type="tempo", warmup_target={"pace_band": [330, 360]}), _context()
+    )
+    warmup = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+    assert warmup["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+
+
+def test_to_garmin_encodes_an_explicit_cooldown_hr_band():
+    spec = author(
+        _targets(session_type="tempo", cooldown_target={"hr_band": [110, 140]}), _context()
+    )
+    cooldown = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][2]
+    assert cooldown["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert cooldown["targetValueOne"] == 110
+    assert cooldown["targetValueTwo"] == 140
+
+
+def test_to_garmin_encodes_a_recovery_hr_band_inside_the_repeat():
+    spec = author(_targets(recovery_target={"hr_band": [115, 135]}), _context())
+    recovery = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][1]["workoutSteps"][1]
+    assert recovery["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert recovery["targetValueOne"] == 115
+    assert recovery["targetValueTwo"] == 135
+
+
+def test_untargeted_steps_do_not_share_one_target():
+    # every step's target is its own dict; a shared literal would let a later
+    # stage editing one untargeted step silently retarget all the others.
+    spec = author(_targets(session_type="tempo", pace=None), _context(zones=None))
+    warmup, work, cooldown = spec["steps"]
+    assert warmup["target"] == work["target"] == cooldown["target"] == {"type": "none"}
+    assert warmup["target"] is not cooldown["target"]
+    assert warmup["target"] is not work["target"]
+
+
+# --- issue #47: zone names resolved from athlete zones -----------------------
+
+
+def test_zone_two_resolves_to_the_athletes_z2_band():
+    spec = author(_targets(warmup_target="z2"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+
+
+def test_zone_three_resolves_to_the_pair_above_it():
+    spec = author(_targets(warmup_target="z3"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 155, "high_bpm": 168}
+
+
+def test_zone_four_resolves_to_the_top_nameable_pair():
+    spec = author(_targets(warmup_target="z4"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178}
+
+
+def test_a_zone_name_works_on_every_role_the_session_type_has():
+    req = _targets(warmup_target="z2", work_target="z4", recovery_target="z2", cooldown_target="z2")
+    spec = author(req, _context())
+    warmup, repeat, cooldown = spec["steps"]
+    work, recovery = repeat["steps"]
+    assert warmup["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert work["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178}
+    assert recovery["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert cooldown["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+
+
+def test_a_resolved_zone_name_adds_no_warning():
+    assert author(_targets(warmup_target="z2"), _context())["warnings"] == []
+
+
+def test_zone_one_is_refused_and_points_at_an_explicit_band():
+    with pytest.raises(ValueError, match="cannot name z1") as exc:
+        author(_targets(warmup_target="z1"), _context())
+    assert "hr_band" in str(exc.value)
+
+
+def test_zone_five_is_refused_and_points_at_an_explicit_band():
+    with pytest.raises(ValueError, match="cannot name z5") as exc:
+        author(_targets(warmup_target="z5"), _context())
+    assert "hr_band" in str(exc.value)
+
+
+def test_an_unknown_zone_name_is_refused():
+    with pytest.raises(ValueError, match="unknown zone"):
+        author(_targets(warmup_target="z9"), _context())
+
+
+def test_a_zone_name_is_read_whatever_its_case():
+    # the athlete writes "Z2" as readily as "z2"; both name the same rung.
+    spec = author(_targets(warmup_target="Z2", cooldown_target="NONE"), _context())
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert spec["steps"][2]["target"] == {"type": "none"}
+    assert spec["warnings"] == []
+
+
+def test_an_upper_case_edge_zone_is_refused_the_same_way():
+    with pytest.raises(ValueError, match="cannot name z5"):
+        author(_targets(warmup_target="Z5"), _context())
+
+
+def test_a_zone_name_without_any_zones_row_warns_and_drops_the_target():
+    spec = author(_targets(pace=None, warmup_target="z2"), _context(zones=None))
+    assert spec["steps"][0]["target"] == {"type": "none"}
+    warning = next(w for w in spec["warnings"] if "warmup_target" in w)
+    assert "Z2" in warning
+
+
+def test_a_zone_name_whose_bound_is_null_warns_the_same_way():
+    # the row exists and Z2's lower bound is present; only the upper bound is missing
+    zones = _zones()
+    zones["z2_hi_bpm"] = None
+    spec = author(_targets(warmup_target="z2"), _context(zones=zones))
+    assert spec["steps"][0]["target"] == {"type": "none"}
+    assert any("warmup_target" in w for w in spec["warnings"])
+
+
+def test_an_unavailable_zone_target_never_raises():
+    spec = author(_targets(warmup_target="z4"), _context(zones=None))
+    assert spec is not None
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+
+
+def test_the_work_degradation_warning_keeps_its_own_wording():
+    # a zone name on the warm-up and a degrading work step in one spec: two
+    # different events, two different sentences.
+    req = _targets(pace=None, warmup_target="z2")
+    spec = author(req, _context(zones=None))
+    assert "no target: no measured pace or heart-rate band; time only" in spec["warnings"]
+
+
+def test_warnings_read_in_step_order_on_both_session_types():
+    # a dropped warm-up zone and a degrading work step in one spec: the warm-up
+    # runs first, so it must be reported first, on quality as well as tempo.
+    zones = _zones()
+    zones["z2_hi_bpm"] = None
+    for session_type in ("tempo", "quality"):
+        req = _targets(session_type=session_type, pace=None, warmup_target="z2")
+        warnings = author(req, _context(zones=zones))["warnings"]
+        assert warnings[0].startswith("warmup_target:")
+        assert "heart rate" in warnings[1]
+
+
+def test_the_2026_07_16_case_authors_z2_warmup_and_cooldown_on_the_lap_button():
+    req = _targets(
+        warmup_target="z2",
+        warmup_end="lap",
+        cooldown_target="z2",
+        cooldown_end="lap",
+    )
+    spec = author(req, _context())
+    warmup, _repeat, cooldown = spec["steps"]
+    z2 = {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+    assert warmup["target"] == z2
+    assert cooldown["target"] == z2
+    assert warmup["end"] == {"type": "lap"}
+    assert cooldown["end"] == {"type": "lap"}
+    steps = to_garmin(spec)["workoutSegments"][0]["workoutSteps"]
+    assert steps[0]["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert steps[0]["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert steps[-1]["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+
+
 # The authored-shape projection deliberately has no seam of its own (issue #42):
 # asserting it directly would assert the implementation, so it is exercised through
 # get_workout_status against a fake account - see tests/mcp/test_tools.py.

@@ -201,6 +201,16 @@ def test_activity_on_the_date_warns_but_does_not_block():
     assert any("already" in w for w in result.warnings)
 
 
+def test_a_spec_warning_survives_into_the_preview():
+    # issue #47: a target the author could not honour has to be visible at the
+    # last gate before the watch, not only in the spec file.
+    dropped_target = "warmup_target: no Z2 heart-rate band in your zones"
+    spec = _spec()
+    spec["warnings"] = [dropped_target]
+    result = publish(spec, FakePublisher(), confirm=False)
+    assert dropped_target in result.warnings
+
+
 # --- replace ----------------------------------------------------------------
 
 

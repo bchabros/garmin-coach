@@ -346,6 +346,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
     thresholds = report.read_thresholds(conn)
     dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    planned = _plan.planned_intent(conn, args.date)
     conn.close()
 
     recommendation = dg.get("recommendation")
@@ -369,6 +370,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
         "zones": dg.get("zones"),
         "today": _dt.date.today().isoformat(),
         "recommendation": recommendation,
+        "planned_intent": planned,
     }
     try:
         spec = _author.author(request, context)
@@ -411,6 +413,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
         return 1
     spec = json.loads(spec_path.read_text())
     activity_dates = _activity_dates(conn, args.date)
+    planned = _plan.planned_intent(conn, args.date)
     conn.close()
 
     try:
@@ -426,6 +429,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
         replace=args.replace,
         activity_dates=activity_dates,
         known_workout_id=publish.receipt_workout_id(spec_path.parent),
+        planned_intent=planned,
     )
     for warning in result.warnings:
         print(f"  warning: {warning}")

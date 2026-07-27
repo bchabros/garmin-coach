@@ -9,7 +9,7 @@ import types
 import pytest
 
 from garmin_coach import cli
-from garmin_coach.core import db
+from garmin_coach.core import db, plan
 from garmin_coach.cli import build_parser
 from garmin_coach.workouts import publish
 from tests.conftest import FakePublisher, run_spec
@@ -62,6 +62,27 @@ def test_cli_push_passes_the_receipts_workout_id_as_the_lookup_candidate(tmp_pat
 
     assert code == 1  # refused rather than creating a second copy
     assert len(pub.workouts) == 1
+
+
+def test_cli_push_refuses_a_spec_harder_than_the_plan_of_record(tmp_path, monkeypatch):
+    """The guard is not an MCP-only feature - the CLI writes to the same account (#22)."""
+    conn = db.connect(str(tmp_path / "t.db"))
+    db.bootstrap(conn)
+    plan.upsert_week(
+        conn,
+        [
+            {"week_start": "2026-07-13", "dow": dow, "planned": "easy 10 km", "intent": "easy"}
+            for dow in range(7)
+        ],
+    )
+    conn.close()
+    pub = FakePublisher()
+
+    code, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
+
+    assert code == 1
+    assert pub.calls == []
+    assert not (day_dir / "push.json").exists()
 
 
 def test_parser_accepts_sync_command_with_optional_to_date():

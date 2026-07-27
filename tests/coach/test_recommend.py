@@ -262,13 +262,14 @@ def test_downgrade_never_disturbs_a_rest_day():
 # --- issue #21: the widened plan vocabulary ----------------------------------
 
 
-def test_intent_rank_covers_the_whole_plan_vocabulary():
-    """Guard: recommend() indexes _INTENT_RANK directly, so any intent a plan file
-    may legally carry must have a rank or the recommendation KeyErrors."""
-    from garmin_coach.coach.recommend import _INTENT_RANK
+def test_every_plan_vocabulary_intent_survives_a_recommendation():
+    """Guard: the recommender ranks whatever the plan of record hands it, so an
+    intent a plan file may legally carry must not blow up on the way through.
+    The ladder itself is pinned to the vocabulary in tests/core/test_plan.py."""
     from garmin_coach.core import plan
 
-    assert set(_INTENT_RANK) == set(plan.INTENTS)
+    for intent in plan.INTENTS:
+        assert recommend(_digest(), intent, THRESHOLDS)["intended_type"] == intent
 
 
 def test_taper_caps_a_planned_crossfit_day_like_any_other_quality_day():

@@ -17,6 +17,21 @@ import sqlite3
 
 INTENTS = ("rest", "easy", "tempo", "strength", "hyrox", "crossfit", "quality")
 
+# How hard each intent is, as the plan vocabulary orders it. It lives beside
+# ``INTENTS`` because it is a property of the vocabulary, not of any one reader:
+# ``recommend`` softens along this ladder and the plan guard refuses to climb it
+# (issue #22). ``hyrox``, ``crossfit`` and ``quality`` share the top rank - they
+# are different sessions, not different intensities.
+INTENT_RANK = {
+    "rest": 0,
+    "easy": 1,
+    "tempo": 2,
+    "strength": 2,
+    "hyrox": 3,
+    "crossfit": 3,
+    "quality": 3,
+}
+
 # Planned intents name the session the athlete meant; the mart can only ever
 # observe what the load says. ``_actual_intent`` classifies a finished day into
 # the four MEASURABLE classes below - it reads load numbers, so it cannot tell a
@@ -184,6 +199,61 @@ def resolve_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
         date = (monday + _dt.timedelta(days=dow)).isoformat()
         days.append(resolve_day(conn, date) or {"date": date, "dow": dow})
     return days
+
+
+def planned_intent(conn: sqlite3.Connection, date: str) -> str | None:
+    """The plan of record's intent for one date, without the rest of the row.
+
+    The resolver's answer for callers that only need to know how hard the day was
+    meant to be - the guard, the push receipt, and the divergence check.
+
+    Returns:
+        ``rest`` | ``easy`` | ``tempo`` | ``strength`` | ``hyrox`` | ``crossfit`` |
+        ``quality``, or None when neither the authored week nor the template has
+        the day.
+    """
+    day = resolve_day(conn, date)
+    return day["intent"] if day is not None else None
+
+
+def is_harder(session_type: str | None, than: str | None) -> bool:
+    """Whether a session outranks an intent on the plan's hardness ladder.
+
+    An unknown intent on either side answers False: an intent nothing can rank is
+    not evidence that a session is too hard, and the guard must not refuse on it.
+    """
+    left = INTENT_RANK.get(session_type or "")
+    right = INTENT_RANK.get(than or "")
+    if left is None or right is None:
+        return False
+    return left > right
+
+
+def guard_error(date: str, session_type: str | None, planned: str | None) -> str | None:
+    """Refuse a session that is harder than the plan of record for its date.
+
+    The plan is the coaching decision; authoring or pushing above it is how a
+    recommendation silently overrode one (issue #22). Softer stays allowed - that
+    is the downgrade contract the recommender runs on - so only climbing the
+    ladder is refused.
+
+    Args:
+        date: The day the session targets, named in the message.
+        session_type: The session being authored or pushed.
+        planned: The plan of record's intent for that date (see
+            :func:`planned_intent`); None leaves nothing to violate.
+
+    Returns:
+        A message naming both intents and the remedy, or None when the session is
+        at or below the plan.
+    """
+    if not is_harder(session_type, planned):
+        return None
+    return (
+        f"{date} is planned as {planned}; a {session_type} session is harder than the "
+        "plan of record. Revise the plan for that date and re-import it, or use a "
+        f"session at or below {planned}."
+    )
 
 
 def has_override(conn: sqlite3.Connection, week_start: str) -> bool:

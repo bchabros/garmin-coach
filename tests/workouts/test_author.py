@@ -49,8 +49,12 @@ def _kinds(steps):
 _UNSET = object()
 
 
-def _context(zones=_UNSET, today="2026-07-15"):
-    return {"zones": _zones() if zones is _UNSET else zones, "today": today}
+def _context(zones=_UNSET, today="2026-07-15", planned_intent=None):
+    return {
+        "zones": _zones() if zones is _UNSET else zones,
+        "today": today,
+        "planned_intent": planned_intent,
+    }
 
 
 # --- easy expansion ---------------------------------------------------------
@@ -117,6 +121,41 @@ def test_today_is_allowed_with_a_warning():
     spec = author(_request(date="2026-07-15"), _context(today="2026-07-15"))
     assert spec is not None
     assert any("today" in w for w in spec["warnings"])
+
+
+# --- plan guard (issue #22) --------------------------------------------------
+
+
+def test_a_session_harder_than_the_plan_of_record_is_refused():
+    """The 2026-07-17 case: the plan had been downgraded to easy hours before a
+    quality session was authored against it."""
+    with pytest.raises(ValueError, match="planned as easy"):
+        author(_request(session_type="quality", pace=270), _context(planned_intent="easy"))
+
+
+def test_a_session_softer_than_the_plan_of_record_is_allowed():
+    """The downgrade contract: softening is what the recommender does all day."""
+    spec = author(_request(session_type="easy"), _context(planned_intent="quality"))
+
+    assert spec["session_type"] == "easy"
+
+
+def test_the_planned_session_itself_is_allowed():
+    spec = author(_request(session_type="quality", pace=270), _context(planned_intent="quality"))
+
+    assert spec["session_type"] == "quality"
+
+
+def test_nothing_is_guarded_when_the_context_carries_no_plan():
+    spec = author(_request(session_type="quality", pace=270), _context())
+
+    assert spec["session_type"] == "quality"
+
+
+def test_the_plan_guard_outranks_the_hyrox_split_question():
+    """A refusal must not be reachable only after answering a follow-up question."""
+    with pytest.raises(ValueError, match="planned as easy"):
+        author(_request(session_type="hyrox"), _context(planned_intent="easy"))
 
 
 # --- rest -------------------------------------------------------------------

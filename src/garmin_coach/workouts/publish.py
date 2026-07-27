@@ -37,6 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..core import plan as _plan
 from . import author as _author
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ class PublishResult:
     schedule_id: int | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    planned_intent: str | None = None
 
     def as_receipt(self) -> dict[str, Any]:
         """The ``push.json`` receipt body (the caller adds the push timestamp)."""
@@ -111,6 +113,7 @@ class PublishResult:
             "workout_id": self.workout_id,
             "schedule_id": self.schedule_id,
             "spec_hash": self.spec_hash,
+            "planned_intent": self.planned_intent,
             "error": self.error,
             "warnings": self.warnings,
         }
@@ -184,6 +187,7 @@ def publish(
     replace: bool = False,
     activity_dates: frozenset[str] | set[str] = frozenset(),
     known_workout_id: int | None = None,
+    planned_intent: str | None = None,
 ) -> PublishResult:
     """Push a workout spec to Garmin, idempotently and behind a confirm interlock.
 
@@ -197,6 +201,10 @@ def publish(
         known_workout_id: The id a previous push recorded for this date, offered as the
             first lookup candidate (issue #40). The caller reads it from the receipt;
             this function does no file IO.
+        planned_intent: The plan of record's intent for the spec's date. A spec harder
+            than it is refused before the account is read (issue #22) - the author-time
+            guard cannot see a plan revised after the spec was written. Recorded on the
+            receipt either way, so a later read knows what the push was measured against.
 
     Returns:
         A ``PublishResult`` describing the resolved action and, when confirmed, the
@@ -211,6 +219,19 @@ def publish(
     if date in activity_dates:
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
+    too_hard = _plan.guard_error(date, spec.get("session_type"), planned_intent)
+    if too_hard is not None:
+        return PublishResult(
+            action="refuse",
+            applied=False,
+            spec_hash=marker,
+            date=date,
+            payload=payload,
+            message=too_hard,
+            warnings=warnings,
+            planned_intent=planned_intent,
+        )
+
     existing, conflict = _find_target(publisher, spec["name"], marker, known_workout_id)
     action = "refuse" if conflict else _resolve_action(existing, marker, publisher, date, replace)
     result = PublishResult(
@@ -221,6 +242,7 @@ def publish(
         payload=payload,
         message=conflict or _message(action),
         warnings=warnings,
+        planned_intent=planned_intent,
     )
     if existing is not None:
         result.workout_id = existing["workoutId"]
@@ -666,14 +688,24 @@ def spec_hash(spec: dict[str, Any]) -> str:
     return _canonical_hash({"name": spec["name"], "steps": spec["steps"]})
 
 
-def confirm_token(spec: dict[str, Any]) -> str:
+def confirm_token(spec: dict[str, Any], planned_intent: str | None = None) -> str:
     """A token covering everything a preview showed and a confirm acts on.
 
     The date is included because it decides what the push schedules and which day
     the activity-collision check ran against: a spec retargeted between preview and
     confirm must invalidate the preview even though the workout itself is unchanged.
+    The plan of record joins it for the same reason (issue #22) - it decides whether
+    the push is allowed at all, so a plan revised between the two invalidates what
+    the preview showed.
     """
-    return _canonical_hash({"name": spec["name"], "steps": spec["steps"], "date": spec["date"]})
+    return _canonical_hash(
+        {
+            "name": spec["name"],
+            "steps": spec["steps"],
+            "date": spec["date"],
+            "planned_intent": planned_intent,
+        }
+    )
 
 
 def _message(action: str) -> str:

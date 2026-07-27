@@ -15,20 +15,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-# Intent hardness over the plan vocabulary (``core.plan.INTENTS``; a test pins the
-# two together, because ``_downgrade`` indexes this map directly). ``hyrox``,
-# ``crossfit`` and ``quality`` share the top rank; a cap names a maximum allowable
-# type and the recommendation is the minimum of the planned intent and every cap
-# that fired.
-_INTENT_RANK = {
-    "rest": 0,
-    "easy": 1,
-    "tempo": 2,
-    "strength": 2,
-    "hyrox": 3,
-    "crossfit": 3,
-    "quality": 3,
-}
+from ..core import plan as _plan
+
 # The quality types are the *running* hard sessions: they take the taper's Z4
 # ceiling and a threshold pace target. ``strength`` is deliberately absent - it is
 # hard work, but a pace target is meaningless for lifting and Garmin is HR-blind
@@ -105,10 +93,15 @@ def _signal_applies(signal: dict[str, Any]) -> bool:
 
 
 def _downgrade(planned_intent: str | None, caps_to_easy: bool) -> str | None:
-    """Soften the planned intent to easy when any downgrade signal fired; never raise."""
+    """Soften the planned intent to easy when any downgrade signal fired; never raise.
+
+    Softening only ever descends ``core.plan``'s hardness ladder - the same ladder
+    the plan guard refuses to climb (issue #22), so a recommendation can never be
+    the thing that outruns the plan of record.
+    """
     if planned_intent is None or not caps_to_easy:
         return planned_intent
-    if _INTENT_RANK[planned_intent] <= _INTENT_RANK["easy"]:
+    if not _plan.is_harder(planned_intent, "easy"):
         return planned_intent
     return "easy"
 

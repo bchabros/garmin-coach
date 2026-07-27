@@ -378,6 +378,7 @@ def author_workout(
         "zones": dg.get("zones"),
         "today": dt.date.today().isoformat(),
         "recommendation": recommendation,
+        "planned_intent": plan.planned_intent(conn, date),
     }
     try:
         spec = author.author(request, context)
@@ -486,24 +487,31 @@ def push_preview(
     """Dry-run the push for a date: the resolved action, payload, and confirm token.
 
     The returned ``confirm_token`` is what ``push_confirm`` requires; it covers the
-    workout *and* its date, so a push can only follow a preview the caller displayed.
+    workout, its date, *and* the plan of record for that date, so a push can only
+    follow a preview the caller displayed and the plan it was measured against.
     ``spec_hash`` is the separate account-side idempotency marker, shown for reference.
+
+    A spec harder than the plan of record resolves to ``refuse`` here rather than at
+    confirm time: a plan revised after the spec was authored is exactly the case the
+    author-time guard cannot see (issue #22).
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
         return _wrap(conn, {"error": error})
 
+    planned = plan.planned_intent(conn, date)
     result = publish.publish(
         spec,
         publisher,
         confirm=False,
         activity_dates=_dates_with_activity(conn, date),
         known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
+        planned_intent=planned,
     )
     data = {
         "date": date,
         "action": result.action,
-        "confirm_token": publish.confirm_token(spec),
+        "confirm_token": publish.confirm_token(spec, planned),
         "spec_hash": result.spec_hash,
         "payload": result.payload,
         "message": result.message,
@@ -524,19 +532,21 @@ def push_confirm(
 ) -> dict[str, Any]:
     """Execute the push for a date, gated on the token from ``push_preview``.
 
-    A mismatched token is refused without touching the account - the spec or its
-    date changed since the preview (or no preview happened), so preview again.
+    A mismatched token is refused without touching the account - the spec, its date,
+    or the plan of record for it changed since the preview (or no preview happened),
+    so preview again.
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
         return _wrap(conn, {"error": error, "applied": False})
 
-    if confirm_token != publish.confirm_token(spec):
+    planned = plan.planned_intent(conn, date)
+    if confirm_token != publish.confirm_token(spec, planned):
         return _wrap(
             conn,
             {
-                "error": "stale confirm_token: the spec or its date changed since the "
-                "preview; run push_preview again",
+                "error": "stale confirm_token: the spec, its date, or the plan of record "
+                "for it changed since the preview; run push_preview again",
                 "applied": False,
             },
         )
@@ -548,6 +558,7 @@ def push_confirm(
         replace=replace,
         activity_dates=_dates_with_activity(conn, date),
         known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
+        planned_intent=planned,
     )
     if result.applied or result.error is not None:
         _write_receipt(result, _day_dir(reports_dir, date))

@@ -37,6 +37,7 @@ from garminconnect.workout import (
     create_warmup_step,
 )
 
+from garmin_coach.core import plan as _plan
 from garmin_coach.workouts import exercises
 
 # System-authored workouts carry this name prefix so idempotency scans only our
@@ -238,21 +239,26 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         request: The workout request - ``sport``, ``origin``, ``date``,
             ``session_type`` and (from the recommender) ``intensity_cap`` /
             ``pace_target_s_per_km``.
-        context: ``zones`` (the ``athlete_zones`` section, or None) and ``today``
-            (the guard date).
+        context: ``zones`` (the ``athlete_zones`` section, or None), ``today``
+            (the guard date), and ``planned_intent`` - the plan of record's intent
+            for the target date, which nothing authored may exceed (issue #22).
 
     Returns:
         The workout spec, or None when the session type is ``rest`` (nothing to
         author is a correct, quiet outcome).
 
     Raises:
-        ValueError: If the request is malformed or the target date is in the past.
+        ValueError: If the request is malformed, the target date is in the past, or
+            the session is harder than the plan of record for that date.
         HyroxSplitRequired: If a Hyrox session needs the athlete to choose its kind.
     """
     _validate_request(request)
     _validate_sport_session(request["sport"], request["session_type"])
 
     session_type = request["session_type"]
+    plan_error = _plan.guard_error(request["date"], session_type, context.get("planned_intent"))
+    if plan_error is not None:
+        raise ValueError(plan_error)
     if request["sport"] == "run" and session_type == "hyrox":
         raise HyroxSplitRequired
 

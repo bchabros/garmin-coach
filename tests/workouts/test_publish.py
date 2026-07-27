@@ -290,3 +290,66 @@ def test_the_gc_hash_ignores_the_date_but_the_confirm_token_does_not():
 
 def test_the_confirm_token_still_reacts_to_the_workout_itself():
     assert confirm_token(_spec()) != confirm_token(_spec(work_s=1800))
+
+
+# --- Issue #22: nothing harder than the plan of record reaches the account ---
+
+
+def test_a_spec_harder_than_the_plan_is_refused_before_the_account_is_touched():
+    """A spec authored days earlier is stale evidence once the plan is revised:
+    the author-time guard cannot see a plan that changed after it ran."""
+    pub = FakePublisher()
+
+    result = publish(_spec(), pub, confirm=True, planned_intent="easy")
+
+    assert result.action == "refuse"
+    assert "planned as easy" in result.message
+    assert result.applied is False
+    assert pub.calls == []
+
+
+def test_replace_does_not_override_the_plan_guard():
+    """--replace overwrites a *different workout*; it is not a licence to outrank
+    the plan, so the refusal must not be reachable by re-running with it."""
+    pub = FakePublisher()
+
+    result = publish(_spec(), pub, confirm=True, replace=True, planned_intent="easy")
+
+    assert result.action == "refuse"
+    assert pub.calls == []
+
+
+def test_a_spec_at_or_below_the_plan_pushes_normally():
+    pub = FakePublisher()
+
+    result = publish(_spec(), pub, confirm=True, planned_intent="quality")
+
+    assert result.action == "create"
+    assert result.applied is True
+
+
+def test_the_receipt_records_the_session_that_was_pushed():
+    """The spec on disk can be re-authored later; the receipt is what still says
+    which session actually went to the account."""
+    pub = FakePublisher()
+
+    receipt = publish(_spec(), pub, confirm=True, planned_intent="quality").as_receipt()
+
+    assert receipt["session_type"] == "tempo"
+
+
+def test_the_receipt_records_the_plan_the_push_was_measured_against():
+    """So a later read can tell a plan that changed under a workout from one that
+    was already wrong when it was pushed."""
+    pub = FakePublisher()
+
+    receipt = publish(_spec(), pub, confirm=True, planned_intent="quality").as_receipt()
+
+    assert receipt["planned_intent"] == "quality"
+
+
+def test_the_confirm_token_reacts_to_the_plan_of_record():
+    """A plan revised between preview and confirm invalidates the preview, the same
+    way retargeting the spec does."""
+    assert confirm_token(_spec(), "quality") != confirm_token(_spec(), "easy")
+    assert confirm_token(_spec(), "quality") == confirm_token(_spec(), "quality")

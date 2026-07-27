@@ -346,6 +346,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
     thresholds = report.read_thresholds(conn)
     dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    planned = _plan.planned_intent(conn, args.date)
     conn.close()
 
     recommendation = dg.get("recommendation")
@@ -369,6 +370,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
         "zones": dg.get("zones"),
         "today": _dt.date.today().isoformat(),
         "recommendation": recommendation,
+        "planned_intent": planned,
     }
     try:
         spec = _author.author(request, context)
@@ -411,6 +413,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
         return 1
     spec = json.loads(spec_path.read_text())
     activity_dates = _activity_dates(conn, args.date)
+    planned = _plan.planned_intent(conn, args.date)
     conn.close()
 
     try:
@@ -426,6 +429,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
         replace=args.replace,
         activity_dates=activity_dates,
         known_workout_id=publish.receipt_workout_id(spec_path.parent),
+        planned_intent=planned,
     )
     for warning in result.warnings:
         print(f"  warning: {warning}")
@@ -483,6 +487,13 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         conn.close()
         print(f"plan import failed: {exc}")
         return 1
+    conflicts = [
+        conflict
+        for week in imported
+        for conflict in publish.invalidated_pushes(
+            args.reports_dir, _plan.planned_by_date(conn, week)
+        )
+    ]
     conn.close()
 
     if not imported:
@@ -490,6 +501,11 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         print(f"plan import: no plan file for {target} in {plans_dir}")
         return 1
     print(f"plan import complete: {', '.join(imported)} ({len(imported)} week(s) from {plans_dir})")
+    for conflict in conflicts:
+        print(
+            f"  conflict: {conflict['date']} has a pushed {conflict['pushed_type']} workout, "
+            f"but the plan now says {conflict['planned_intent']}; re-author and re-push it"
+        )
     return 0
 
 
@@ -821,6 +837,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="plans_dir",
         default=None,
         help="Directory of plan files (default: the configured plans_dir).",
+    )
+    pl_imp.add_argument(
+        "--reports-dir",
+        dest="reports_dir",
+        default="./reports",
+        help="Root directory for dated report folders (checked for invalidated pushes).",
     )
     pl_imp.set_defaults(func=_cmd_plan)
 

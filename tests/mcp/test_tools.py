@@ -10,8 +10,11 @@ from __future__ import annotations
 import datetime as dt
 import json
 
+import pytest
+
 from garmin_coach import cli
 from garmin_coach.core import db
+from garmin_coach.core import plan as plan_mod
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
 from garmin_coach.workouts import author, publish
@@ -216,25 +219,30 @@ def _as_account_clock(local_iso, *, minutes_after=0):
     return instant.replace(tzinfo=None).isoformat() + ".0"
 
 
-def _seed_pushed(tmp_path, *, spec=None, workout_id=1000, date=PUSH_DATE, spec_hash=None):
-    """Write a workout spec and an applied push receipt for a date."""
+def _seed_pushed(
+    tmp_path, *, spec=None, workout_id=1000, date=PUSH_DATE, spec_hash=None, session_type=None
+):
+    """Write a workout spec and an applied push receipt for a date.
+
+    ``session_type`` is left off by default: receipts written before issue #22 carry
+    no such field, and the divergence check has to keep working on them.
+    """
     spec = spec or run_spec(date=date)
     day_dir = tmp_path / date
     day_dir.mkdir(exist_ok=True)
     (day_dir / "workout.json").write_text(json.dumps(spec))
-    (day_dir / "push.json").write_text(
-        json.dumps(
-            {
-                "action": "create",
-                "applied": True,
-                "name": spec["name"],
-                "date": date,
-                "workout_id": workout_id,
-                "spec_hash": spec_hash or publish.spec_hash(spec),
-                "pushed_at": PUSHED_AT,
-            }
-        )
-    )
+    receipt = {
+        "action": "create",
+        "applied": True,
+        "name": spec["name"],
+        "date": date,
+        "workout_id": workout_id,
+        "spec_hash": spec_hash or publish.spec_hash(spec),
+        "pushed_at": PUSHED_AT,
+    }
+    if session_type is not None:
+        receipt["session_type"] = session_type
+    (day_dir / "push.json").write_text(json.dumps(receipt))
     return day_dir
 
 
@@ -712,7 +720,7 @@ def test_a_successful_push_replaces_the_receipt_and_drops_the_stale_finding(
     tools.push_confirm(
         conn,
         date=FUTURE,
-        confirm_token=publish.confirm_token(spec),
+        confirm_token=_token(conn, spec),
         publisher=pub,
         reports_dir=str(tmp_path),
     )
@@ -764,6 +772,31 @@ def test_get_workout_status_with_no_artifacts_is_explicit(conn, tmp_path):
 
 FUTURE = (dt.date.today() + dt.timedelta(days=2)).isoformat()
 LATER = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+
+
+def _seed_plan(conn, date: str, intent: str = "quality") -> None:
+    """Author the plan of record over ``date``'s whole week at one intent.
+
+    The action tools resolve the plan themselves to guard what may be authored and
+    pushed (issue #22), and ``FUTURE`` is relative to the wall clock - so without a
+    pinned plan the static template decides, and a tempo request would author on a
+    Tuesday and be refused on a Wednesday.
+    """
+    monday = dt.date.fromisoformat(date)
+    monday -= dt.timedelta(days=monday.weekday())
+    plan_mod.upsert_week(
+        conn,
+        [
+            {"week_start": monday.isoformat(), "dow": dow, "planned": "sesja", "intent": intent}
+            for dow in range(7)
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _planned_future(conn):
+    """Pin that plan for every test below, so they measure the push path, not the guard."""
+    _seed_plan(conn, FUTURE)
 
 
 def _seed_activity(conn, aid=1, date="2026-07-10") -> None:
@@ -900,11 +933,16 @@ def _seed_spec(tmp_path, spec):
     return spec
 
 
+def _token(conn, spec):
+    """The token a preview would have minted: the spec against the plan of record."""
+    return publish.confirm_token(spec, plan_mod.planned_intent(conn, spec["date"]))
+
+
 def _confirm(conn, tmp_path, pub, spec, **kw):
     return tools.push_confirm(
         conn,
         date=spec["date"],
-        confirm_token=publish.confirm_token(spec),
+        confirm_token=_token(conn, spec),
         publisher=pub,
         reports_dir=str(tmp_path),
         **kw,
@@ -951,6 +989,13 @@ def test_push_preview_without_a_spec_is_explicit(conn, tmp_path, fake_publisher)
 # --- issue #21: the plan of record over MCP ---------------------------------
 
 WEEK = "2026-07-13"  # a Monday
+
+
+def _cached_days(conn, week_start=WEEK) -> int:
+    """How many days of one week the plan cache holds (other weeks are seeded)."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM plan_week WHERE week_start = ?", (week_start,)
+    ).fetchone()[0]
 
 
 def _plan_file(tmp_path, week_start=WEEK, intents=None):
@@ -1033,7 +1078,7 @@ def test_plan_preview_validates_without_writing_anything(conn, tmp_path):
     assert [d["date"] for d in out["data"]["days"]][:2] == ["2026-07-13", "2026-07-14"]
     assert out["data"]["days"][6]["intent"] == "crossfit"
     assert list(tmp_path.iterdir()) == []  # nothing written
-    assert conn.execute("SELECT COUNT(*) FROM plan_week").fetchone()[0] == 0
+    assert _cached_days(conn) == 0
 
 
 def test_plan_preview_lists_vocabulary_errors_without_side_effects(conn, tmp_path):
@@ -1126,7 +1171,7 @@ def test_plan_confirm_with_a_pipe_reports_an_error_and_strands_nothing(conn, tmp
     assert out["data"]["written"] is False
     assert out["data"]["error"] is not None
     assert list(tmp_path.iterdir()) == []
-    assert conn.execute("SELECT COUNT(*) FROM plan_week").fetchone()[0] == 0
+    assert _cached_days(conn) == 0
 
 
 # --- Issue #37: the confirm token must cover the date the push acts on ---
@@ -1185,3 +1230,187 @@ def test_a_spec_filed_under_another_date_is_refused(conn, tmp_path, fixture, fak
 
     assert out["data"]["error"] is not None
     assert LATER in out["data"]["error"]
+
+
+# --- Issue #22: the plan of record guards what is authored and pushed ---
+
+
+def test_author_workout_refuses_a_session_harder_than_the_plan(conn, tmp_path, fixture):
+    """The 2026-07-17 case, at the seam the coach skill actually calls."""
+    _seed_plan(conn, FUTURE, "easy")
+
+    out = tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+
+    assert out["data"]["spec"] is None
+    assert "planned as easy" in out["data"]["error"]
+    assert not (tmp_path / FUTURE / "workout.json").exists()
+
+
+def test_author_workout_still_allows_a_session_the_plan_asked_for(conn, tmp_path, fixture):
+    _seed_plan(conn, FUTURE, "quality")
+
+    out = tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+
+    assert out["data"]["error"] is None
+
+
+def test_push_preview_refuses_a_spec_the_revised_plan_no_longer_allows(
+    conn, tmp_path, fixture, fake_publisher
+):
+    """Authoring passed under the old plan; the revision landed before the push."""
+    tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+    _seed_plan(conn, FUTURE, "easy")
+    pub = fake_publisher()
+
+    out = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    assert out["data"]["action"] == "refuse"
+    assert "planned as easy" in out["data"]["message"]
+    assert pub.calls == []
+
+
+def test_push_confirm_refuses_a_spec_the_revised_plan_no_longer_allows(
+    conn, tmp_path, fixture, fake_publisher
+):
+    tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+    pub = fake_publisher()
+    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    _seed_plan(conn, FUTURE, "easy")
+
+    out = tools.push_confirm(
+        conn,
+        date=FUTURE,
+        confirm_token=preview["data"]["confirm_token"],
+        publisher=pub,
+        reports_dir=str(tmp_path),
+    )
+
+    assert out["data"]["applied"] is False
+    assert "stale" in out["data"]["error"]
+    assert pub.calls == []
+
+
+def test_push_confirm_names_the_plan_among_the_things_a_stale_token_means(
+    conn, tmp_path, fixture, fake_publisher
+):
+    """A refusal the athlete cannot act on is a dead end: the message has to say
+    that a revised plan is one of the ways the preview goes stale."""
+    tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+
+    out = tools.push_confirm(
+        conn,
+        date=FUTURE,
+        confirm_token="deadbeef",
+        publisher=fake_publisher(),
+        reports_dir=str(tmp_path),
+    )
+
+    assert "plan" in out["data"]["error"]
+
+
+def test_the_push_receipt_records_the_plan_it_was_measured_against(
+    conn, tmp_path, fixture, fake_publisher
+):
+    tools.author_workout(
+        conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
+    )
+    pub = fake_publisher()
+    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    tools.push_confirm(
+        conn,
+        date=FUTURE,
+        confirm_token=preview["data"]["confirm_token"],
+        publisher=pub,
+        reports_dir=str(tmp_path),
+    )
+
+    receipt = json.loads((tmp_path / FUTURE / "push.json").read_text())
+    assert receipt["planned_intent"] == "quality"
+
+
+def test_status_reports_no_divergence_while_the_plan_still_allows_the_push(conn, tmp_path):
+    _seed_pushed(tmp_path)  # a tempo push; 2026-07-17 is a quality day by template
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] is None
+
+
+def test_status_reports_divergence_once_the_plan_drops_below_the_pushed_session(conn, tmp_path):
+    """The 2026-07-17 case as a read: the session is on the watch and the plan that
+    would have justified it is gone."""
+    _seed_pushed(tmp_path)
+    _seed_plan(conn, PUSH_DATE, "easy")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] == {
+        "pushed_type": "tempo",
+        "planned_intent": "easy",
+        "pushed_at": PUSHED_AT,
+    }
+
+
+def test_the_divergence_reads_the_type_the_receipt_recorded_over_a_respec(conn, tmp_path):
+    """A spec re-authored after the push says nothing about what is on the watch."""
+    _seed_pushed(tmp_path, session_type="quality")
+    _seed_plan(conn, PUSH_DATE, "easy")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"]["pushed_type"] == "quality"
+
+
+def test_a_date_that_was_never_pushed_has_nothing_to_diverge(conn, tmp_path):
+    _seed_plan(conn, PUSH_DATE, "rest")
+
+    out = _status(conn, tmp_path, FakePublisher())
+
+    assert out["data"]["plan_divergence"] is None
+
+
+def test_plan_confirm_reports_a_pushed_workout_the_new_plan_invalidates(conn, tmp_path):
+    """Confirming a week that drops Friday to easy must surface the tempo session
+    already sitting on the watch for that Friday."""
+    reports, plans = tmp_path / "reports", tmp_path / "plans"
+    reports.mkdir()
+    plans.mkdir()
+    _seed_pushed(reports, session_type="tempo")
+
+    out = tools.plan_confirm(
+        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+    )
+
+    assert out["data"]["written"] is True
+    assert out["data"]["invalidated_pushes"] == [
+        {
+            "date": PUSH_DATE,
+            "pushed_type": "tempo",
+            "planned_intent": "easy",
+            "pushed_at": PUSHED_AT,
+        }
+    ]
+
+
+def test_plan_confirm_reports_nothing_when_the_new_plan_still_allows_the_push(conn, tmp_path):
+    reports, plans = tmp_path / "reports", tmp_path / "plans"
+    reports.mkdir()
+    plans.mkdir()
+    _seed_pushed(reports, session_type="easy")
+
+    out = tools.plan_confirm(
+        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+    )
+
+    assert out["data"]["invalidated_pushes"] == []

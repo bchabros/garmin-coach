@@ -117,6 +117,9 @@ work is tracked as GitHub issues (`docs/agents/issue-tracker.md`).
 
 - `activity_sets` (per-set Hyrox/strength via `get_activity_exercise_sets`) -- committed
   in the Phase 0 PRD (D9) but not yet implemented.
+- Plan divergence on the **nightly** path: `daily`'s plans stage imports plan files but
+  does not check them against already-pushed workouts, so a revision landing overnight
+  surfaces only on the next `plan import` or `get_workout_status` (issue #22, ADR 0021).
 - Multi-sport / `discipline` weighting in weekly rollups (deferred from Phase 5, BUILD
   section 12).
 - VO2max / threshold **trend charts** (deferred from Phase 5, BUILD section 12).

@@ -206,23 +206,27 @@ def get_workout_status(
     connect: Callable[[], publish.WorkoutPublisher],
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
-    """Return the authored spec, the push receipt, and the receipt reconciled with Garmin.
+    """Return the authored spec, the push receipt, the account finding, and the plan check.
 
     The receipt records what a push did; it is never presented as what the account
     holds now (issue #41). ``reconciled`` is the fresh account-side finding and sits
     beside the untouched receipt, because "we pushed it and it worked" stays true
     even after the athlete deletes the workout.
 
+    ``plan_divergence`` answers the other question a receipt cannot: whether the plan
+    of record still allows what is on the watch (issue #22). It needs no account read -
+    the plan lives in the DB - so it is reported even when Garmin is unreachable.
+
     Args:
-        conn: The finished DB, for the freshness envelope.
+        conn: The finished DB, for the plan of record and the freshness envelope.
         date: The day whose workout is being asked about.
         connect: Builds the Garmin read surface, called only when a receipt names a
             workout to check - so a date with no push never logs in.
         reports_dir: Root of the per-day report artifacts.
 
     Returns:
-        The wrapped ``date``/``workout``/``push``/``reconciled`` block; ``reconciled``
-        is None when there is no receipt to check.
+        The wrapped ``date``/``workout``/``push``/``reconciled``/``plan_divergence``
+        block; the last two are None when there is no receipt to check.
     """
     day_dir = _day_dir(reports_dir, date)
     push = _read_json(day_dir / "push.json")
@@ -234,6 +238,7 @@ def get_workout_status(
         "workout": workout,
         "push": _receipt_view(push),
         "reconciled": finding.as_finding() if finding is not None else None,
+        "plan_divergence": publish.plan_divergence(push, workout, plan.planned_intent(conn, date)),
     }
     return _wrap(conn, data)
 
@@ -378,6 +383,7 @@ def author_workout(
         "zones": dg.get("zones"),
         "today": dt.date.today().isoformat(),
         "recommendation": recommendation,
+        "planned_intent": plan.planned_intent(conn, date),
     }
     try:
         spec = author.author(request, context)
@@ -420,6 +426,7 @@ def plan_confirm(
     week_start: str,
     days: list[dict[str, Any]],
     plans_dir: str = "plans",
+    reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Write a previewed week to ``plans/<monday>_week.md`` and cache it.
 
@@ -428,6 +435,10 @@ def plan_confirm(
     revising an authored week stays a manual edit + re-import (issue #21). The
     written file goes back through the same parser as a hand-written plan, so
     there is exactly one ingestion path.
+
+    ``invalidated_pushes`` names the days of the confirmed week whose already-pushed
+    workout the new plan no longer allows (issue #22) - the write succeeded, and
+    those days need re-authoring.
     """
     resolved, error = _validate_proposal(week_start, days, plans_dir)
     if error is not None:
@@ -445,6 +456,9 @@ def plan_confirm(
         "written": True,
         "path": str(path),
         "days": resolved,
+        "invalidated_pushes": publish.invalidated_pushes(
+            reports_dir, plan.planned_by_date(conn, week_start)
+        ),
         "error": None,
     }
     return _wrap(conn, data)
@@ -486,24 +500,31 @@ def push_preview(
     """Dry-run the push for a date: the resolved action, payload, and confirm token.
 
     The returned ``confirm_token`` is what ``push_confirm`` requires; it covers the
-    workout *and* its date, so a push can only follow a preview the caller displayed.
+    workout, its date, *and* the plan of record for that date, so a push can only
+    follow a preview the caller displayed and the plan it was measured against.
     ``spec_hash`` is the separate account-side idempotency marker, shown for reference.
+
+    A spec harder than the plan of record resolves to ``refuse`` here rather than at
+    confirm time: a plan revised after the spec was authored is exactly the case the
+    author-time guard cannot see (issue #22).
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
         return _wrap(conn, {"error": error})
 
+    planned = plan.planned_intent(conn, date)
     result = publish.publish(
         spec,
         publisher,
         confirm=False,
         activity_dates=_dates_with_activity(conn, date),
         known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
+        planned_intent=planned,
     )
     data = {
         "date": date,
         "action": result.action,
-        "confirm_token": publish.confirm_token(spec),
+        "confirm_token": publish.confirm_token(spec, planned),
         "spec_hash": result.spec_hash,
         "payload": result.payload,
         "message": result.message,
@@ -524,19 +545,21 @@ def push_confirm(
 ) -> dict[str, Any]:
     """Execute the push for a date, gated on the token from ``push_preview``.
 
-    A mismatched token is refused without touching the account - the spec or its
-    date changed since the preview (or no preview happened), so preview again.
+    A mismatched token is refused without touching the account - the spec, its date,
+    or the plan of record for it changed since the preview (or no preview happened),
+    so preview again.
     """
     spec, error = _load_spec(date, reports_dir)
     if spec is None:
         return _wrap(conn, {"error": error, "applied": False})
 
-    if confirm_token != publish.confirm_token(spec):
+    planned = plan.planned_intent(conn, date)
+    if confirm_token != publish.confirm_token(spec, planned):
         return _wrap(
             conn,
             {
-                "error": "stale confirm_token: the spec or its date changed since the "
-                "preview; run push_preview again",
+                "error": "stale confirm_token: the spec, its date, or the plan of record "
+                "for it changed since the preview; run push_preview again",
                 "applied": False,
             },
         )
@@ -548,6 +571,7 @@ def push_confirm(
         replace=replace,
         activity_dates=_dates_with_activity(conn, date),
         known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
+        planned_intent=planned,
     )
     if result.applied or result.error is not None:
         _write_receipt(result, _day_dir(reports_dir, date))

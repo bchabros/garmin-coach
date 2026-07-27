@@ -37,6 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from ..core import plan as _plan
 from . import author as _author
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,8 @@ class PublishResult:
     schedule_id: int | None = None
     error: str | None = None
     warnings: list[str] = field(default_factory=list)
+    session_type: str | None = None
+    planned_intent: str | None = None
 
     def as_receipt(self) -> dict[str, Any]:
         """The ``push.json`` receipt body (the caller adds the push timestamp)."""
@@ -111,6 +114,8 @@ class PublishResult:
             "workout_id": self.workout_id,
             "schedule_id": self.schedule_id,
             "spec_hash": self.spec_hash,
+            "session_type": self.session_type,
+            "planned_intent": self.planned_intent,
             "error": self.error,
             "warnings": self.warnings,
         }
@@ -166,14 +171,8 @@ def receipt_workout_id(day_dir: pathlib.Path | str) -> int | None:
         The recorded id, or None when the date has no receipt, the file is unreadable,
         or the push never got as far as naming a workout.
     """
-    path = pathlib.Path(day_dir) / "push.json"
-    if not path.exists():
-        return None
-    try:
-        receipt = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-    return receipt.get("workout_id") if isinstance(receipt, dict) else None
+    receipt = _json_object(_read_artifact(pathlib.Path(day_dir) / "push.json"))
+    return receipt.get("workout_id") if receipt is not None else None
 
 
 def publish(
@@ -184,6 +183,7 @@ def publish(
     replace: bool = False,
     activity_dates: frozenset[str] | set[str] = frozenset(),
     known_workout_id: int | None = None,
+    planned_intent: str | None = None,
 ) -> PublishResult:
     """Push a workout spec to Garmin, idempotently and behind a confirm interlock.
 
@@ -197,6 +197,10 @@ def publish(
         known_workout_id: The id a previous push recorded for this date, offered as the
             first lookup candidate (issue #40). The caller reads it from the receipt;
             this function does no file IO.
+        planned_intent: The plan of record's intent for the spec's date. A spec harder
+            than it is refused before the account is read (issue #22) - the author-time
+            guard cannot see a plan revised after the spec was written. Recorded on the
+            receipt either way, so a later read knows what the push was measured against.
 
     Returns:
         A ``PublishResult`` describing the resolved action and, when confirmed, the
@@ -211,6 +215,21 @@ def publish(
     if date in activity_dates:
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
+    session_type = spec.get("session_type")
+    too_hard = _plan.guard_error(date, session_type, planned_intent)
+    if too_hard is not None:
+        return PublishResult(
+            action="refuse",
+            applied=False,
+            spec_hash=marker,
+            date=date,
+            payload=payload,
+            message=too_hard,
+            warnings=warnings,
+            session_type=session_type,
+            planned_intent=planned_intent,
+        )
+
     existing, conflict = _find_target(publisher, spec["name"], marker, known_workout_id)
     action = "refuse" if conflict else _resolve_action(existing, marker, publisher, date, replace)
     result = PublishResult(
@@ -221,6 +240,8 @@ def publish(
         payload=payload,
         message=conflict or _message(action),
         warnings=warnings,
+        session_type=session_type,
+        planned_intent=planned_intent,
     )
     if existing is not None:
         result.workout_id = existing["workoutId"]
@@ -373,6 +394,80 @@ def reconcile(
         logger.info("reconcile: %s unverified for workout %s: %s", date, workout_id, exc)
         return _unverified(body)
     return _finding(facts, body, pushed)
+
+
+def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[str, Any] | None:
+    """Report a pushed workout the plan of record no longer allows (issue #22).
+
+    Divergence means *harder than* the plan, not merely different from it: a session
+    below the plan is the sanctioned downgrade the recommender produces daily, and
+    reporting that would drown the real case. This is the same comparison the author
+    and push guards refuse on, asked of a workout already on the account - which is
+    the only way it can arise, by the plan being revised after the push.
+
+    Pure over parsed artifacts, so both readers of it - a status read and a plan
+    import - answer the same question about the same date.
+
+    Args:
+        receipt: The parsed ``push.json`` body, or None when the date has no push.
+        spec: The parsed authored spec; consulted only for receipts written before
+            the receipt carried its own ``session_type``.
+        planned: The plan of record's intent for the date *now*.
+
+    Returns:
+        ``{pushed_type, planned_intent, pushed_at}``, or None when nothing was
+        pushed, the session is at or below the plan, or the type is unknowable.
+    """
+    body = _json_object(receipt)
+    if body is None or body.get("workout_id") is None:
+        return None
+    pushed_type = body.get("session_type") or (_json_object(spec) or {}).get("session_type")
+    if not _plan.is_harder(pushed_type, planned):
+        return None
+    return {
+        "pushed_type": pushed_type,
+        "planned_intent": planned,
+        "pushed_at": body.get("pushed_at"),
+    }
+
+
+def invalidated_pushes(
+    reports_dir: pathlib.Path | str, planned_by_date: dict[str, str | None]
+) -> list[dict[str, Any]]:
+    """The dates in a week whose already-pushed workout the plan no longer allows.
+
+    The import-time half of :func:`plan_divergence` (issue #22): revising a week is
+    when a divergence is created, so it is reported there rather than waiting for
+    someone to ask about that day.
+
+    Args:
+        reports_dir: Root of the per-day report artifacts.
+        planned_by_date: Each date of the week mapped to its planned intent (see
+            ``core.plan.planned_by_date``).
+
+    Returns:
+        One ``{date, pushed_type, planned_intent, pushed_at}`` per conflicting date,
+        in date order. Empty when the plan still allows everything already pushed.
+    """
+    conflicts = []
+    for date in sorted(planned_by_date):
+        day_dir = pathlib.Path(reports_dir) / date
+        divergence = plan_divergence(
+            _read_artifact(day_dir / "push.json"),
+            _read_artifact(day_dir / "workout.json"),
+            planned_by_date[date],
+        )
+        if divergence is not None:
+            conflicts.append({"date": date, **divergence})
+    return conflicts
+
+
+def _read_artifact(path: pathlib.Path) -> object | None:
+    """A parsed report artifact, or None when it is absent or unreadable."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -666,14 +761,24 @@ def spec_hash(spec: dict[str, Any]) -> str:
     return _canonical_hash({"name": spec["name"], "steps": spec["steps"]})
 
 
-def confirm_token(spec: dict[str, Any]) -> str:
+def confirm_token(spec: dict[str, Any], planned_intent: str | None = None) -> str:
     """A token covering everything a preview showed and a confirm acts on.
 
     The date is included because it decides what the push schedules and which day
     the activity-collision check ran against: a spec retargeted between preview and
     confirm must invalidate the preview even though the workout itself is unchanged.
+    The plan of record joins it for the same reason (issue #22) - it decides whether
+    the push is allowed at all, so a plan revised between the two invalidates what
+    the preview showed.
     """
-    return _canonical_hash({"name": spec["name"], "steps": spec["steps"], "date": spec["date"]})
+    return _canonical_hash(
+        {
+            "name": spec["name"],
+            "steps": spec["steps"],
+            "date": spec["date"],
+            "planned_intent": planned_intent,
+        }
+    )
 
 
 def _message(action: str) -> str:

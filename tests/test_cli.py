@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import types
 
 import pytest
 
 from garmin_coach import cli
-from garmin_coach.core import db
+from garmin_coach.core import db, plan
 from garmin_coach.cli import build_parser
 from garmin_coach.workouts import publish
 from tests.conftest import FakePublisher, run_spec
@@ -62,6 +63,27 @@ def test_cli_push_passes_the_receipts_workout_id_as_the_lookup_candidate(tmp_pat
 
     assert code == 1  # refused rather than creating a second copy
     assert len(pub.workouts) == 1
+
+
+def test_cli_push_refuses_a_spec_harder_than_the_plan_of_record(tmp_path, monkeypatch):
+    """The guard is not an MCP-only feature - the CLI writes to the same account (#22)."""
+    conn = db.connect(str(tmp_path / "t.db"))
+    db.bootstrap(conn)
+    plan.upsert_week(
+        conn,
+        [
+            {"week_start": "2026-07-13", "dow": dow, "planned": "easy 10 km", "intent": "easy"}
+            for dow in range(7)
+        ],
+    )
+    conn.close()
+    pub = FakePublisher()
+
+    code, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
+
+    assert code == 1
+    assert pub.calls == []
+    assert not (day_dir / "push.json").exists()
 
 
 def test_parser_accepts_sync_command_with_optional_to_date():
@@ -367,6 +389,52 @@ def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
     stored = db.list_goal_events(conn)[0]
     assert stored["target_s"] == 3600
     assert stored["note"] == "PB 1:01:46"
+
+
+def _week_file(intents):
+    """A plan file for the week of 2026-07-13, in the athlete's own table format."""
+    monday = _dt.date.fromisoformat("2026-07-13")
+    rows = "\n".join(
+        f"| {abbr} | {(monday + _dt.timedelta(days=i)).strftime('%d.%m')} | sesja | {intent} | plan |"
+        for i, (abbr, intent) in enumerate(
+            zip(("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"), intents)
+        )
+    )
+    return (
+        "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
+        "|---|---|---|---|---|\n" + rows + "\n"
+    )
+
+
+def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
+    tmp_path, monkeypatch, capsys
+):
+    """A mid-week revision surfaces the conflict at import time, not on the watch
+    on the morning of (#22)."""
+    plans_dir, reports_dir = tmp_path / "plans", tmp_path / "reports"
+    plans_dir.mkdir()
+    (plans_dir / "2026-07-13_week.md").write_text(
+        _week_file(["easy", "quality", "rest", "quality", "easy", "rest", "quality"]),
+        encoding="utf-8",
+    )
+    day_dir = reports_dir / PUSH_DATE  # the Friday the plan drops to easy
+    day_dir.mkdir(parents=True)
+    (day_dir / "push.json").write_text(
+        json.dumps(
+            {"workout_id": 1000, "session_type": "quality", "pushed_at": "2026-07-15T17:28:00"}
+        )
+    )
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+    )
+    args = argparse.Namespace(week=None, plans_dir=str(plans_dir), reports_dir=str(reports_dir))
+
+    code = cli._cmd_plan(args)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert PUSH_DATE in out
+    assert "quality" in out and "easy" in out
 
 
 def test_parser_accepts_plan_import_with_week_and_dir():

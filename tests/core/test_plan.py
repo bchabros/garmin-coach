@@ -231,6 +231,66 @@ def test_intent_class_covers_the_whole_vocabulary():
     assert all(plan.intent_class(i) is not None for i in plan.INTENTS)
 
 
+# --- hardness ladder and the plan guard (issue #22) ---------------------------
+
+
+def test_intent_rank_covers_the_whole_vocabulary():
+    """The guard indexes the ladder directly, so an intent a plan file may carry
+    without a rank would crash instead of being judged."""
+    assert set(plan.INTENT_RANK) == set(plan.INTENTS)
+
+
+def test_is_harder_ranks_quality_above_easy_above_rest():
+    assert plan.is_harder("quality", "easy")
+    assert plan.is_harder("easy", "rest")
+    assert not plan.is_harder("easy", "quality")
+    assert not plan.is_harder("easy", "easy")
+
+
+def test_is_harder_treats_the_top_types_as_one_rank():
+    """hyrox / crossfit / quality are equally hard: swapping between them is a
+    change of session, not an escalation."""
+    assert not plan.is_harder("hyrox", "quality")
+    assert not plan.is_harder("quality", "crossfit")
+
+
+def test_is_harder_is_false_when_either_side_is_unknown():
+    assert not plan.is_harder("quality", None)
+    assert not plan.is_harder(None, "rest")
+
+
+def test_planned_intent_resolves_the_plan_of_record(conn):
+    plan.upsert_week(conn, plan.parse_week(week_file(), WEEK))
+    assert plan.planned_intent(conn, "2026-07-16") == "quality"
+    assert plan.planned_intent(conn, "2026-07-17") == "easy"
+
+
+def test_planned_intent_falls_back_to_the_template(conn):
+    assert plan.planned_intent(conn, "2026-07-16") == "rest"  # template dow=3
+
+
+def test_guard_error_refuses_a_session_harder_than_the_plan():
+    """The 2026-07-17 case: the plan was downgraded to easy hours before a
+    quality session was authored and pushed."""
+    error = plan.guard_error("2026-07-17", "quality", "easy")
+
+    assert error is not None
+    assert "quality" in error and "easy" in error and "2026-07-17" in error
+
+
+def test_guard_error_allows_a_softer_session_than_planned():
+    """The downgrade contract: the recommender only ever softens."""
+    assert plan.guard_error("2026-07-17", "easy", "quality") is None
+
+
+def test_guard_error_allows_the_planned_session_itself():
+    assert plan.guard_error("2026-07-17", "quality", "quality") is None
+
+
+def test_guard_error_is_silent_when_nothing_is_planned():
+    assert plan.guard_error("2026-07-17", "quality", None) is None
+
+
 # --- proposal validation -----------------------------------------------------
 
 

@@ -12,8 +12,8 @@ Two separate problems, only one of which can be automated:
   Claude Desktop, not read from this repo), which is what makes it visible to
   Cowork and to claude.ai chat. There is no supported local or API path to push it
   up, so this script cannot upload it -- it only reports whether the copy Claude
-  last synced still matches ``skills/coach/SKILL.md``, turning a silent staleness
-  problem into a loud one. Re-uploading stays manual.
+  last synced still mirrors ``skills/coach/`` file for file, turning a silent
+  staleness problem into a loud one. Re-uploading stays manual.
 
 Usage::
 
@@ -35,18 +35,13 @@ from typing import Any
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER_NAME = "coach"
 SKILL_NAME = "coach"
-REPO_SKILL = REPO_ROOT / "skills" / SKILL_NAME / "SKILL.md"
+REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
 
-CONFIG_PATH = (
-    pathlib.Path.home()
-    / "Library"
-    / "Application Support"
-    / "Claude"
-    / "claude_desktop_config.json"
-)
+HOME = pathlib.Path.home()
+CONFIG_PATH = HOME / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
 SKILL_CACHE_GLOB = (
     "Library/Application Support/Claude/local-agent-mode-sessions/"
-    f"skills-plugin/*/*/skills/{SKILL_NAME}/SKILL.md"
+    f"skills-plugin/*/*/skills/{SKILL_NAME}"
 )
 
 
@@ -189,22 +184,61 @@ def check_mcp() -> bool:
     return True
 
 
+def _markdown_tree(root: pathlib.Path) -> dict[str, str]:
+    """Map every Markdown file under root to its text, keyed by path relative to root."""
+    return {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*.md"))}
+
+
+def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str, str]]:
+    """List every file in which a synced copy fails to mirror the repo.
+
+    The skill is a directory now -- a router plus its reference files -- and the
+    upload ships all of it, so a copy is current only when it holds the same files
+    with the same bytes. Three ways that breaks, each its own fix.
+
+    Args:
+        repo: Markdown tree of the skill directory in this repo.
+        cached: Markdown tree of the copy Claude last synced down.
+
+    Returns:
+        One (relative path, reason) pair per divergent file, sorted by path.
+    """
+    edited = {name for name in repo.keys() & cached.keys() if repo[name] != cached[name]}
+    reasons = {name: "differs" for name in edited}
+    reasons.update({name: "missing from account" for name in repo.keys() - cached.keys()})
+    reasons.update({name: "left over on account" for name in cached.keys() - repo.keys()})
+    return sorted(reasons.items())
+
+
+def _report_stale(stale: dict[pathlib.Path, list[tuple[str, str]]]) -> None:
+    """Print each synced copy that has drifted, naming every file and why."""
+    print(f"[skill] '{SKILL_NAME}' on your Claude account is STALE -- it differs from this repo")
+    for cached_dir, files in stale.items():
+        print(f"[skill]   synced copy: {cached_dir}")
+        for name, reason in files:
+            print(f"[skill]     {name} ({reason})")
+    print(f"[skill]   diff: diff -r '{next(iter(stale))}' {REPO_SKILL_DIR}")
+    print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
+    print("[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/")
+
+
 def check_skill() -> bool:
     """Report whether the coach skill Claude last synced matches this repo.
 
     The cached copy under Application Support is synced down from the user's Claude
     account, so it stands in for "what Cowork and claude.ai chat are actually
-    running" -- as of the last sync.
+    running" -- as of the last sync. Every Markdown file under the skill directory
+    is compared, because the upload ships the whole folder.
 
     Returns:
-        True if the synced copy matches the repo.
+        True if every synced copy mirrors the repo directory file for file.
     """
-    if not REPO_SKILL.exists():
-        print(f"[skill] no skill in this repo at {REPO_SKILL}")
+    if not REPO_SKILL_DIR.is_dir():
+        print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
         return False
 
-    cached = sorted(pathlib.Path.home().glob(SKILL_CACHE_GLOB))
-    if not cached:
+    cached_dirs = sorted(HOME.glob(SKILL_CACHE_GLOB))
+    if not cached_dirs:
         print(f"[skill] '{SKILL_NAME}' has never synced to this machine")
         print("[skill] Claude has no copy of it, or Claude Desktop has not synced yet.")
         print(
@@ -212,18 +246,14 @@ def check_skill() -> bool:
         )
         return False
 
-    stale = [p for p in cached if p.read_text() != REPO_SKILL.read_text()]
+    repo_tree = _markdown_tree(REPO_SKILL_DIR)
+    stale = {
+        cached_dir: files
+        for cached_dir in cached_dirs
+        if (files := _stale_files(repo_tree, _markdown_tree(cached_dir)))
+    }
     if stale:
-        print(
-            f"[skill] '{SKILL_NAME}' on your Claude account is STALE -- it differs from this repo"
-        )
-        for path in stale:
-            print(f"[skill]   synced copy: {path}")
-        print(f"[skill]   diff: diff '{stale[0]}' {REPO_SKILL}")
-        print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
-        print(
-            "[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/"
-        )
+        _report_stale(stale)
         return False
 
     print(f"[skill] '{SKILL_NAME}' on your Claude account matches this repo (as of last sync)")

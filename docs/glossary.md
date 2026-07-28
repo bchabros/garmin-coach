@@ -61,6 +61,19 @@ code, docstrings, PRDs, and ADRs.
 - **Discipline** - human-facing sport grouping (Bieganie, Hyrox/HIIT, Sila, Skitury,
   Trail) mapped from the Garmin `gtype`.
 
+## Coach skill anatomy (skills/coach/, issue #51)
+
+- **router** - `skills/coach/SKILL.md`: the only file always in context. It carries the
+  frontmatter description that decides whether the skill loads at all, the rails that
+  must hold for every flow, the CLI bootstrap, and the routing gates. It holds no flow
+  detail.
+- **reference file** - one `skills/coach/references/*.md` per flow (report, planning,
+  authoring), read lazily, only once its flow starts. This is what keeps a report-only
+  conversation from carrying the authoring vocabulary.
+- **routing gate** - the categorical "before you do X, you MUST read
+  `references/<file>.md`" line in the router. Guarded by `tests/test_coach_skill_routing.py`:
+  every gated path exists, and every reference file is gated.
+
 ## Coach terms (mart -> report)
 
 - **digest** - compact recomputed view built by `build_digest(conn, ...)` from

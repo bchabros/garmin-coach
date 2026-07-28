@@ -61,7 +61,7 @@ garmin-coach/
 ├── scripts/
 │   ├── daily.sh              # thin cron/launchd entrypoint: execs `garmin-coach daily`
 │   └── com.garmincoach.daily.plist.example  # launchd schedule example (macOS)
-├── skills/coach/SKILL.md     # narrative layer: reads digest.json, writes report.md
+├── skills/coach/             # narrative layer: SKILL.md router + references/ per flow
 ├── src/garmin_coach/
 │   ├── core/                 # shared foundation
 │   │   ├── config.py         # pydantic-settings: .env + paths + logging config
@@ -209,7 +209,7 @@ plan-vs-actual, personal zones):
 }
 ```
 
-Run the coach skill (`skills/coach/SKILL.md`) in Cowork against the same DB to turn
+Run the coach skill (`skills/coach/`) in Cowork against the same DB to turn
 the latest `digest.json` + charts into a narrated `report.md`. Coach sessions also
 keep qualitative context outside the DB: `memory/` holds the long-term athlete
 profile (goals, tendencies, coaching decisions — the DB holds the numbers, this

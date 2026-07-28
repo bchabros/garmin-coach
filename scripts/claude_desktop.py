@@ -44,6 +44,10 @@ SKILL_CACHE_GLOB = (
     f"skills-plugin/*/*/skills/{SKILL_NAME}"
 )
 
+EDITED_ELSEWHERE = "differs"
+NEVER_UPLOADED = "missing from account"
+DELETED_LOCALLY = "left over on account"
+
 
 class RegistrationError(RuntimeError):
     """Raised when the Desktop config cannot be read or safely updated."""
@@ -204,9 +208,9 @@ def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str
         One (relative path, reason) pair per divergent file, sorted by path.
     """
     edited = {name for name in repo.keys() & cached.keys() if repo[name] != cached[name]}
-    reasons = {name: "differs" for name in edited}
-    reasons.update({name: "missing from account" for name in repo.keys() - cached.keys()})
-    reasons.update({name: "left over on account" for name in cached.keys() - repo.keys()})
+    reasons = {name: EDITED_ELSEWHERE for name in edited}
+    reasons.update({name: NEVER_UPLOADED for name in repo.keys() - cached.keys()})
+    reasons.update({name: DELETED_LOCALLY for name in cached.keys() - repo.keys()})
     return sorted(reasons.items())
 
 
@@ -217,7 +221,7 @@ def _report_stale(stale: dict[pathlib.Path, list[tuple[str, str]]]) -> None:
         print(f"[skill]   synced copy: {cached_dir}")
         for name, reason in files:
             print(f"[skill]     {name} ({reason})")
-    print(f"[skill]   diff: diff -r '{next(iter(stale))}' {REPO_SKILL_DIR}")
+        print(f"[skill]   diff: diff -r '{cached_dir}' {REPO_SKILL_DIR}")
     print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
     print("[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/")
 

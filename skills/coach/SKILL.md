@@ -15,9 +15,12 @@ raw mart** - you consume the compact digest and the current-standing snapshot on
 Three flows, one reference file each. The gates are categorical - read the file first,
 every time, however small the request looks.
 
-- Before you read `reports/{today}/digest.json` or `snapshot.json` - whether you are
-  writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
-  `references/report.md`. It carries what every field means and which may be null.
+- Before you take in the athlete's numbers - reading `reports/{today}/digest.json` or
+  `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
+  / `get_recommendation`, whether you are writing the full report or answering "jaka mam
+  forme?" in one line - you **MUST** read `references/report.md`. It carries what every
+  field means and which may be null, and the fields are the same whichever way they
+  arrive.
 - Before you propose, preview, or write a training week, you **MUST** read
   `references/planning.md`.
 - Before you author a workout or push one to Garmin, you **MUST** read
@@ -51,10 +54,9 @@ request from the athlete.
 
 ## Running the CLI
 
-```bash
-poetry run garmin-coach plan import       # cache plans/<monday>_week.md (transport-free)
-poetry run garmin-coach report            # or: --from YYYY-MM-DD --to YYYY-MM-DD
-```
+Which commands to run, in what order, and what to do when one fails is in
+`references/report.md`. What belongs here is the fallback, because it is about the
+machine you are on rather than about the report.
 
 **If `poetry` is missing or fails** (the Cowork sandbox ships Python 3.10, not the
 3.13 that poetry needs), do NOT build a venv or install a new Python - the code runs

@@ -122,8 +122,19 @@ router plus its `references/` files -- but Claude Code is the only surface that 
 from disk. Cowork and claude.ai chat run the copy **uploaded to your Claude account**
 (claude.ai -> Settings -> Capabilities -> Skills), which is synced *down* to Claude
 Desktop, never up from this repo. There is no supported path to push it up, so **editing
-the repo copy does not update the one Cowork and chat run** -- re-upload is manual (it
-ships the whole folder), and the drift is otherwise silent.
+the repo copy does not update the one Cowork and chat run** -- re-upload is manual, and the
+drift is otherwise silent.
+
+The form takes one archive, not a folder, so build it rather than zipping by hand:
+
+```bash
+task claude:package
+```
+
+That writes `dist/coach.zip` with the skill's own directory at the top level --
+`coach/SKILL.md` and `coach/references/*.md`, never a bare `SKILL.md`, which the form
+rejects. It is the same layout the official `.skill` packager writes, so a picker that
+wants that extension needs the file renamed and nothing else.
 
 `task claude:check` catches that: it compares every Markdown file under `skills/coach/`
 against the copy Claude last synced to this machine and names each file that has drifted,

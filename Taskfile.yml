@@ -94,6 +94,11 @@ tasks:
     cmds:
       - python3 scripts/claude_desktop.py register
 
+  claude:package:
+    desc: Build dist/coach.zip, the archive the claude.ai Skills form uploads.
+    cmds:
+      - python3 scripts/claude_desktop.py package
+
   clean:
     desc: Remove local Python and tool caches.
     cmds:

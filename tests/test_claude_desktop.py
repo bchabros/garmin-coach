@@ -18,6 +18,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+import zipfile
 from typing import Any
 
 import pytest
@@ -253,3 +254,39 @@ def test_check_skill_reports_when_the_repo_has_no_skill(mod, tmp_path, monkeypat
 
     assert _check_skill(mod, tmp_path / "absent", home, monkeypatch) is False
     assert "no skill in this repo" in capsys.readouterr().out
+
+
+def _package(mod, skill_repo: pathlib.Path, dist: pathlib.Path, monkeypatch) -> int:
+    monkeypatch.setattr(mod, "REPO_SKILL_DIR", skill_repo)
+    monkeypatch.setattr(mod, "DIST_DIR", dist)
+    return mod.package_skill()
+
+
+def test_package_skill_roots_the_archive_at_the_skill_folder(
+    mod, skill_repo, tmp_path, monkeypatch
+):
+    """The upload form wants coach/SKILL.md; a bare SKILL.md at the root is rejected."""
+    dist = tmp_path / "dist"
+
+    assert _package(mod, skill_repo, dist, monkeypatch) == 0
+    with zipfile.ZipFile(dist / "coach.zip") as bundle:
+        assert sorted(bundle.namelist()) == ["coach/SKILL.md", "coach/references/report.md"]
+
+
+def test_package_skill_ships_the_current_bytes(mod, skill_repo, tmp_path, monkeypatch):
+    """An archive built from a stale read would upload the drift it is meant to clear."""
+    dist = tmp_path / "dist"
+    (skill_repo / "SKILL.md").write_text("# Coach\nrewritten router\n")
+
+    assert _package(mod, skill_repo, dist, monkeypatch) == 0
+    with zipfile.ZipFile(dist / "coach.zip") as bundle:
+        assert bundle.read("coach/SKILL.md").decode() == "# Coach\nrewritten router\n"
+
+
+def test_package_skill_refuses_when_the_repo_has_no_skill(mod, tmp_path, monkeypatch, capsys):
+    """Never write an empty archive that would wipe the skill on upload."""
+    dist = tmp_path / "dist"
+
+    assert _package(mod, tmp_path / "absent", dist, monkeypatch) == 1
+    assert "no skill in this repo" in capsys.readouterr().out
+    assert not dist.exists()

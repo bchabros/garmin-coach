@@ -13,12 +13,14 @@ Two separate problems, only one of which can be automated:
   Cowork and to claude.ai chat. There is no supported local or API path to push it
   up, so this script cannot upload it -- it only reports whether the copy Claude
   last synced still mirrors ``skills/coach/`` file for file, turning a silent
-  staleness problem into a loud one. Re-uploading stays manual.
+  staleness problem into a loud one. Re-uploading stays manual, but the archive the
+  upload form wants is built here, so the folder is never zipped by hand.
 
 Usage::
 
     python3 scripts/claude_desktop.py check      # report only, never writes
     python3 scripts/claude_desktop.py register   # add/update the MCP entry
+    python3 scripts/claude_desktop.py package    # build the uploadable archive
 """
 
 from __future__ import annotations
@@ -30,12 +32,14 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import zipfile
 from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER_NAME = "coach"
 SKILL_NAME = "coach"
 REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
+DIST_DIR = REPO_ROOT / "dist"
 
 _CLAUDE_SUPPORT = "Library/Application Support/Claude"
 
@@ -229,7 +233,8 @@ def _report_stale(stale: dict[pathlib.Path, list[tuple[str, str]]]) -> None:
             print(f"[skill]     {name} ({reason})")
         print(f"[skill]   diff: diff -r '{cached_dir}' '{REPO_SKILL_DIR}'")
     print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
-    print("[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/")
+    print("[skill] fix: task claude:package, then upload dist/coach.zip at")
+    print("[skill]      claude.ai -> Settings -> Capabilities -> Skills")
 
 
 def check_skill() -> bool:
@@ -251,9 +256,8 @@ def check_skill() -> bool:
     if not cached_dirs:
         print(f"[skill] '{SKILL_NAME}' has never synced to this machine")
         print("[skill] Claude has no copy of it, or Claude Desktop has not synced yet.")
-        print(
-            "[skill] fix: upload skills/coach/ at claude.ai -> Settings -> Capabilities -> Skills"
-        )
+        print("[skill] fix: task claude:package, then upload dist/coach.zip at")
+        print("[skill]      claude.ai -> Settings -> Capabilities -> Skills")
         return False
 
     repo_tree = _markdown_tree(REPO_SKILL_DIR)
@@ -268,6 +272,35 @@ def check_skill() -> bool:
 
     print(f"[skill] '{SKILL_NAME}' on your Claude account matches this repo (as of last sync)")
     return True
+
+
+def package_skill() -> int:
+    """Build the archive the claude.ai Skills form takes, so the folder is never zipped by hand.
+
+    The form uploads one archive, not a directory, and it wants the skill's own
+    folder at the top level -- ``coach/SKILL.md``, never a bare ``SKILL.md`` -- which
+    is also the layout the official ``.skill`` packager writes. Same bytes either way:
+    a ``.skill`` file is this zip under a different extension.
+
+    Returns:
+        0 once the archive is written, 1 if there is no skill directory to package.
+    """
+    if not REPO_SKILL_DIR.is_dir():
+        print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
+        return 1
+
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    archive = DIST_DIR / f"{SKILL_NAME}.zip"
+    files = sorted(REPO_SKILL_DIR.rglob("*.md"))
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for path in files:
+            arcname = path.relative_to(REPO_SKILL_DIR.parent)
+            bundle.write(path, arcname)
+            print(f"[skill]   + {arcname}")
+    print(f"[skill] wrote {archive} ({len(files)} files)")
+    print("[skill] upload it at claude.ai -> Settings -> Capabilities -> Skills")
+    print("[skill] then: task claude:check")
+    return 0
 
 
 def check() -> int:
@@ -291,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="Report MCP registration and skill freshness; never writes.")
+    sub.add_parser("package", help="Build the uploadable coach skill archive under dist/.")
     register_parser = sub.add_parser(
         "register", help="Add or update this repo's coach MCP entry in Claude Desktop."
     )
@@ -304,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "register":
             return register(force=args.force)
+        if args.command == "package":
+            return package_skill()
         return check()
     except RegistrationError as exc:
         print(f"[claude-desktop] {exc}", file=sys.stderr)

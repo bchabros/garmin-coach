@@ -5,7 +5,8 @@
 *.db-shm
 data/
 plans/
-memory/
+memory/*
+!memory/README.md
 raw/
 reports/
 logs/

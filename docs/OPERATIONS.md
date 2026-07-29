@@ -111,21 +111,36 @@ Config keys (`config.py`, overridable via env / `.env`):
 `garmin-coach report [--to YYYY-MM-DD]` builds the deterministic artifacts under
 `reports/{date}/`: `digest.json` plus two charts (`hrv_band.png`, `acwr.png`). It does
 **not** write the narrative. The coach skill reads the digest and writes `report.md` from
-it (never the raw mart, never Garmin) -- see `skills/coach/SKILL.md` for how to invoke the
-skill and what the narrative should contain.
+it (never the raw mart, never Garmin) -- see `skills/coach/SKILL.md` for how the skill is
+invoked and routed, and `skills/coach/references/report.md` for what the narrative should
+contain.
 
 ### Keeping the uploaded coach skill in sync
 
-`skills/coach/SKILL.md` in this repo is the source of truth, but Claude Code is the only
-surface that reads it from disk. Cowork and claude.ai chat run the copy **uploaded to
-your Claude account** (claude.ai -> Settings -> Capabilities -> Skills), which is synced
-*down* to Claude Desktop, never up from this repo. There is no supported path to push it
-up, so **editing the repo copy does not update the one Cowork and chat run** -- re-upload
-is manual, and the drift is otherwise silent.
+`skills/coach/` in this repo is the source of truth -- the whole directory, the `SKILL.md`
+router plus its `references/` files -- but Claude Code is the only surface that reads it
+from disk. Cowork and claude.ai chat run the copy **uploaded to your Claude account**
+(claude.ai -> Settings -> Capabilities -> Skills), which is synced *down* to Claude
+Desktop, never up from this repo. There is no supported path to push it up, so **editing
+the repo copy does not update the one Cowork and chat run** -- re-upload is manual, and the
+drift is otherwise silent.
 
-`task claude:check` catches that: it diffs the repo copy against the copy Claude last
-synced to this machine and tells you when the uploaded skill has gone stale. Run it after
-changing `SKILL.md`.
+The form takes one archive, not a folder, so build it rather than zipping by hand:
+
+```bash
+task claude:package
+```
+
+That writes `dist/coach.zip` with the skill's own directory at the top level --
+`coach/SKILL.md` and `coach/references/*.md`, never a bare `SKILL.md`, which the form
+rejects. It is the same layout the official `.skill` packager writes, so a picker that
+wants that extension needs the file renamed and nothing else.
+
+`task claude:check` catches that: it compares every Markdown file under `skills/coach/`
+against the copy Claude last synced to this machine and names each file that has drifted,
+with what it observed -- the two copies differ, the file is missing from the account, or it
+is left over on the account after a local delete. Run it after changing anything under
+`skills/coach/`.
 
 ## Authoring and pushing a workout (Phase 11)
 

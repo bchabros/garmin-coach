@@ -12,13 +12,15 @@ Two separate problems, only one of which can be automated:
   Claude Desktop, not read from this repo), which is what makes it visible to
   Cowork and to claude.ai chat. There is no supported local or API path to push it
   up, so this script cannot upload it -- it only reports whether the copy Claude
-  last synced still matches ``skills/coach/SKILL.md``, turning a silent staleness
-  problem into a loud one. Re-uploading stays manual.
+  last synced still mirrors ``skills/coach/`` file for file, turning a silent
+  staleness problem into a loud one. Re-uploading stays manual, but the archive the
+  upload form wants is built here, so the folder is never zipped by hand.
 
 Usage::
 
     python3 scripts/claude_desktop.py check      # report only, never writes
     python3 scripts/claude_desktop.py register   # add/update the MCP entry
+    python3 scripts/claude_desktop.py package    # build the uploadable archive
 """
 
 from __future__ import annotations
@@ -30,24 +32,31 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import zipfile
 from typing import Any
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER_NAME = "coach"
 SKILL_NAME = "coach"
-REPO_SKILL = REPO_ROOT / "skills" / SKILL_NAME / "SKILL.md"
+REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
+DIST_DIR = REPO_ROOT / "dist"
 
-CONFIG_PATH = (
-    pathlib.Path.home()
-    / "Library"
-    / "Application Support"
-    / "Claude"
-    / "claude_desktop_config.json"
-)
+_CLAUDE_SUPPORT = "Library/Application Support/Claude"
+
+# Two independent test seams: HOME for the synced-skill cache, CONFIG_PATH for the Desktop
+# config. CONFIG_PATH deliberately does not ride on HOME -- patching HOME alone would
+# otherwise leave register() writing the real config file.
+HOME = pathlib.Path.home()
+CONFIG_PATH = pathlib.Path.home() / _CLAUDE_SUPPORT / "claude_desktop_config.json"
 SKILL_CACHE_GLOB = (
-    "Library/Application Support/Claude/local-agent-mode-sessions/"
-    f"skills-plugin/*/*/skills/{SKILL_NAME}/SKILL.md"
+    f"{_CLAUDE_SUPPORT}/local-agent-mode-sessions/skills-plugin/*/*/skills/{SKILL_NAME}"
 )
+
+# What the check observed about a file, not why -- the script cannot know the cause, and
+# the likeliest one for a mismatch is an un-uploaded local edit, not an edit elsewhere.
+CONTENT_DIFFERS = "differs"
+MISSING_FROM_ACCOUNT = "missing from account"
+LEFT_OVER_ON_ACCOUNT = "left over on account"
 
 
 class RegistrationError(RuntimeError):
@@ -189,45 +198,109 @@ def check_mcp() -> bool:
     return True
 
 
+def _markdown_tree(root: pathlib.Path) -> dict[str, str]:
+    """Map every Markdown file under root to its text, keyed by path relative to root."""
+    return {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*.md"))}
+
+
+def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str, str]]:
+    """List every file in which a synced copy fails to mirror the repo.
+
+    The skill is a directory now -- a router plus its reference files -- and the
+    upload ships all of it, so a copy is current only when it holds the same files
+    with the same bytes. Three ways that breaks, each its own fix.
+
+    Args:
+        repo: Markdown tree of the skill directory in this repo.
+        cached: Markdown tree of the copy Claude last synced down.
+
+    Returns:
+        One (relative path, reason) pair per divergent file, sorted by path.
+    """
+    edited = {name for name in repo.keys() & cached.keys() if repo[name] != cached[name]}
+    reasons = {name: CONTENT_DIFFERS for name in edited}
+    reasons.update({name: MISSING_FROM_ACCOUNT for name in repo.keys() - cached.keys()})
+    reasons.update({name: LEFT_OVER_ON_ACCOUNT for name in cached.keys() - repo.keys()})
+    return sorted(reasons.items())
+
+
+def _report_stale(stale: dict[pathlib.Path, list[tuple[str, str]]]) -> None:
+    """Print each synced copy that has drifted, naming every file and why."""
+    print(f"[skill] '{SKILL_NAME}' on your Claude account is STALE -- it differs from this repo")
+    for cached_dir, files in stale.items():
+        print(f"[skill]   synced copy: {cached_dir}")
+        for name, reason in files:
+            print(f"[skill]     {name} ({reason})")
+        print(f"[skill]   diff: diff -r '{cached_dir}' '{REPO_SKILL_DIR}'")
+    print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
+    print("[skill] fix: task claude:package, then upload dist/coach.zip at")
+    print("[skill]      claude.ai -> Settings -> Capabilities -> Skills")
+
+
 def check_skill() -> bool:
     """Report whether the coach skill Claude last synced matches this repo.
 
     The cached copy under Application Support is synced down from the user's Claude
     account, so it stands in for "what Cowork and claude.ai chat are actually
-    running" -- as of the last sync.
+    running" -- as of the last sync. Every Markdown file under the skill directory
+    is compared, because the upload ships the whole folder.
 
     Returns:
-        True if the synced copy matches the repo.
+        True if every synced copy mirrors the repo directory file for file.
     """
-    if not REPO_SKILL.exists():
-        print(f"[skill] no skill in this repo at {REPO_SKILL}")
+    if not REPO_SKILL_DIR.is_dir():
+        print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
         return False
 
-    cached = sorted(pathlib.Path.home().glob(SKILL_CACHE_GLOB))
-    if not cached:
+    cached_dirs = sorted(HOME.glob(SKILL_CACHE_GLOB))
+    if not cached_dirs:
         print(f"[skill] '{SKILL_NAME}' has never synced to this machine")
         print("[skill] Claude has no copy of it, or Claude Desktop has not synced yet.")
-        print(
-            "[skill] fix: upload skills/coach/ at claude.ai -> Settings -> Capabilities -> Skills"
-        )
+        print("[skill] fix: task claude:package, then upload dist/coach.zip at")
+        print("[skill]      claude.ai -> Settings -> Capabilities -> Skills")
         return False
 
-    stale = [p for p in cached if p.read_text() != REPO_SKILL.read_text()]
+    repo_tree = _markdown_tree(REPO_SKILL_DIR)
+    stale = {
+        cached_dir: files
+        for cached_dir in cached_dirs
+        if (files := _stale_files(repo_tree, _markdown_tree(cached_dir)))
+    }
     if stale:
-        print(
-            f"[skill] '{SKILL_NAME}' on your Claude account is STALE -- it differs from this repo"
-        )
-        for path in stale:
-            print(f"[skill]   synced copy: {path}")
-        print(f"[skill]   diff: diff '{stale[0]}' {REPO_SKILL}")
-        print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
-        print(
-            "[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/"
-        )
+        _report_stale(stale)
         return False
 
     print(f"[skill] '{SKILL_NAME}' on your Claude account matches this repo (as of last sync)")
     return True
+
+
+def package_skill() -> int:
+    """Build the archive the claude.ai Skills form takes, so the folder is never zipped by hand.
+
+    The form uploads one archive, not a directory, and it wants the skill's own
+    folder at the top level -- ``coach/SKILL.md``, never a bare ``SKILL.md`` -- which
+    is also the layout the official ``.skill`` packager writes. Same bytes either way:
+    a ``.skill`` file is this zip under a different extension.
+
+    Returns:
+        0 once the archive is written, 1 if there is no skill directory to package.
+    """
+    if not REPO_SKILL_DIR.is_dir():
+        print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
+        return 1
+
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    archive = DIST_DIR / f"{SKILL_NAME}.zip"
+    files = sorted(REPO_SKILL_DIR.rglob("*.md"))
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for path in files:
+            arcname = path.relative_to(REPO_SKILL_DIR.parent)
+            bundle.write(path, arcname)
+            print(f"[skill]   + {arcname}")
+    print(f"[skill] wrote {archive} ({len(files)} files)")
+    print("[skill] upload it at claude.ai -> Settings -> Capabilities -> Skills")
+    print("[skill] then: task claude:check")
+    return 0
 
 
 def check() -> int:
@@ -251,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="Report MCP registration and skill freshness; never writes.")
+    sub.add_parser("package", help="Build the uploadable coach skill archive under dist/.")
     register_parser = sub.add_parser(
         "register", help="Add or update this repo's coach MCP entry in Claude Desktop."
     )
@@ -264,6 +338,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "register":
             return register(force=args.force)
+        if args.command == "package":
+            return package_skill()
         return check()
     except RegistrationError as exc:
         print(f"[claude-desktop] {exc}", file=sys.stderr)

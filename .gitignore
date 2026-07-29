@@ -13,6 +13,9 @@ logs/
 # garmin tokens
 .garminconnect/
 
+# build output (the uploadable coach skill archive)
+dist/
+
 # python
 __pycache__/
 *.py[cod]

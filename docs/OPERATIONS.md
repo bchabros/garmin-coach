@@ -18,9 +18,12 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
   plan-vs-actual follow-up date. The `Zamiar (dla silnika)` column is ingested into
   `plan_week` and drives every planned-intent read (issue #21, ADR 0015); the rest stays
   prose for the human. Gitignored personal data.
-- `memory/` -- long-term athlete context. **Read `memory/athlete-profile.md` at the start of
-  a coaching session** (goals, physiology, tendencies, coaching decisions, open threads).
-  Qualitative context that does not belong in the DB; numbers there only summarize the DB.
+- `memory/` -- long-term athlete context (goals, physiology, tendencies, coaching decisions,
+  open threads). Qualitative context that does not belong in the DB; numbers there only
+  summarize the DB. Reading it is the coach skill's own rail, not an operator chore: the
+  "The athlete profile" section of `skills/coach/SKILL.md` has when it is read, how its age
+  is judged, and how an amendment is proposed (issue #52). Gitignored personal data, except
+  `memory/README.md`, which carries the conventions.
 - `docs/` -- system docs (this runbook, `DEVELOPMENT.md`, `PROJECT.md`, `glossary.md`, PRDs,
   ADRs). `skills/coach/` -- the coach skill (narrative layer over the digest).
 - `data/garmin.db` -- SQLite system-of-record. `logs/` -- nightly run logs.
@@ -455,7 +458,11 @@ copy of the folder in its Linux sandbox instead.
 For Claude running in Cowork (pointed at this folder, commands via the Linux sandbox):
 
 - **Read context first.** Open `memory/athlete-profile.md`, then the latest `plans/` file,
-  before advising. That is the long-term memory that survives between sessions.
+  before advising -- the same rail the coach skill carries ("The athlete profile" in
+  `skills/coach/SKILL.md`), repeated here because the sandbox may be running without it.
+  One sandbox caveat the skill cannot see: these files are a **copy** of the folder, so an
+  amendment written here never reaches the athlete's own profile. Hand them the lines to
+  paste instead.
 - **`poetry` may be missing in the sandbox.** It needs Python 3.13; the sandbox ships 3.10,
   so `poetry run ...` fails. To generate a report without poetry, install the runtime deps
   once and invoke the CLI module directly:

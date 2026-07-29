@@ -106,8 +106,12 @@ The boundary is scope, not topic:
 | --- | --- |
 | chat replies, grilling questions | code, comments, docstrings |
 | `reports/` (the coach report) | log messages, error messages, `--help` text |
-| `plans/`, `memory/` | `docs/` and the PRDs, `CLAUDE.md`, `AGENTS.md`, ADRs |
+| `plans/`, `memory/athlete-profile.md` | `docs/` and the PRDs, `CLAUDE.md`, `AGENTS.md`, ADRs |
 | | commit messages, PR descriptions, GitHub issues |
+| | `memory/README.md` (conventions, not athlete prose) |
+
+The split inside `memory/` is the whole rule in miniature: the athlete's own prose follows
+the athlete, the file that explains the conventions is documentation and stays English.
 
 The right-hand column is not a matter of taste — it is what other agents, `git log`, and
 future readers depend on. A request written in Polish still produces an English commit

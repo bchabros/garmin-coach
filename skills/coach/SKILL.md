@@ -45,9 +45,9 @@ of an older report, never a reading.
 `_Ostatnia aktualizacja: 2026-07-08. Liczby ze stanu 06-07.2026._` - a `YYYY-MM-DD` date,
 usually trailed by the athlete's own note on what the numbers summarise. Measure that date
 against a date you actually hold: the `reports/<date>/` folder you read, the digest's
-`window.to`, the snapshot's `computed_at`; never against a date you assume. More than three weeks older, say so plainly and offer to
-refresh it. Read "Otwarte wątki" the same way - a thread whose date has passed ("policzyć
-po 13.07") is a finding you name, not decoration.
+`window.to`, the snapshot's `computed_at`; never against a date you assume. More than three
+weeks older, say so plainly and offer to refresh it. Read "Otwarte wątki" the same way - a
+thread whose date has passed ("policzyć po 13.07") is a finding you name, not decoration.
 
 **Say it when the profile contradicts the data.** The prose drifts, the digest does not.
 Where they disagree - a race date, a training block, the zones - the digest wins, you name

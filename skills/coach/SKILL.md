@@ -42,8 +42,8 @@ sourced from the digest and the snapshot, and a figure quoted in the profile is 
 of an older report, never a reading.
 
 **Its age is part of what you read.** Near the top sits the line that carries it -
-`_Ostatnia aktualizacja: 2026-07-08. Liczby ze stanu 06-07.2026._` - a `YYYY-MM-DD` date,
-usually trailed by the athlete's own note on what the numbers summarise. Measure that date
+`_Ostatnia aktualizacja: YYYY-MM-DD._` - the date usually trailed by the athlete's own
+note on what the numbers summarise. Measure that date
 against a date you actually hold: the `reports/<date>/` folder you read, the digest's
 `window.to`, the snapshot's `computed_at`; never against a date you assume. More than three
 weeks older, say so plainly and offer to refresh it. Read "Otwarte wątki" the same way - a

@@ -9,7 +9,8 @@ the date line the freshness check reads. Neither reaches the athlete from here: 
 
 The profile itself is gitignored personal data, so the check on its own date line binds
 only on the athlete's machine and is skipped wherever the file is absent (CI, a fresh
-clone).
+clone). `memory/README.md` carries the human-facing copy of the date-line contract; it is
+tracked, so its check binds everywhere.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 SKILL_MD = REPO_ROOT / "skills" / "coach" / "SKILL.md"
+MEMORY_README = REPO_ROOT / "memory" / "README.md"
 
 PROFILE_PATH = "memory/athlete-profile.md"
 PROFILE = REPO_ROOT / PROFILE_PATH
@@ -35,7 +37,7 @@ SECTION_HEADING = "## The athlete profile"
 # line of it. Like the plan file's table headers, the literal is the athlete's own format:
 # the router and the file have to spell it the same way or the check reads nothing.
 DATE_LINE_TOKEN = "_Ostatnia aktualizacja:"
-DATE_LINE = re.compile(re.escape(DATE_LINE_TOKEN) + r"\s*(\d{4}-\d{2}-\d{2})")
+DATE_LINE = re.compile(re.escape(DATE_LINE_TOKEN) + r"\s*\d{4}-\d{2}-\d{2}")
 
 
 def _profile_section() -> str:
@@ -71,6 +73,15 @@ def test_the_profile_section_carries_the_date_line_contract():
         f"the '{SECTION_HEADING}' section dropped the profile's date line "
         f"({DATE_LINE_TOKEN} YYYY-MM-DD), so nothing tells the model which line carries "
         "the profile's age. Put it back."
+    )
+
+
+def test_the_memory_readme_keeps_the_date_line_contract():
+    """The human-facing copy of the contract must keep naming the same line."""
+    assert DATE_LINE_TOKEN in MEMORY_README.read_text(), (
+        f"memory/README.md no longer names the `{DATE_LINE_TOKEN} YYYY-MM-DD` line, so "
+        "the human-facing copy of the contract has drifted from the router's (the source "
+        f"of truth is the '{SECTION_HEADING}' section in SKILL.md). Restore it there."
     )
 
 

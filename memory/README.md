@@ -62,7 +62,8 @@ which data the profile summarises. That date is how the coach skill knows the pr
 so an amendment replaces the date alone and leaves the note as they wrote it.
 
 Without the line nothing can tell that the profile has gone stale, which is why
-`tests/test_coach_skill_profile.py` holds both sides of it: an edit that drops the line
+`tests/test_coach_skill_profile.py` holds every copy of it -- the router's section, this
+note, and (where the file exists) the profile's own line: an edit that drops the line
 fails `task check` instead of failing silently in a conversation months later.
 
 ## Open threads

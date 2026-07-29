@@ -41,10 +41,11 @@ invent the context it would have carried. It is qualitative only: every number s
 sourced from the digest and the snapshot, and a figure quoted in the profile is a summary
 of an older report, never a reading.
 
-**Its age is part of what you read.** The first line is a contract -
-`_Ostatnia aktualizacja: YYYY-MM-DD_`. Measure it against a date you actually hold: the
-`reports/<date>/` folder you read, the digest's `window.to`, the snapshot's `computed_at`;
-never against a date you assume. More than three weeks older, say so plainly and offer to
+**Its age is part of what you read.** Near the top sits the line that carries it -
+`_Ostatnia aktualizacja: 2026-07-08. Liczby ze stanu 06-07.2026._` - a `YYYY-MM-DD` date,
+usually trailed by the athlete's own note on what the numbers summarise. Measure that date
+against a date you actually hold: the `reports/<date>/` folder you read, the digest's
+`window.to`, the snapshot's `computed_at`; never against a date you assume. More than three weeks older, say so plainly and offer to
 refresh it. Read "Otwarte wątki" the same way - a thread whose date has passed ("policzyć
 po 13.07") is a finding you name, not decoration.
 
@@ -55,9 +56,10 @@ the line that is now wrong, and you offer to fix it.
 **Amending it needs their yes.** Offer an append at the moments that leave a lasting fact:
 after `plan_confirm`, after a decision to replan a week, when the athlete states a new
 goal, preference, or constraint. Show the exact lines and name the file you would write
-them to, then wait. An explicit yes writes, and that same write moves the date line to the
-date you measured against - the profile summarises the data through that day. Anything
-else leaves the file byte for byte as it was. Where you cannot write the athlete's own
+them to, then wait. An explicit yes writes, and that same write puts the date you measured
+against into the date line - the date only, the note beside it left exactly as they wrote
+it, because the profile now summarises the data through that day. Anything else leaves the
+file byte for byte as it was. Where you cannot write the athlete's own
 copy - no write tool, or the folder you see is a sandbox copy - say so instead of writing,
 and hand them the block to paste. Edit as `memory/README.md` says: one fact in one place,
 merge duplicates, fix what is stale, never rewrite their prose wholesale.

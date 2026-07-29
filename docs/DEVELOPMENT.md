@@ -81,6 +81,10 @@ ones sparingly:
   router's routing gates against the files in `skills/coach/references/`, and its
   frontmatter description against the trigger phrases that must keep working. Whether the
   model obeys a gate is not testable here -- that is the manual smoke after each upload.
+- Test the profile rail at the same seam (`tests/test_coach_skill_profile.py`): the
+  router's `## The athlete profile` section against the path and the date line it has to
+  name, and -- where the gitignored profile exists -- that file against the same date-line
+  contract. It skips wherever the profile is absent, so CI and a fresh clone stay green.
 
 ## Conventions
 

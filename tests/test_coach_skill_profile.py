@@ -25,6 +25,12 @@ SKILL_MD = REPO_ROOT / "skills" / "coach" / "SKILL.md"
 PROFILE_PATH = "memory/athlete-profile.md"
 PROFILE = REPO_ROOT / PROFILE_PATH
 
+# The rail is anchored to its own section, never to a mention anywhere in the router:
+# a bare substring search over the whole file stays green when the section is deleted and
+# any passing reference to the path survives. `docs/OPERATIONS.md` cites the heading by
+# name twice, so the heading is part of the contract too.
+SECTION_HEADING = "## The athlete profile"
+
 # The athlete writes the profile by hand, in Polish, and the freshness check reads one
 # line of it. Like the plan file's table headers, the literal is the athlete's own format:
 # the router and the file have to spell it the same way or the check reads nothing.
@@ -32,19 +38,39 @@ DATE_LINE_TOKEN = "_Ostatnia aktualizacja:"
 DATE_LINE = re.compile(re.escape(DATE_LINE_TOKEN) + r"\s*(\d{4}-\d{2}-\d{2})")
 
 
-def test_the_router_names_the_profile():
-    """A router that never names the profile is the bug issue #52 was filed for."""
-    assert PROFILE_PATH in SKILL_MD.read_text(), (
-        f"SKILL.md never names {PROFILE_PATH}, so no flow reads the athlete's long-term "
-        "context. Restore the profile rail in the router."
+def _profile_section() -> str:
+    """Return the router's profile section, from its heading to the next one."""
+    body = SKILL_MD.read_text()
+    start = body.find(SECTION_HEADING)
+    if start == -1:
+        return ""
+    rest = body[start + len(SECTION_HEADING) :]
+    end = rest.find("\n## ")
+    return rest if end == -1 else rest[:end]
+
+
+def test_the_router_keeps_the_profile_section():
+    """Two pointers in docs/OPERATIONS.md resolve by this heading; a rename breaks both."""
+    assert SECTION_HEADING in SKILL_MD.read_text(), (
+        f"SKILL.md has no '{SECTION_HEADING}' section, so nothing carries the profile "
+        "rail and the pointers in docs/OPERATIONS.md name a section that is gone."
     )
 
 
-def test_the_router_carries_the_date_line_contract():
+def test_the_profile_section_names_the_profile():
+    """A rail that never names the profile is the bug issue #52 was filed for."""
+    assert PROFILE_PATH in _profile_section(), (
+        f"the '{SECTION_HEADING}' section never names {PROFILE_PATH}, so no flow reads "
+        "the athlete's long-term context. Restore the path in the rail."
+    )
+
+
+def test_the_profile_section_carries_the_date_line_contract():
     """The freshness check can only read a line the router spells out."""
-    assert DATE_LINE_TOKEN in SKILL_MD.read_text(), (
-        f"SKILL.md dropped the profile's date line ({DATE_LINE_TOKEN} YYYY-MM-DD), so "
-        "nothing tells the model which line carries the profile's age. Put it back."
+    assert DATE_LINE_TOKEN in _profile_section(), (
+        f"the '{SECTION_HEADING}' section dropped the profile's date line "
+        f"({DATE_LINE_TOKEN} YYYY-MM-DD), so nothing tells the model which line carries "
+        "the profile's age. Put it back."
     )
 
 

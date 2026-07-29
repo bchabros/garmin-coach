@@ -13,7 +13,11 @@ import pathlib
 import re
 
 SKILL_DIR = pathlib.Path(__file__).parent.parent / "skills" / "coach"
-GATED_PATH = re.compile(r"`(references/[\w-]+\.md)`")
+
+# A gate is the categorical MUST-read line, not any mention of the path: the router also
+# cross-references a reference file in ordinary prose, and counting those as gates would
+# let the real gate be deleted with both tests still green.
+GATED_PATH = re.compile(r"\*\*MUST\*\*\s+read\s+`(references/[\w-]+\.md)`")
 
 # The phrases the report flow triggered on before the skill grew the planning and
 # authoring clauses (issue #51). Widening the description must never cost a phrase

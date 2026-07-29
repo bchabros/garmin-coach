@@ -37,16 +37,22 @@ SERVER_NAME = "coach"
 SKILL_NAME = "coach"
 REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
 
+_CLAUDE_SUPPORT = "Library/Application Support/Claude"
+
+# Two independent test seams: HOME for the synced-skill cache, CONFIG_PATH for the Desktop
+# config. CONFIG_PATH deliberately does not ride on HOME -- patching HOME alone would
+# otherwise leave register() writing the real config file.
 HOME = pathlib.Path.home()
-CONFIG_PATH = HOME / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+CONFIG_PATH = pathlib.Path.home() / _CLAUDE_SUPPORT / "claude_desktop_config.json"
 SKILL_CACHE_GLOB = (
-    "Library/Application Support/Claude/local-agent-mode-sessions/"
-    f"skills-plugin/*/*/skills/{SKILL_NAME}"
+    f"{_CLAUDE_SUPPORT}/local-agent-mode-sessions/skills-plugin/*/*/skills/{SKILL_NAME}"
 )
 
-EDITED_ELSEWHERE = "differs"
-NEVER_UPLOADED = "missing from account"
-DELETED_LOCALLY = "left over on account"
+# What the check observed about a file, not why -- the script cannot know the cause, and
+# the likeliest one for a mismatch is an un-uploaded local edit, not an edit elsewhere.
+CONTENT_DIFFERS = "differs"
+MISSING_FROM_ACCOUNT = "missing from account"
+LEFT_OVER_ON_ACCOUNT = "left over on account"
 
 
 class RegistrationError(RuntimeError):
@@ -208,9 +214,9 @@ def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str
         One (relative path, reason) pair per divergent file, sorted by path.
     """
     edited = {name for name in repo.keys() & cached.keys() if repo[name] != cached[name]}
-    reasons = {name: EDITED_ELSEWHERE for name in edited}
-    reasons.update({name: NEVER_UPLOADED for name in repo.keys() - cached.keys()})
-    reasons.update({name: DELETED_LOCALLY for name in cached.keys() - repo.keys()})
+    reasons = {name: CONTENT_DIFFERS for name in edited}
+    reasons.update({name: MISSING_FROM_ACCOUNT for name in repo.keys() - cached.keys()})
+    reasons.update({name: LEFT_OVER_ON_ACCOUNT for name in cached.keys() - repo.keys()})
     return sorted(reasons.items())
 
 
@@ -221,7 +227,7 @@ def _report_stale(stale: dict[pathlib.Path, list[tuple[str, str]]]) -> None:
         print(f"[skill]   synced copy: {cached_dir}")
         for name, reason in files:
             print(f"[skill]     {name} ({reason})")
-        print(f"[skill]   diff: diff -r '{cached_dir}' {REPO_SKILL_DIR}")
+        print(f"[skill]   diff: diff -r '{cached_dir}' '{REPO_SKILL_DIR}'")
     print("[skill] Cowork and claude.ai chat are running the old version. Re-upload is manual:")
     print("[skill] fix: claude.ai -> Settings -> Capabilities -> Skills -> re-upload skills/coach/")
 

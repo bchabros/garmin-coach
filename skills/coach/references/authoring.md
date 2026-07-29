@@ -76,7 +76,9 @@ Example (fuller ones in `tests/fixtures/strength_request.json` and
 
 Then, per the runbook in `docs/OPERATIONS.md`: `garmin-coach author --date D --request
 <path>` writes the spec, `push --date D` dry-runs it (show the athlete), and `push --date
-D --confirm` is the athlete's deliberate write.
+D --confirm` is the athlete's deliberate write. Where the coach tools are present the same
+three steps are `author_workout`, `push_preview`, and `push_confirm` - same order, same
+consent, and the dry run is never skipped because the tool made it one call away.
 
 **The plan of record bounds what you may author** (issue #22). Authoring and pushing both
 refuse a session harder than the plan for that date - `rest < easy < tempo = strength <

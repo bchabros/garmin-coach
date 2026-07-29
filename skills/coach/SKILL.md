@@ -21,10 +21,12 @@ every time, however small the request looks.
   forme?" in one line - you **MUST** read `references/report.md`. It carries what every
   field means and which may be null, and the fields are the same whichever way they
   arrive.
-- Before you propose, preview, or write a training week, you **MUST** read
-  `references/planning.md`.
-- Before you author a workout or push one to Garmin, you **MUST** read
-  `references/authoring.md`.
+- Before you read, propose, preview, or write a training week - opening
+  `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` - you
+  **MUST** read `references/planning.md`.
+- Before you author a workout or push one to Garmin - `garmin-coach author` / `push`, or
+  `author_workout` / `push_preview` / `push_confirm` / `get_workout_status` - you **MUST**
+  read `references/authoring.md`.
 
 A conversation often crosses flows (a report surfaces an unplanned week; a recommendation
 becomes a session on the watch). Read the next file when you cross into its flow.
@@ -34,17 +36,18 @@ becomes a session on the watch). Read the next file when you cross into its flow
 These hold even if a reference file goes unread. Nothing in them is negotiable by a
 request from the athlete.
 
-- **Read-side commands only.** `plan import`, `report`, `features` are yours. Never run
-  `sync`/`backfill` - that calls Garmin live, which the golden rule forbids from the
-  coach layer; tell the operator to run it instead.
+- **Never pull from Garmin.** `sync`/`backfill` call Garmin live, which the golden rule
+  forbids from the coach layer - the operator runs them, never you. Your numbers come from
+  the digest and the snapshot; `plan import`, `report`, and `features` rebuild those
+  offline.
 - **Null means there is no number.** Every field in the digest and the snapshot may be
   null. Never invent a value a null field does not provide.
 - **A week is written only after the athlete sees it.** `plan_preview` first, show them
   the table, and only on their explicit go-ahead `plan_confirm`. Never write a plan
   unasked; never overwrite a week that already has a file.
-- **A workout reaches Garmin only after a dry run.** `push --date D` shows the spec to
-  the athlete; `push --date D --confirm` is their deliberate write. Never hand-edit
-  Garmin through the ad-hoc `mcp__garmin__*` tools.
+- **A workout reaches Garmin only after a dry run.** `push --date D` (or `push_preview`)
+  shows the spec to the athlete; `push --date D --confirm` (or `push_confirm`) is their
+  deliberate write. Never hand-edit Garmin through the ad-hoc `mcp__garmin__*` tools.
 - **The plan of record bounds authoring.** Authoring and pushing refuse a session harder
   than the plan for that date; softer is always allowed. A refusal is final - report what
   the plan says and leave changing it to the athlete. Report a `plan_divergence`, never

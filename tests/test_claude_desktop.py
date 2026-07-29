@@ -200,8 +200,8 @@ def test_check_skill_names_a_file_whose_content_differs(
 
     assert _check_skill(mod, skill_repo, home, monkeypatch) is False
     out = capsys.readouterr().out
-    assert "references/report.md" in out
-    assert "SKILL.md" not in out.replace("skills/coach/", "")
+    assert f"references/report.md ({mod.CONTENT_DIFFERS})" in out
+    assert "SKILL.md (" not in out
 
 
 def test_check_skill_names_a_file_missing_from_the_account(

@@ -126,9 +126,10 @@ the repo copy does not update the one Cowork and chat run** -- re-upload is manu
 ships the whole folder), and the drift is otherwise silent.
 
 `task claude:check` catches that: it compares every Markdown file under `skills/coach/`
-against the copy Claude last synced to this machine and names each file that has drifted
--- edited elsewhere, never uploaded, or left over on the account after a local delete.
-Run it after changing anything under `skills/coach/`.
+against the copy Claude last synced to this machine and names each file that has drifted,
+with what it observed -- the two copies differ, the file is missing from the account, or it
+is left over on the account after a local delete. Run it after changing anything under
+`skills/coach/`.
 
 ## Authoring and pushing a workout (Phase 11)
 

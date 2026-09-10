@@ -14,8 +14,6 @@ import datetime as _dt
 import pathlib
 import re
 import sqlite3
-from collections.abc import Sequence
-from typing import Any
 
 INTENTS = ("rest", "easy", "tempo", "strength", "hyrox", "crossfit", "quality")
 
@@ -38,11 +36,6 @@ INTENT_RANK = {
 # words differ on purpose, so a threshold interval session is never labelled ``tempo``
 # and a template name never again stands in for a measurement (issue #62, ADR 0024).
 HARDNESS_RANK = {"easy": 1, "threshold": 2, "hard": 3}
-
-# A step that adds nothing to the session's hardness - an untargeted warm-up, cool-down
-# or standing rest. Distinct from None, which means a target was found and the stored
-# ladder could not measure it, and so leaves the whole session unmeasured.
-_UNRANKED = "unranked"
 
 # Planned intents name the session the athlete meant; the mart can only ever
 # observe what the load says. ``_actual_intent`` classifies a finished day into
@@ -296,135 +289,6 @@ def spec_guard_error(date: str, measured: str | None, planned: str | None, evide
         "plan of record. Revise the plan for that date and re-import it, or ease the "
         "session to match it."
     )
-
-
-def spec_hardness(
-    steps: Sequence[dict[str, Any]],
-    zones: dict[str, Any] | None,
-    *,
-    threshold_tolerance_s: float,
-    untargeted_work: str | None = None,
-) -> str | None:
-    """How hard an authored session actually is, measured from the targets on its steps.
-
-    The plan guard reads this instead of the request's session type, which names a
-    default shape and cannot say how hard the session will be (issue #62, ADR 0024).
-    The hardest step decides, and within a band its harder edge decides - the faster
-    pace, the higher heart rate - because that is what the watch will allow.
-
-    Args:
-        steps: The spec's steps, repeat groups included; their nested steps are walked.
-        zones: The ``athlete_zones`` section the boundaries come from, or None.
-        threshold_tolerance_s: How far inside threshold pace still counts as threshold
-            work - the authoring chain's own margin, so a session targeting the
-            threshold band ranks ``threshold`` by construction rather than by luck.
-        untargeted_work: What a work step with no target contributes, being the
-            session type's default chain; None leaves it contributing nothing.
-
-    Returns:
-        ``easy``, ``threshold`` or ``hard``, or None when nothing could be measured -
-        no zones, no targeted step, or a ladder missing the bound a target needs. An
-        absent answer is the guard's cue to fall back to the session type's rank.
-    """
-    if not zones:
-        # Without a ladder nothing can be ranked, not even a step whose chain is known:
-        # a session the athlete runs by feel is not evidence of any intensity.
-        return None
-    measured = [
-        _step_hardness(step, zones, threshold_tolerance_s, untargeted_work) for step in _walk(steps)
-    ]
-    if any(word is None for word in measured):
-        return None
-    ranked = [word for word in measured if word != _UNRANKED]
-    if not ranked:
-        return None
-    return max(ranked, key=lambda word: HARDNESS_RANK[str(word)])
-
-
-def hardest_step(
-    steps: Sequence[dict[str, Any]],
-    zones: dict[str, Any] | None,
-    *,
-    threshold_tolerance_s: float,
-    untargeted_work: str | None = None,
-) -> dict[str, Any] | None:
-    """The step whose target decided the session's hardness, for naming it in a refusal.
-
-    Returns:
-        The first step measuring as hard as the whole session, or None when nothing
-        was measured (the same condition :func:`spec_hardness` returns None on).
-    """
-    word = spec_hardness(
-        steps, zones, threshold_tolerance_s=threshold_tolerance_s, untargeted_work=untargeted_work
-    )
-    if word is None:
-        return None
-    return next(
-        step
-        for step in _walk(steps)
-        if _step_hardness(step, zones, threshold_tolerance_s, untargeted_work) == word
-    )
-
-
-def _walk(steps: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Every executable step of a spec, repeat groups flattened into their contents."""
-    flat: list[dict[str, Any]] = []
-    for step in steps:
-        if step.get("kind") == "repeat":
-            flat.extend(_walk(step.get("steps") or []))
-        else:
-            flat.append(step)
-    return flat
-
-
-def _step_hardness(
-    step: dict[str, Any],
-    zones: dict[str, Any] | None,
-    tolerance_s: float,
-    untargeted_work: str | None,
-) -> str | None:
-    """One step's hardness, ``_UNRANKED`` when it adds nothing, None when it cannot be measured."""
-    target = step.get("target") or {}
-    kind = target.get("type")
-    if kind == "none" or kind is None:
-        if step.get("kind") != "work":
-            return _UNRANKED
-        return untargeted_work or _UNRANKED
-    if not zones:
-        return None
-    if kind == "pace_band":
-        return _ranked_by_pace(target["fast_s_per_km"], zones, tolerance_s)
-    if kind == "hr_band":
-        return _ranked_by_hr(target["high_bpm"], zones)
-    return _UNRANKED
-
-
-def _ranked_by_pace(
-    fastest_s_per_km: float, zones: dict[str, Any], tolerance_s: float
-) -> str | None:
-    """A pace band's rank, judged by its faster edge against the two stored pace anchors."""
-    ceiling = zones.get("z2_pace_ceiling_s_per_km")
-    threshold = zones.get("threshold_pace_s_per_km")
-    if ceiling is None or threshold is None:
-        return None
-    if fastest_s_per_km >= ceiling:
-        return "easy"
-    if fastest_s_per_km >= threshold - tolerance_s:
-        return "threshold"
-    return "hard"
-
-
-def _ranked_by_hr(highest_bpm: float, zones: dict[str, Any]) -> str | None:
-    """A heart-rate band's rank, judged by its upper edge against the Z2 ceiling and LTHR."""
-    z2_hi = zones.get("z2_hi_bpm")
-    lthr = zones.get("lthr_bpm")
-    if z2_hi is None or lthr is None:
-        return None
-    if highest_bpm <= z2_hi:
-        return "easy"
-    if highest_bpm <= lthr:
-        return "threshold"
-    return "hard"
 
 
 def planned_by_date(conn: sqlite3.Connection, week_start: str) -> dict[str, str | None]:

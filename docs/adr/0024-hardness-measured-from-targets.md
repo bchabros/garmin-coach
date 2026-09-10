@@ -82,6 +82,12 @@ Whatever replaces the name has to be at least as hard to lie to.
   have. The receipt carries `hardness` beside `session_type` and `planned_intent`, and
   divergence reporting compares it when the receipt has one.
 
+- **The measurement lives beside the author, the scale beside the plan.** Walking a
+  spec's steps is knowledge of the spec, so it sits in `workouts/`; the ordering the
+  guard compares on, and the refusal wording, stay with the planned intents in
+  `core.plan`. One pass answers both questions the guard asks - how hard, and which
+  step made it so - so a refusal names the deciding step without re-measuring.
+
 - **Out of both hashes.** `hardness` is a function of the steps and the ladder, so it adds
   nothing to `spec_hash` (account-side idempotency) or `confirm_token` (ADR 0019). A
   re-authored spec with unchanged steps is still a no-op push.
@@ -113,7 +119,14 @@ Whatever replaces the name has to be at least as hard to lie to.
   when the athlete means it as threshold work. The guard is only as honest as the ladder;
   regression-backed zones are issue #13's first blocker, and this ADR makes the cost of
   that gap visible rather than hiding it behind a name.
-- Specs and receipts written before this change are not rewritten and not re-ranked; they
-  keep being guarded by session type. A spec re-authored later gains the field.
+- Every request that authored before this change authors the same steps after it. Two
+  fields of the spec change: it gains `hardness` where the ladder can measure it, and a
+  spec authored with no ladder gains one warning saying the guard fell back to the
+  session type. The steps themselves are byte-identical.
+- Specs and receipts already on disk are not read or re-ranked by this change; they keep
+  being guarded by session type. Re-authoring a day rewrites its spec and adds the field,
+  and re-pushing it rewrites that day's receipt - which a re-push has always done, for
+  `session_type`, `planned_intent` and `pushed_at` alike. Whether a `noop` push should
+  leave the receipt alone is a real question and an older one than this ADR.
 - Extends ADR 0013 and ADR 0023 (what a session type means) and amends ADR 0021 (what the
   guard reads). No spec, receipt or plan file valid before this change becomes invalid.

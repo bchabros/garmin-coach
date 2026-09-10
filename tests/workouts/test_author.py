@@ -1495,3 +1495,11 @@ def test_an_exercise_sport_spec_carries_no_measured_hardness():
         "structure": {"exercises": [{"exercise": "back squat", "sets": 3, "reps": 5}]},
     }
     assert "hardness" not in author(req, _context())
+
+
+def test_the_refusal_names_an_untargeted_work_step_by_its_default_chain():
+    """The chain ranked it, so the refusal must still point at the step, not the session."""
+    req = _request(session_type="tempo", origin="athlete", pace=None)
+    req["structure"] = {"work_target": "none"}
+    with pytest.raises(ValueError, match="the work step at its default target is threshold"):
+        author(req, _context(planned_intent="easy"))

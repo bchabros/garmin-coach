@@ -32,6 +32,11 @@ INTENT_RANK = {
     "quality": 3,
 }
 
+# What a spec's own targets measure to, on the same scale as the intents above: the
+# words differ on purpose, so a threshold interval session is never labelled ``tempo``
+# and a template name never again stands in for a measurement (issue #62, ADR 0024).
+HARDNESS_RANK = {"easy": 1, "threshold": 2, "hard": 3}
+
 # Planned intents name the session the athlete meant; the mart can only ever
 # observe what the load says. ``_actual_intent`` classifies a finished day into
 # the four MEASURABLE classes below - it reads load numbers, so it cannot tell a
@@ -222,11 +227,18 @@ def is_harder(session_type: str | None, than: str | None) -> bool:
     An unknown intent on either side answers False: an intent nothing can rank is
     not evidence that a session is too hard, and the guard must not refuse on it.
     """
-    left = INTENT_RANK.get(session_type or "")
-    right = INTENT_RANK.get(than or "")
+    left = _rank(session_type)
+    right = _rank(than)
     if left is None or right is None:
         return False
     return left > right
+
+
+def _rank(value: str | None) -> int | None:
+    """One value's place on the hardness scale, whether it is a planned intent or measured."""
+    if value is None:
+        return None
+    return INTENT_RANK.get(value, HARDNESS_RANK.get(value))
 
 
 def guard_error(date: str, session_type: str | None, planned: str | None) -> str | None:
@@ -253,6 +265,29 @@ def guard_error(date: str, session_type: str | None, planned: str | None) -> str
         f"{date} is planned as {planned}; a {session_type} session is harder than the "
         "plan of record. Revise the plan for that date and re-import it, or use a "
         f"session at or below {planned}."
+    )
+
+
+def spec_guard_error(date: str, measured: str | None, planned: str | None, evidence: str) -> str:
+    """Refuse an authored session whose measured hardness is above the plan of record.
+
+    The wording names what decided, because a measured refusal the athlete cannot trace
+    back to a step is one they can only answer by guessing (issue #62).
+
+    Args:
+        date: The day the session targets.
+        measured: The session's measured hardness.
+        planned: The plan of record's intent for that date.
+        evidence: The deciding step in the athlete's terms, e.g. ``the work step at
+            4:25-4:35/km``.
+
+    Returns:
+        A message naming the plan, the evidence and the remedy.
+    """
+    return (
+        f"{date} is planned as {planned}; {evidence} is {measured} - harder than the "
+        "plan of record. Revise the plan for that date and re-import it, or ease the "
+        "session to match it."
     )
 
 

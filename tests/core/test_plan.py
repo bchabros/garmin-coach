@@ -343,3 +343,13 @@ def test_write_week_file_never_emits_a_file_its_own_parser_would_reject(tmp_path
         plan.write_week_file(tmp_path, WEEK, days)
 
     assert list(tmp_path.iterdir()) == []
+
+
+# --- the measured scale meets the planned one (issue #62) ---------------------
+
+
+def test_a_measured_hardness_outranks_a_softer_plan():
+    assert plan.is_harder("threshold", "easy") is True
+    assert plan.is_harder("easy", "easy") is False
+    assert plan.is_harder("hard", "tempo") is True
+    assert plan.is_harder("threshold", "tempo") is False

@@ -38,7 +38,7 @@ from garminconnect.workout import (
 )
 
 from garmin_coach.core import plan as _plan
-from garmin_coach.workouts import exercises
+from garmin_coach.workouts import exercises, hardness as _hardness_of
 
 # System-authored workouts carry this name prefix so idempotency scans only our
 # own workouts and the athlete can tell them apart in Garmin Connect.
@@ -71,12 +71,16 @@ _STEP_BUILDERS = {
     "warmup": create_warmup_step,
     "work": create_interval_step,
     "recovery": create_recovery_step,
+    "rest": create_recovery_step,
     "cooldown": create_cooldown_step,
 }
 
 # Default rest between sets for the exercise sports, overridable per entry.
 STRENGTH_REST_S = 90
 HIIT_REST_S = 60
+
+# Default standing rest between run repeats, the length a jog recovery already defaults to.
+RUN_REST_S = QUALITY_RECOVERY_S
 
 # Allowed request enumerations.
 _SPORTS = ("run", "hiit", "strength")
@@ -136,8 +140,13 @@ _THRESHOLD_CHAIN = _WorkChain(
 )
 
 
+# What each work chain measures to on the hardness scale, so an untargeted work step
+# ranks by what the athlete will actually run rather than counting for nothing.
+_CHAIN_HARDNESS = {"z2": "easy", "z4": "threshold"}
+
+
 class _Role(NamedTuple):
-    """One step role a run session type offers: what shapes it, and what it defaults to.
+    """One step role a run session offers: what shapes it, and what it defaults to.
 
     The keys are derived from the role name, bar the pre-11a minutes alias, which is
     irregular on ``easy`` and so is spelled out.
@@ -147,6 +156,7 @@ class _Role(NamedTuple):
     min_key: str
     default_s: int
     default_target: _WorkChain | None = None
+    alias_min_key: str | None = None
 
     @property
     def end_key(self) -> str:
@@ -158,12 +168,38 @@ class _Role(NamedTuple):
         """The structure key setting this role's intensity target."""
         return f"{self.name}_target"
 
+    @property
+    def min_keys(self) -> tuple[str, ...]:
+        """Every spelling of this role's minutes alias, the current one first."""
+        return (self.min_key,) if self.alias_min_key is None else (self.min_key, self.alias_min_key)
 
-# Per session type: the roles a structure override may shape, in the order they are run.
-# This table is the single source of everything a role carries - the keys it accepts, its
-# default length, and the target it falls back to - so no two of those can drift apart.
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """Every structure key that shapes this role, and so every key that summons it."""
+        return (self.end_key, self.target_key, *self.min_keys)
+
+
+# Every step role a run session may carry, in the order they are run. A session type's
+# own table below says which of these it expands when the request shapes nothing; any of
+# a role's keys summons the rest, so no type rejects a role another type accepts (#61).
+_ROLE_ORDER = ("warmup", "work", "recovery", "rest", "cooldown")
+
+# What a summoned role runs for when the session type has no default of its own - the
+# values ``tempo`` and ``quality`` already use. ``work`` is absent on purpose: every run
+# type defaults its own work length, so a work role is never summoned into existence.
+_SUMMONED_DEFAULT_S = {
+    "warmup": TEMPO_WARMUP_S,
+    "recovery": QUALITY_RECOVERY_S,
+    "rest": RUN_REST_S,
+    "cooldown": TEMPO_COOLDOWN_S,
+}
+
+# Per session type: the roles it expands by default, in the order they are run, each with
+# the length and the target it falls back to. This table is the single source of what a
+# default role carries, so no two of those can drift apart; what a request may *ask* for
+# is the vocabulary above, which is wider (issue #61).
 _STRUCTURE_ROLES = {
-    "easy": (_Role("work", "duration_min", EASY_DEFAULT_S, _EASY_CHAIN),),
+    "easy": (_Role("work", "work_min", EASY_DEFAULT_S, _EASY_CHAIN, "duration_min"),),
     "tempo": (
         _Role("warmup", "warmup_min", TEMPO_WARMUP_S),
         _Role("work", "work_min", TEMPO_WORK_S, _THRESHOLD_CHAIN),
@@ -176,6 +212,17 @@ _STRUCTURE_ROLES = {
         _Role("cooldown", "cooldown_min", QUALITY_COOLDOWN_S),
     ),
 }
+
+# Per session type: how many times the work step and the pause after it repeat when the
+# structure does not say. A type listed here runs its work inside a repeat block.
+_DEFAULT_REPS = {"quality": QUALITY_REPS}
+
+# The roles that pause between repeats - a jog or a stand - one of which every repeat
+# block ends on. Asking for both leaves the block with no single pause, so it is refused.
+_PAUSE_ROLES = ("recovery", "rest")
+
+# The pause a repeat block falls back to when the request asks for repeats but no pause.
+_DEFAULT_PAUSE_ROLE = "recovery"
 
 # What an athlete writes in a ``<role>_target`` to ask for no target at all.
 _NO_TARGET_WORD = "none"
@@ -256,14 +303,16 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
     _validate_sport_session(request["sport"], request["session_type"])
 
     session_type = request["session_type"]
-    plan_error = _plan.guard_error(request["date"], session_type, context.get("planned_intent"))
-    if plan_error is not None:
-        raise ValueError(plan_error)
+    planned = context.get("planned_intent")
     if request["sport"] == "run" and session_type == "hyrox":
+        # A session with no steps to measure is guarded by its type, and the refusal
+        # must not be reachable only after answering the run-vs-station question.
+        _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
         raise HyroxSplitRequired
 
     warnings = _date_guard(request["date"], context["today"])
     if session_type == "rest":
+        _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
@@ -271,11 +320,15 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(structure, request["sport"], warnings)
+        measured = None
     else:
         _validate_structure(request.get("structure") or {}, session_type)
         warnings.extend(_pace_band_warning(request, context))
         steps = _expand(session_type, request, context.get("zones"), warnings)
-    return {
+        measured = _measure(steps, session_type, context.get("zones"), warnings)
+    _guard(request["date"], session_type, measured, planned)
+    hardness = measured.hardness if measured else None
+    spec = {
         "sport": request["sport"],
         "origin": request["origin"],
         "date": request["date"],
@@ -284,6 +337,68 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         "steps": steps,
         "warnings": warnings,
     }
+    if hardness is not None:
+        spec["hardness"] = hardness
+    return spec
+
+
+def _measure(
+    steps: list[dict[str, Any]],
+    session_type: str,
+    zones: dict[str, Any] | None,
+    warnings: list[str],
+) -> _hardness_of.Measurement | None:
+    """How hard this session measures, or None when the stored ladder cannot say.
+
+    An untargeted work step ranks by the chain it will actually run at, since that is
+    what the watch shows the athlete (issue #62, ADR 0024).
+    """
+    chain = next(
+        (role.default_target for role in _STRUCTURE_ROLES[session_type] if role.name == "work"),
+        None,
+    )
+    measured = _hardness_of.measure(
+        steps,
+        zones,
+        threshold_tolerance_s=THRESHOLD_PACE_MARGIN_S,
+        untargeted_work=_CHAIN_HARDNESS.get(chain.zone) if chain else None,
+    )
+    if measured is None:
+        warnings.append(
+            "no hardness measured: the zone ladder cannot rank this session's targets; "
+            "the plan guard falls back to the session type"
+        )
+    return measured
+
+
+def _guard(
+    date: str,
+    session_type: str,
+    measured: _hardness_of.Measurement | None,
+    planned: str | None,
+) -> None:
+    """Refuse a session above the plan of record, by what it measures or by its type.
+
+    Raises:
+        ValueError: If the session is harder than the plan of record for its date.
+    """
+    if measured is None:
+        _refuse_if_harder(_plan.guard_error(date, session_type, planned))
+        return
+    if not _plan.is_harder(measured.hardness, planned):
+        return
+    evidence = _hardness_of.describe_step(measured.step)
+    raise ValueError(_plan.spec_guard_error(date, measured.hardness, planned, evidence))
+
+
+def _refuse_if_harder(error: str | None) -> None:
+    """Raise the plan guard's refusal when there is one.
+
+    Raises:
+        ValueError: If the guard produced a refusal.
+    """
+    if error is not None:
+        raise ValueError(error)
 
 
 def _validate_request(request: dict[str, Any]) -> None:
@@ -628,17 +743,75 @@ def _expand(
     Raises:
         ValueError: If the session type has no run structure to expand.
     """
-    roles = _STRUCTURE_ROLES.get(session_type)
-    if roles is None:
+    if session_type not in _STRUCTURE_ROLES:
         raise ValueError(f"unsupported session type: {session_type}")
     structure = request.get("structure") or {}
+    roles = _roles_for(session_type, structure)
     targets = _Targets(request, zones, warnings)
     # Built in run order, so any warning a role raises reads in the order the athlete
     # will run the session rather than in the order the payload nests them.
     steps = [_role_step(structure, role, targets) for role in roles]
-    if session_type == "quality":
-        return _with_repeat_block(steps, structure)
-    return steps
+    reps = _repeat_count(session_type, structure)
+    if reps is None:
+        return steps
+    return _with_repeat_block(steps, reps)
+
+
+def _roles_for(session_type: str, structure: dict[str, Any]) -> tuple[_Role, ...]:
+    """The roles this session authors: the type's defaults, plus any the structure asks for.
+
+    A session type is a default shape, not a permitted one (issue #61, ADR 0023): any of a
+    role's keys summons it, and a role the request never mentions appears only when the
+    type defaults it. Run order comes from the vocabulary, not from the request.
+    """
+    defaults = {role.name: role for role in _STRUCTURE_ROLES[session_type]}
+    wanted = _wanted_role_names(session_type, structure, defaults)
+    return tuple(
+        defaults.get(name) or _summoned_role(name) for name in _ROLE_ORDER if name in wanted
+    )
+
+
+def _wanted_role_names(
+    session_type: str, structure: dict[str, Any], defaults: dict[str, _Role]
+) -> set[str]:
+    """Which roles this session authors, before they are put back into run order.
+
+    A repeats request with no pause key still needs something to run between the
+    repeats, so the default pause joins the set rather than the block being built
+    around a role the session does not have.
+    """
+    wanted = {
+        name
+        for name in _ROLE_ORDER
+        if name in defaults or any(key in structure for key in _role_keys(name))
+    }
+    asked_pauses = {
+        name for name in _PAUSE_ROLES if any(key in structure for key in _role_keys(name))
+    }
+    if asked_pauses:
+        # An asked-for pause replaces the type's default one: a session type that
+        # defaults a jog recovery still runs a standing rest when asked for it.
+        wanted -= set(_PAUSE_ROLES) - asked_pauses
+    elif _repeat_count(session_type, structure) is not None and not (wanted & set(_PAUSE_ROLES)):
+        wanted.add(_DEFAULT_PAUSE_ROLE)
+    return wanted
+
+
+def _role_keys(name: str) -> tuple[str, ...]:
+    """Every structure key that shapes - and so summons - the role of this name."""
+    return (f"{name}_end", f"{name}_target", f"{name}_min")
+
+
+def _repeat_count(session_type: str, structure: dict[str, Any]) -> int | None:
+    """How many times the work step and its pause repeat, or None for no repeat block."""
+    if "reps" in structure:
+        return int(structure["reps"])
+    return _DEFAULT_REPS.get(session_type)
+
+
+def _summoned_role(name: str) -> _Role:
+    """A role the session type does not default, at the shared length and with no target."""
+    return _Role(name, f"{name}_min", _SUMMONED_DEFAULT_S[name])
 
 
 def _role_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any]:
@@ -646,17 +819,16 @@ def _role_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dic
     return _step(role.name, _end_condition(structure, role), targets.for_role(role))
 
 
-def _with_repeat_block(
-    steps: list[dict[str, Any]], structure: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Fold quality's work and recovery steps into the repeat block they run inside."""
-    warmup, work, recovery, cooldown = steps
-    interval = {
-        "kind": "repeat",
-        "reps": int(structure.get("reps", QUALITY_REPS)),
-        "steps": [work, recovery],
-    }
-    return [warmup, interval, cooldown]
+def _with_repeat_block(steps: list[dict[str, Any]], reps: int) -> list[dict[str, Any]]:
+    """Fold the work step and the pause after it into the repeat block they run inside.
+
+    The block is found by step kind, not by position, so whatever surrounds it - a
+    warm-up, a cool-down, both or neither - passes through untouched.
+    """
+    first = next(i for i, step in enumerate(steps) if step["kind"] == "work")
+    last = next(i for i, step in enumerate(steps) if step["kind"] in _PAUSE_ROLES)
+    interval = {"kind": "repeat", "reps": reps, "steps": steps[first : last + 1]}
+    return [*steps[:first], interval, *steps[last + 1 :]]
 
 
 def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
@@ -671,29 +843,85 @@ def _validate_structure(structure: dict[str, Any], session_type: str) -> None:
     unknown = set(structure) - _allowed_structure_keys(session_type)
     if unknown:
         raise ValueError(f"unknown structure keys for {session_type}: {', '.join(sorted(unknown))}")
-    for role in _STRUCTURE_ROLES.get(session_type, ()):
-        end = structure.get(role.end_key)
-        if end is None:
-            continue
-        if structure.get(role.min_key) is not None:
-            raise ValueError(
-                f"structure sets both {role.end_key} and {role.min_key}; give only one"
-            )
+    _validate_reps(structure)
+    roles = _roles_for(session_type, structure)
+    for role in roles:
+        _validate_role_length(structure, role)
+    _validate_pause(structure, session_type, roles)
+    _validate_targets(structure, roles)
+
+
+def _validate_reps(structure: dict[str, Any]) -> None:
+    """Check a repeat count is a positive whole number of repeats.
+
+    Raises:
+        ValueError: If ``reps`` is present but not a positive integer.
+    """
+    reps = structure.get("reps")
+    if "reps" in structure and (not isinstance(reps, int) or isinstance(reps, bool) or reps <= 0):
+        raise ValueError("reps must be a positive integer")
+
+
+def _validate_pause(structure: dict[str, Any], session_type: str, roles: Sequence[_Role]) -> None:
+    """Check the repeats have exactly one kind of pause, and something to run between.
+
+    A pause the session type does not default is almost always a repeat session written
+    without its ``reps``; authoring one work step and one dangling pause would be a
+    silent misreading of it. Two kinds of pause at once leaves no single answer to what
+    the athlete does between repeats.
+
+    Raises:
+        ValueError: If both a jog recovery and a standing rest were asked for, or a
+            pause was asked for on a type that neither defaults a repeat count nor was
+            given one.
+    """
+    asked = {role.name: _asked_key(structure, role) for role in roles if role.name in _PAUSE_ROLES}
+    given = {name: key for name, key in asked.items() if key is not None}
+    if len(given) > 1:
+        recovery, rest = (given[name] for name in _PAUSE_ROLES)
+        raise ValueError(
+            f"structure sets both {recovery} and {rest}; a repeat runs one pause, "
+            "a jog recovery or a standing rest"
+        )
+    if "reps" in structure or _DEFAULT_REPS.get(session_type) is not None:
+        return
+    for name, key in given.items():
+        raise ValueError(f"{key} asks for a {name} step, which runs between repeats; give reps too")
+
+
+def _asked_key(structure: dict[str, Any], role: _Role) -> str | None:
+    """The first of a role's keys the structure sets, or None when it sets none."""
+    return next((key for key in role.keys if key in structure), None)
+
+
+def _validate_role_length(structure: dict[str, Any], role: _Role) -> None:
+    """Check one role sets its length exactly one way, and that the end itself is legal.
+
+    Raises:
+        ValueError: If the role sets an end and a minutes alias at once, sets two
+            spellings of the alias at once, or its end is malformed.
+    """
+    given = [key for key in role.min_keys if structure.get(key) is not None]
+    end = structure.get(role.end_key)
+    if end is not None and given:
+        raise ValueError(f"structure sets both {role.end_key} and {given[0]}; give only one")
+    if len(given) > 1:
+        raise ValueError(f"structure sets both {given[0]} and {given[1]}; give only one")
+    if end is not None:
         _validate_end(end, role.end_key)
-    _validate_targets(structure, session_type)
 
 
 def _allowed_structure_keys(session_type: str) -> set[str]:
     """The structure keys a session type accepts (its role ends/mins/targets, band, reps)."""
-    keys = {"work_pace_band"}
-    if session_type == "quality":
-        keys.add("reps")
+    keys = {"work_pace_band", "reps"}
+    for name in _ROLE_ORDER:
+        keys.update((f"{name}_end", f"{name}_min", f"{name}_target"))
     for role in _STRUCTURE_ROLES.get(session_type, ()):
-        keys.update((role.end_key, role.min_key, role.target_key))
+        keys.update(role.keys)
     return keys
 
 
-def _validate_targets(structure: dict[str, Any], session_type: str) -> None:
+def _validate_targets(structure: dict[str, Any], roles: Sequence[_Role]) -> None:
     """Check each role's intensity target, and that work carries only one spelling.
 
     Raises:
@@ -705,7 +933,7 @@ def _validate_targets(structure: dict[str, Any], session_type: str) -> None:
         _validate_band(legacy_band, "work_pace_band", "pace_band")
         if structure.get("work_target") is not None:
             raise ValueError("structure sets both work_target and work_pace_band; give only one")
-    for role in _STRUCTURE_ROLES.get(session_type, ()):
+    for role in roles:
         target = structure.get(role.target_key)
         if target is not None:
             _validate_target(target, role.target_key)
@@ -800,9 +1028,10 @@ def _end_condition(structure: dict[str, Any], role: _Role) -> dict[str, Any]:
     end = structure.get(role.end_key)
     if end is not None:
         return _end_descriptor(end)
-    minutes = structure.get(role.min_key)
-    if minutes is not None:
-        return {"type": "time", "seconds": round(float(minutes) * 60)}
+    for key in role.min_keys:
+        minutes = structure.get(key)
+        if minutes is not None:
+            return {"type": "time", "seconds": round(float(minutes) * 60)}
     return {"type": "time", "seconds": role.default_s}
 
 
@@ -1059,6 +1288,10 @@ def _garmin_step(step: dict[str, Any], order: int) -> Any:
     executable = builder(_builder_end_value(end), step_order=order, target_type=target_type)
     _apply_end_condition(executable, end)
     _apply_target_values(executable, step["target"])
+    if step["kind"] == "rest":
+        # garminconnect ships no rest builder: a standing rest is a recovery step
+        # restamped with the rest step type the exercise sports already push.
+        executable.stepType = _REST_STEP_TYPE
     return executable
 
 

@@ -103,6 +103,7 @@ class PublishResult:
     warnings: list[str] = field(default_factory=list)
     session_type: str | None = None
     planned_intent: str | None = None
+    hardness: str | None = None
 
     def as_receipt(self) -> dict[str, Any]:
         """The ``push.json`` receipt body (the caller adds the push timestamp)."""
@@ -115,6 +116,7 @@ class PublishResult:
             "schedule_id": self.schedule_id,
             "spec_hash": self.spec_hash,
             "session_type": self.session_type,
+            "hardness": self.hardness,
             "planned_intent": self.planned_intent,
             "error": self.error,
             "warnings": self.warnings,
@@ -216,7 +218,8 @@ def publish(
         warnings.append(f"{date} already has a logged activity; is this the right date?")
 
     session_type = spec.get("session_type")
-    too_hard = _plan.guard_error(date, session_type, planned_intent)
+    hardness = spec.get("hardness")
+    too_hard = _push_guard_error(spec, date, session_type, hardness, planned_intent)
     if too_hard is not None:
         return PublishResult(
             action="refuse",
@@ -227,6 +230,7 @@ def publish(
             message=too_hard,
             warnings=warnings,
             session_type=session_type,
+            hardness=hardness,
             planned_intent=planned_intent,
         )
 
@@ -241,6 +245,7 @@ def publish(
         message=conflict or _message(action),
         warnings=warnings,
         session_type=session_type,
+        hardness=hardness,
         planned_intent=planned_intent,
     )
     if existing is not None:
@@ -314,6 +319,29 @@ def _unschedule_existing(publisher: WorkoutPublisher, workout_id: int, date: str
     for entry in publisher.list_scheduled(date):
         if entry["workoutId"] == workout_id:
             publisher.unschedule(entry["scheduleId"])
+
+
+def _push_guard_error(
+    spec: dict[str, Any],
+    date: str,
+    session_type: str | None,
+    hardness: str | None,
+    planned_intent: str | None,
+) -> str | None:
+    """The plan guard at push time, reading what the spec measured where it measured.
+
+    The spec is frozen, so its hardness is frozen with it: the push re-judges the same
+    session against a plan that may have moved, never against zones that have (issue
+    #62). A spec with no measured hardness - exercise sports, or one authored with no
+    zone ladder - is guarded by its session type, as every spec was before ADR 0024.
+    """
+    if hardness is None:
+        return _plan.guard_error(date, session_type, planned_intent)
+    if not _plan.is_harder(hardness, planned_intent):
+        return None
+    # The evidence here is the stored measurement, not the ladder: re-deriving it would
+    # judge a frozen spec against zones that have moved since it was authored.
+    return _plan.spec_guard_error(date, hardness, planned_intent, "this session")
 
 
 def _find_target(
@@ -411,7 +439,8 @@ def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[
     Args:
         receipt: The parsed ``push.json`` body, or None when the date has no push.
         spec: The parsed authored spec; consulted only for receipts written before
-            the receipt carried its own ``session_type``.
+            the receipt carried its own ``session_type``. A receipt carrying a
+            measured ``hardness`` is compared on that instead (issue #62).
         planned: The plan of record's intent for the date *now*.
 
     Returns:
@@ -421,7 +450,11 @@ def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[
     body = _json_object(receipt)
     if body is None or body.get("workout_id") is None:
         return None
-    pushed_type = body.get("session_type") or (_json_object(spec) or {}).get("session_type")
+    pushed_type = (
+        body.get("hardness")
+        or body.get("session_type")
+        or (_json_object(spec) or {}).get("session_type")
+    )
     if not _plan.is_harder(pushed_type, planned):
         return None
     return {

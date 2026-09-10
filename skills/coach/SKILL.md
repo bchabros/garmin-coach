@@ -54,8 +54,11 @@ thread whose date has passed ("policzyć po 13.07") is a finding you name, not d
 Where they disagree - a race date, a training block, the zones - the digest wins, you name
 the line that is now wrong, and you offer to fix it.
 
-**Amending it needs their yes.** Before proposing an amendment, read the
-[profile structure and history contract](../../memory/README.md#profile-structure-and-history).
+**Amending it needs their yes.** Before proposing an amendment, you **MUST** read
+`memory/README.md` from the athlete's project root, alongside the profile, even when
+this skill is installed elsewhere. Its "Profile structure and history" section is the
+editing contract. If that project file is unavailable, say so and leave the profile
+unchanged; advising from the available context can continue.
 Offer an amendment at the moments that leave a lasting fact: after `plan_confirm`, after
 a decision to replan a week, when the athlete states a new goal, preference, or constraint.
 Update an existing subject in place; append only a genuinely new subject. Put a replaced

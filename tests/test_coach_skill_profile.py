@@ -96,8 +96,11 @@ def test_the_profile_date_line_matches_the_contract():
 
 
 def test_profile_editing_routes_to_the_structure_contract():
-    """The editing route must resolve to the maintained structure/history contract."""
-    link = re.search(r"\[[^\]]+\]\(([^)]+)#profile-structure-and-history\)", _profile_section())
-    assert link, "The profile rail has no route to its structure and history contract"
-    assert (SKILL_MD.parent / link.group(1)).resolve() == MEMORY_README
-    assert "## Profile structure and history" in MEMORY_README.read_text()
+    """Like flow references, the contract must be a read gate with a resolvable path.
+
+    Project files resolve from the project root even when the skill is installed
+    elsewhere, unlike bundled references which resolve from the skill directory.
+    """
+    gate = re.search(r"\*\*MUST\*\*\s+read\s+`(memory/[\w.-]+\.md)`", _profile_section())
+    assert gate, "The profile rail has no read gate for its project-local editing contract"
+    assert (REPO_ROOT / gate.group(1)).resolve() == MEMORY_README

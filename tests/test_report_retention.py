@@ -206,3 +206,33 @@ def test_unreadable_report_is_reported_without_aborting_other_folders(
     assert "test inspection denied" in capsys.readouterr().out
     assert (older / "report.md").read_text() == "report"
     assert not newer.exists()
+
+
+def test_later_folder_inspection_failure_keeps_actual_deletion_summary(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    today = dt.date.today()
+    reports = tmp_path / "reports"
+    older = reports / (today - dt.timedelta(days=92)).isoformat()
+    newer = reports / (today - dt.timedelta(days=91)).isoformat()
+    for folder in (older, newer):
+        folder.mkdir(parents=True)
+        (folder / "report.md").write_text("report")
+    stat = Path.stat
+
+    def fail_stat(path, *args, **kwargs):
+        if path.name == newer.name:
+            raise PermissionError("test folder inspection denied")
+        return stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_stat)
+
+    assert main(["reports", "prune", "--confirm"]) == 1
+
+    output = capsys.readouterr().out
+    assert "test folder inspection denied" in output
+    assert newer.name in output
+    assert "deleted_files=1" in output
+    assert not older.exists()
+    assert (newer / "report.md").read_text() == "report"

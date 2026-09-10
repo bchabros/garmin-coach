@@ -347,6 +347,16 @@ code, docstrings, PRDs, and ADRs.
   refused, and a pause asked for explicitly replaces the session type's default
   pause. Not to be confused with the `rest` *session type* (a day off, which yields
   no spec) - the two share a word on different axes (ADR 0023).
+- **run-station sequence (workout request)** - a Hyrox race simulation authored as
+  `sport: run`, `session_type: hyrox` with a `structure.stations` list: one run
+  before each station, in race order, the stations named on their steps so the watch
+  says what comes next. Runs share one end and one target, stations share one target
+  and end on the lap button unless an entry says otherwise; a distance-ended station
+  is refused, since the watch would measure an erg by GPS. Like the exercise sports
+  it expands from a **list**, not from the *step role* table (ADR 0023), so it
+  carries no *hardness* and the *plan guard* ranks its session type instead. Without
+  `stations`, a run hyrox request still asks whether the session is run-dominant or
+  station-based.
 - **structure override (workout request)** - the optional `structure` block in an
   `athlete`/hybrid request that shapes the session type's defaults: for runs,
   `reps` plus, per *step role*, an end condition and an intensity target; for the

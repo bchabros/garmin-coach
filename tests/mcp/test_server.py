@@ -65,5 +65,9 @@ def test_log_sets_accepts_bare_names_and_detailed_stations():
     log_sets = next(t for t in tools if t.name == "log_sets")
 
     items = log_sets.inputSchema["properties"]["stations"]["items"]
-    kinds = {opt.get("type") for opt in items["anyOf"]}
-    assert kinds == {"string", "object"}
+    assert any(option.get("type") == "string" for option in items["anyOf"])
+    details_ref = next(option["$ref"] for option in items["anyOf"] if "$ref" in option)
+    details = log_sets.inputSchema["$defs"][details_ref.rsplit("/", 1)[-1]]
+    assert details["type"] == "object"
+    assert details["required"] == ["subcategory"]
+    assert details["additionalProperties"] is False

@@ -579,6 +579,7 @@ def test_log_activity_sets_re_log_replaces_the_prior_stations(conn):
         ([{"reps": 4}], "subcategory"),
         ([{"subcategory": "SLED_PULL", "reps": -1}], "reps"),
         ([{"subcategory": "SLED_PULL", "duration_s": "long"}], "duration_s"),
+        ([{"subcategory": "SLED_PULL", "rep": 4}], "unsupported field.*rep"),
     ],
 )
 def test_log_activity_sets_rejects_malformed_input(conn, stations, message):

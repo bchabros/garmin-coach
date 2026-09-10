@@ -249,24 +249,9 @@ def test_the_hyrox_stations_are_seeded_in_the_movement_map(conn):
     assert set(CIRCUIT) <= set(mapped)
 
 
-def test_garmin_names_seen_in_captured_sets_join_the_map(conn):
-    # Garmin sends the bare category when the exercise name is missing
-    # (BENCH_PRESS, BACK_SQUAT); without these aliases a strength session is
-    # mostly unmapped too.
-    mapped = dict(
-        (sub, (pat, mus))
-        for sub, pat, mus in conn.execute(
-            "SELECT subcategory, pattern, muscle_group FROM exercise_pattern"
-        )
-    )
-    assert mapped["BENCH_PRESS"] == ("push", "chest")
-    assert mapped["BACK_SQUAT"] == ("squat", "quads")
-
-
 def test_logged_circuit_stacks_carry_and_grip_on_the_day_after_a_carry_session(conn):
-    # Definition of done for issue #60: the watch saw one UNKNOWN round on 07-28;
-    # once the ten stations are logged, the carry / grip axes stack against the
-    # previous day's carry work.
+    # Adjacent-day acceptance case for issue #60: once the ten stations are logged,
+    # the carry / grip axes stack against the previous day's carry work.
     _add_session(conn, 1, "2026-07-27", ["FARMERS_WALK"] * 4)
     _add_session(conn, 2, "2026-07-28", ["UNKNOWN"])
     _log_stations(conn, 2, CIRCUIT)

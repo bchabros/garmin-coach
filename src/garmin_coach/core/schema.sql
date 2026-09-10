@@ -256,25 +256,13 @@ INSERT OR IGNORE INTO exercise_pattern(subcategory, pattern, muscle_group) VALUE
  -- on the muscle axis only.
  ('SPANISH_SQUAT',            'squat', 'quads'),
  ('BOX_STEP_OVER',            'squat', 'quads'),
- ('BOX_JUMP',                 'squat', 'quads'),
  ('SKI_ERG',                  'hinge', 'posterior'),
- ('INDOOR_ROW',               'hinge', 'posterior'),
- ('ROW',                      'hinge', 'posterior'),
  ('BATTLE_ROPE',              NULL,    'shoulders'),
  ('V_UP',                     NULL,    'core'),
- ('SIT_UP',                   NULL,    'core'),
- -- Garmin's bare category names: the watch sends these when the exercise name is
- -- missing (normalize_exercise_sets falls back to the category), so the same lift
- -- arrives under two spellings. Aliases of the rows above (issue #60).
- ('BENCH_PRESS',              'push',  'chest'),
- ('BACK_SQUAT',               'squat', 'quads'),
- ('SQUAT',                    'squat', 'quads'),
  -- known non-movement: a Garmin CARDIO pseudo-set (e.g. a Hyrox run leg) is a
  -- real ACTIVE set with no exercise name. Mapped to no pattern/muscle so it is
  -- excluded from the overlap load-split, yet stays out of the unmapped drift fact.
- -- JUMPING_JACKS is the same kind of row: a warm-up filler, not a movement to track.
- ('CARDIO',                   NULL,    NULL),
- ('JUMPING_JACKS',            NULL,    NULL);
+ ('CARDIO',                   NULL,    NULL);
 
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)

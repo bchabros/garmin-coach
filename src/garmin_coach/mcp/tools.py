@@ -24,7 +24,7 @@ from typing import Any
 
 from .. import cli, daily
 from ..coach import digest, report
-from ..core import db, plan
+from ..core import db, manual_sets, plan
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -333,7 +333,7 @@ def log_sets(
     conn: sqlite3.Connection,
     *,
     activity_id: int,
-    stations: list[Any],
+    stations: list[str | manual_sets.ManualStationDetails],
     data_start_date: str,
 ) -> dict[str, Any]:
     """Log a circuit's stations from chat (issue #60); recomputes from that day.

@@ -26,12 +26,6 @@ which is delete-then-insert per activity, so any hand-written row was dropped on
 next sync of that activity. Free text in `session_rpe.notes` is read by the coach skill
 but feeds no computation. Issue #60.
 
-A second, smaller gap surfaced while verifying the first: the movement map was keyed on
-Garmin's full exercise names (`BARBELL_BENCH_PRESS`), but when the watch has no exercise
-name `normalize_exercise_sets` falls back to the bare category (`BENCH_PRESS`,
-`BACK_SQUAT`), so the same lift arrived under two spellings and the second was unmapped.
-18 of 22 captured sets in the 2026-08-20 digest were unmapped for that reason.
-
 ## Decision
 
 - **The overlay is core ground truth, on the same footing as `session_rpe` and
@@ -79,13 +73,9 @@ name `normalize_exercise_sets` falls back to the bare category (`BENCH_PRESS`,
   |---|---|---|---|
   | `SPANISH_SQUAT` | `squat` | `quads` | knee-dominant, band-resisted; quad-biased by design |
   | `BOX_STEP_OVER` | `squat` | `quads` | single-leg knee-dominant step-up |
-  | `BOX_JUMP` | `squat` | `quads` | plyometric knee-dominant; same axis as the step-over |
   | `SKI_ERG` | `hinge` | `posterior` | double-pole is a hip hinge; lats/posterior driven |
-  | `INDOOR_ROW`, `ROW` | `hinge` | `posterior` | leg drive into a hip hinge; the rowing-erg station |
   | `BATTLE_ROPE` | *(null)* | `shoulders` | no clean pattern; taxes shoulders + grip, so it counts on the muscle axis only |
-  | `V_UP`, `SIT_UP` | *(null)* | `core` | trunk flexion; `core` is already in the `muscle_group` vocabulary |
-  | `JUMPING_JACKS` | *(null)* | *(null)* | warm-up filler, a known non-movement like `CARDIO` |
-  | `BENCH_PRESS`, `BACK_SQUAT`, `SQUAT` | as the barbell rows | as the barbell rows | Garmin's bare category names (aliases) |
+  | `V_UP` | *(null)* | `core` | trunk flexion; `core` is already in the `muscle_group` vocabulary |
 
   `SLED_PULL`, `SANDBAG_CARRY`, `PUSH_PRESS`, `LUNGE` and `KETTLEBELL_SWING` were
   already seeded and cover the other five stations of the standard circuit.
@@ -109,4 +99,4 @@ name `normalize_exercise_sets` falls back to the bare category (`BENCH_PRESS`,
   both carry mapped movement load, which for a 3-a-week Hyrox block means logging each
   circuit as it happens.
 - The map remains hand-maintained. Every unmapped name, captured or logged, still
-  surfaces in the coverage fact; the aliases above clear the 2026-08-20 drift list.
+  surfaces in the coverage fact.

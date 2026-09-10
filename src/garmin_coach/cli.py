@@ -7,14 +7,12 @@ import datetime as _dt
 import json
 import os
 import pathlib
-import re
 import sqlite3
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from . import daily
 from .coach import digest, report
-from .core import db, plan as _plan
+from .core import db, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -138,55 +136,6 @@ def log_niggle(
     return day
 
 
-# A station name in Garmin's vocabulary (SCREAMING_SNAKE_CASE), after normalization.
-_STATION_NAME = re.compile(r"^[A-Z0-9_]+$")
-_STATION_INTS = ("reps", "sets")
-_STATION_REALS = ("duration_s", "max_weight")
-
-
-def _station_name(raw: Any, idx: int) -> str:
-    """Normalize one station name to Garmin's vocabulary (``sled pull`` -> ``SLED_PULL``)."""
-    name = re.sub(r"[\s\-]+", "_", str(raw).strip().upper())
-    if not name:
-        raise ValueError(f"station {idx}: empty name")
-    if not _STATION_NAME.match(name):
-        raise ValueError(
-            f"station {idx}: a name may use letters, digits and underscores only (got {raw!r})"
-        )
-    return name
-
-
-def _non_negative(name: str, value: Any, idx: int, *, integer: bool) -> int | float | None:
-    """Return an optional non-negative number, or raise naming the offending field."""
-    if value is None:
-        return None
-    kind = "integer" if integer else "number"
-    ok = isinstance(value, int) if integer else isinstance(value, (int, float))
-    if not ok or isinstance(value, bool) or value < 0:
-        raise ValueError(f"station {idx}: {name} must be a non-negative {kind} (got {value!r})")
-    return value
-
-
-def _station_row(activity_id: int, idx: int, station: Any) -> dict[str, Any]:
-    """One ``manual_activity_sets`` row from a bare name or a ``{subcategory, ...}`` mapping."""
-    detail: Mapping[str, Any] = (
-        station if isinstance(station, Mapping) else {"subcategory": station}
-    )
-    if detail.get("subcategory") is None:
-        raise ValueError(f"station {idx}: 'subcategory' is required")
-    row: dict[str, Any] = {
-        "activity_id": activity_id,
-        "set_idx": idx,
-        "category": detail.get("category"),
-        "subcategory": _station_name(detail["subcategory"], idx),
-    }
-    for field in _STATION_INTS:
-        row[field] = _non_negative(field, detail.get(field), idx, integer=True)
-    for field in _STATION_REALS:
-        row[field] = _non_negative(field, detail.get(field), idx, integer=False)
-    return row
-
-
 def _unmapped_stations(conn: sqlite3.Connection, names: list[str]) -> list[str]:
     """The logged names that ``exercise_pattern`` does not know yet (coverage drift)."""
     known = {r[0] for r in conn.execute("SELECT subcategory FROM exercise_pattern")}
@@ -197,7 +146,7 @@ def log_activity_sets(
     conn: sqlite3.Connection,
     *,
     activity_id: int,
-    stations: list[Any],
+    stations: list[str | manual_sets.ManualStationDetails],
     data_start_date: str,
 ) -> dict[str, Any]:
     """Write a circuit's stations to the manual set overlay and recompute from that day.
@@ -227,9 +176,7 @@ def log_activity_sets(
         ValueError: If the list is empty, a station is malformed, or the activity
             does not exist.
     """
-    if not stations:
-        raise ValueError("at least one station is required")
-    rows = [_station_row(activity_id, i, station) for i, station in enumerate(stations)]
+    rows = manual_sets.normalize(activity_id, stations)
     found = conn.execute(
         "SELECT date(start_local) FROM activities WHERE activity_id = ?", (activity_id,)
     ).fetchone()

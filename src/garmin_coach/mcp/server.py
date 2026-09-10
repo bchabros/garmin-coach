@@ -18,7 +18,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from . import tools
-from ..core import db
+from ..core import db, manual_sets
 from ..core.config import get_settings
 from ..etl import client
 from ..workouts import publish
@@ -240,7 +240,9 @@ def log_niggle(
 
 
 @server.tool()
-def log_sets(activity_id: int, stations: list[str | dict[str, Any]]) -> dict[str, Any]:
+def log_sets(
+    activity_id: int, stations: list[str | manual_sets.ManualStationDetails]
+) -> dict[str, Any]:
     """Log the stations of a circuit the watch recorded as one nameless set.
 
     A Hyrox / group-HIIT session reaches the DB as a single UNKNOWN set, invisible

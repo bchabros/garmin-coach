@@ -109,6 +109,9 @@ may be null, and the structure of `report.md`.
      `sets_unmapped` > 0, add one brief line that the overlap read is partial: N of
      `sets_total` sets are unmapped (`unmapped` names), so those exercises need adding to
      the movement map. Skip entirely when `movement` is null or nothing is unmapped.
+     `UNKNOWN` in that list is a Hyrox / group-HIIT circuit the watch recorded as one
+     nameless set: ask the athlete for the stations and log them with `log_sets`
+     (`mcp__coach__log_sets(activity_id, stations)`) so the overlap read can see them.
    - **Tydzień: plan vs realizacja** - only if the digest has a non-null `weekly` block
      (the latest complete week). One line on the week's numbers (`load_total`, the
      low/high/anaero shares, `monotony`/`strain`, `max_consec_hard`), then the adherence:

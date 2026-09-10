@@ -249,3 +249,84 @@ def test_bootstrap_migrates_a_pre_sha_raw_table(tmp_path):
     db.bootstrap(c)
     assert c.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0] == 1
     c.close()
+
+
+# --- Issue #60: the manual set overlay is core ground truth beside the captured sets ---
+
+
+def _activity(conn, aid, date="2026-07-28"):
+    conn.execute(
+        "INSERT INTO activities(activity_id, start_local, date, gtype, discipline, dur_s) "
+        "VALUES (?,?,?,?,?,?)",
+        (aid, f"{date} 19:30:00", date, "hiit", "Hyrox/HIIT", 3706.0),
+    )
+
+
+def _set_row(aid, idx, sub):
+    return {
+        "activity_id": aid,
+        "set_idx": idx,
+        "category": None,
+        "subcategory": sub,
+        "reps": None,
+        "sets": None,
+        "duration_s": None,
+        "max_weight": None,
+    }
+
+
+def test_bootstrap_creates_the_manual_set_overlay_and_its_read_view(conn):
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    views = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+
+    assert "manual_activity_sets" in tables
+    assert "movement_sets" in views
+    # same shape as the captured table, so the view can union the two
+    captured = [r[1] for r in conn.execute("PRAGMA table_info(activity_sets)")]
+    manual = [r[1] for r in conn.execute("PRAGMA table_info(manual_activity_sets)")]
+    assert manual == captured
+
+
+def test_replace_manual_activity_sets_supersedes_the_prior_rows(conn):
+    _activity(conn, 1)
+    db.replace_manual_activity_sets(conn, 1, [_set_row(1, i, s) for i, s in enumerate("ABC")])
+
+    db.replace_manual_activity_sets(conn, 1, [_set_row(1, 0, "SLED_PULL")])
+
+    rows = conn.execute(
+        "SELECT set_idx, subcategory FROM manual_activity_sets WHERE activity_id=1"
+    ).fetchall()
+    assert rows == [(0, "SLED_PULL")]  # a re-log with fewer rows leaves no orphans
+
+
+def test_movement_sets_view_reads_manual_rows_for_an_activity_that_has_them(conn):
+    _activity(conn, 1)
+    _activity(conn, 2)
+    # activity 1: the watch's single nameless round, overlaid by two hand-logged stations
+    db.replace_activity_sets(conn, 1, [_set_row(1, 0, "UNKNOWN")])
+    db.replace_manual_activity_sets(
+        conn, 1, [_set_row(1, 0, "SLED_PULL"), _set_row(1, 1, "SANDBAG_CARRY")]
+    )
+    # activity 2: captured rows only
+    db.replace_activity_sets(conn, 2, [_set_row(2, 0, "BARBELL_DEADLIFT")])
+
+    rows = conn.execute(
+        "SELECT activity_id, subcategory, source FROM movement_sets ORDER BY activity_id, set_idx"
+    ).fetchall()
+
+    assert rows == [
+        (1, "SLED_PULL", "manual"),
+        (1, "SANDBAG_CARRY", "manual"),
+        (2, "BARBELL_DEADLIFT", "captured"),
+    ]
+
+
+def test_a_resync_of_the_captured_sets_leaves_the_overlay_untouched(conn):
+    _activity(conn, 1)
+    db.replace_manual_activity_sets(conn, 1, [_set_row(1, 0, "SLED_PULL")])
+
+    db.replace_activity_sets(conn, 1, [_set_row(1, 0, "UNKNOWN")])
+    db.replace_activity_sets(conn, 1, [_set_row(1, 0, "UNKNOWN")])
+
+    assert conn.execute("SELECT COUNT(*) FROM manual_activity_sets").fetchone()[0] == 1
+    assert conn.execute("SELECT subcategory FROM movement_sets").fetchall() == [("SLED_PULL",)]

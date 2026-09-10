@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     # local writes
     "log_rpe",
     "log_niggle",
+    "log_sets",
     # plan of record (preview -> confirm writes plans/<monday>_week.md)
     "plan_preview",
     "plan_confirm",
@@ -56,3 +57,17 @@ def test_author_workout_wrapper_does_not_force_a_sport():
     author = next(t for t in tools if t.name == "author_workout")
 
     assert author.inputSchema["properties"]["sport"]["default"] is None
+
+
+def test_log_sets_accepts_bare_names_and_detailed_stations():
+    """The station list takes plain names or ``{subcategory, ...}`` mappings (issue #60)."""
+    tools = asyncio.run(server.server.list_tools())
+    log_sets = next(t for t in tools if t.name == "log_sets")
+
+    items = log_sets.inputSchema["properties"]["stations"]["items"]
+    assert any(option.get("type") == "string" for option in items["anyOf"])
+    details_ref = next(option["$ref"] for option in items["anyOf"] if "$ref" in option)
+    details = log_sets.inputSchema["$defs"][details_ref.rsplit("/", 1)[-1]]
+    assert details["type"] == "object"
+    assert details["required"] == ["subcategory"]
+    assert details["additionalProperties"] is False

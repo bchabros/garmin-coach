@@ -18,7 +18,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from . import tools
-from ..core import db
+from ..core import db, manual_sets
 from ..core.config import get_settings
 from ..etl import client
 from ..workouts import publish
@@ -235,6 +235,32 @@ def log_niggle(
     conn = _open()
     try:
         return tools.log_niggle(conn, body_part=body_part, severity=severity, date=date, note=note)
+    finally:
+        conn.close()
+
+
+@server.tool()
+def log_sets(
+    activity_id: int, stations: list[str | manual_sets.ManualStationDetails]
+) -> dict[str, Any]:
+    """Log the stations of a circuit the watch recorded as one nameless set.
+
+    A Hyrox / group-HIIT session reaches the DB as a single UNKNOWN set, invisible
+    to the movement-overlap read. Pass the stations in order, as Garmin names
+    (``SLED_PULL``, ``SANDBAG_CARRY``, ...) or as ``{subcategory, reps?, sets?,
+    duration_s?, max_weight?}`` mappings; a re-log replaces the prior list. The
+    day's load split is recomputed at once. Names outside the movement map come
+    back as ``unmapped``.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.log_sets(
+            conn,
+            activity_id=activity_id,
+            stations=stations,
+            data_start_date=settings.data_start_date,
+        )
     finally:
         conn.close()
 

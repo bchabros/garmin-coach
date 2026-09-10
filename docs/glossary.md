@@ -10,9 +10,11 @@ code, docstrings, PRDs, and ADRs.
   of the key because `fetched_at` only resolves to the second (ADR 0018). Enrichment
   payloads are filed under the activity's own day, not the requested range start.
 - **core** - normalized, upserted-by-PK tables (`activities`, `daily_wellness`,
-  `sleep`, `hrv_nightly`, `sync_state`, plus the manually-logged `session_rpe` and
-  `niggle`). The system of record. Most core tables are ETL-written from Garmin;
-  `session_rpe`/`niggle` are ground truth written by `garmin-coach log-rpe` (Phase 7).
+  `sleep`, `hrv_nightly`, `sync_state`, plus the manually-logged `session_rpe`,
+  `niggle` and `manual_activity_sets`). The system of record. Most core tables are
+  ETL-written from Garmin; `session_rpe`/`niggle` are ground truth written by
+  `garmin-coach log-rpe` (Phase 7), `manual_activity_sets` by `garmin-coach log-sets`
+  (issue #60).
 - **mart** - recomputed, derived tables (`daily_metrics`, `weekly_metrics`,
   `weekly_plan_actual`).
   Never a system of record; safe to drop and rebuild from core.
@@ -134,7 +136,18 @@ code, docstrings, PRDs, and ADRs.
   on the report's latest day; `facts.keys` names the offending keys.
 - **movement coverage** - the digest's `movement` fact: `sets_total`, `sets_unmapped`,
   and the `unmapped` subcategory names, so exercises missing from `exercise_pattern`
-  stay visible (the overlap read is partial until they are mapped).
+  stay visible (the overlap read is partial until they are mapped). Counted over
+  `movement_sets`, so a logged circuit contributes its stations, not the watch's row.
+- **manual set overlay** - the stations of a circuit the watch recorded as one nameless
+  set (a Hyrox / group-HIIT session arrives as a single `UNKNOWN` set), logged by hand
+  into the core table `manual_activity_sets` with `garmin-coach log-sets` or the MCP
+  `log_sets` tool. Same shape as `activity_sets`, one row per station (set-share, not
+  rounds x stations), never written or overwritten by the ETL. A re-log replaces the
+  activity's stations wholesale. See ADR 0022.
+- **movement_sets** - the view the overlap mart reads instead of `activity_sets`: an
+  activity's manual rows when it has any, its captured rows otherwise (per-activity
+  supersede, never a row-level merge - the captured `UNKNOWN` row stands in for the
+  same work the stations describe). Its `source` column names which answered.
 
 ## Weekly terms (mart -> weekly)
 

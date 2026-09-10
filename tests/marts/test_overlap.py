@@ -161,3 +161,105 @@ def test_rollup_as_of_reproduces_past_day(conn):
     overlap.rollup(conn, through_date="2026-06-13")
     assert _overlap(conn, "pattern", "hinge", "2026-06-13") == full
     assert _overlap(conn, "pattern", "hinge", "2026-06-14") is None
+
+
+# --- Issue #60: hand-logged stations supersede the watch's nameless round ------------
+
+# The ten stations of the 2026-07-28 circuit, as the box published them.
+CIRCUIT = [
+    "SLED_PULL",
+    "SANDBAG_CARRY",
+    "PUSH_PRESS",
+    "LUNGE",
+    "BATTLE_ROPE",
+    "SPANISH_SQUAT",
+    "BOX_STEP_OVER",
+    "SKI_ERG",
+    "KETTLEBELL_SWING",
+    "V_UP",
+]
+
+
+def _log_stations(conn, activity_id, subcats):
+    rows = [
+        {
+            "activity_id": activity_id,
+            "set_idx": i,
+            "category": None,
+            "subcategory": sub,
+            "reps": None,
+            "sets": None,
+            "duration_s": None,
+            "max_weight": None,
+        }
+        for i, sub in enumerate(subcats)
+    ]
+    db.replace_manual_activity_sets(conn, activity_id, rows)
+
+
+def test_manual_rows_alone_feed_the_overlap(conn):
+    # No captured sets at all (the enrichment fetch failed); the overlay still counts.
+    _add_session(conn, 1, "2026-06-12", [])
+    _log_stations(conn, 1, ["SLED_PULL"] * 4)
+    _add_session(conn, 2, "2026-06-13", [])
+    _log_stations(conn, 2, ["SLED_PULL"] * 4)
+    overlap.rollup(conn)
+
+    load_d, _, _ = _overlap(conn, "pattern", "carry", "2026-06-13")
+    assert abs(load_d - FULL) < 0.5
+
+
+def test_manual_rows_supersede_the_captured_rows_of_the_same_activity(conn):
+    # The watch says hinge on both days; the athlete's log says carry. Manual wins
+    # wholesale - the captured rows are ignored, not merged.
+    _add_session(conn, 1, "2026-06-12", ["BARBELL_DEADLIFT"] * 4)
+    _log_stations(conn, 1, ["SLED_PULL"] * 4)
+    _add_session(conn, 2, "2026-06-13", ["BARBELL_DEADLIFT"] * 4)
+    _log_stations(conn, 2, ["SLED_PULL"] * 4)
+    overlap.rollup(conn)
+
+    assert _overlap(conn, "pattern", "carry", "2026-06-13") is not None
+    assert _overlap(conn, "pattern", "hinge", "2026-06-13") is None
+
+
+def test_coverage_counts_the_overlay_rows_not_the_superseded_ones(conn):
+    _add_session(conn, 1, "2026-06-12", ["UNKNOWN"])
+    _log_stations(conn, 1, ["SLED_PULL", "MYSTERY_STATION"])
+
+    cov = overlap.coverage(conn)
+
+    assert cov["sets_total"] == 2
+    assert cov["sets_unmapped"] == 1
+    assert cov["unmapped"] == ["MYSTERY_STATION"]
+
+
+def test_the_hyrox_stations_are_seeded_in_the_movement_map(conn):
+    mapped = dict(
+        (sub, (pat, mus))
+        for sub, pat, mus in conn.execute(
+            "SELECT subcategory, pattern, muscle_group FROM exercise_pattern"
+        )
+    )
+    assert mapped["SPANISH_SQUAT"] == ("squat", "quads")
+    assert mapped["BOX_STEP_OVER"] == ("squat", "quads")
+    assert mapped["SKI_ERG"] == ("hinge", "posterior")
+    assert mapped["BATTLE_ROPE"] == (None, "shoulders")  # muscle axis only
+    assert mapped["V_UP"] == (None, "core")
+    # every station of the standard circuit joins the map
+    assert set(CIRCUIT) <= set(mapped)
+
+
+def test_logged_circuit_stacks_carry_and_grip_on_the_day_after_a_carry_session(conn):
+    # Adjacent-day acceptance case for issue #60: once the ten stations are logged,
+    # the carry / grip axes stack against the previous day's carry work.
+    _add_session(conn, 1, "2026-07-27", ["FARMERS_WALK"] * 4)
+    _add_session(conn, 2, "2026-07-28", ["UNKNOWN"])
+    _log_stations(conn, 2, CIRCUIT)
+    overlap.rollup(conn)
+
+    carry = _overlap(conn, "pattern", "carry", "2026-07-28")
+    grip = _overlap(conn, "muscle", "grip", "2026-07-28")
+    assert carry is not None and grip is not None
+    # two of ten stations carry -> 0.2 of the session load on the carry axis
+    assert abs(carry[0] - FULL * 0.2) < 0.5
+    assert overlap.coverage(conn)["sets_unmapped"] == 0

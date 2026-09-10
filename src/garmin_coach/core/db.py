@@ -198,6 +198,19 @@ def replace_activity_sets(
     _insert_rows(conn, "activity_sets", rows)
 
 
+def replace_manual_activity_sets(
+    conn: sqlite3.Connection, activity_id: int, rows: list[dict[str, Any]]
+) -> None:
+    """Replace one activity's hand-logged `manual_activity_sets` rows (issue #60).
+
+    Same replace-all semantics as :func:`replace_activity_sets`, on the overlay table
+    the ETL never touches: a re-log fully supersedes the prior stations. Reading goes
+    through the ``movement_sets`` view, where these rows win over the captured ones.
+    """
+    conn.execute("DELETE FROM manual_activity_sets WHERE activity_id=?", (activity_id,))
+    _insert_rows(conn, "manual_activity_sets", rows)
+
+
 def upsert_daily(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     """Upsert a one-row-per-date table (sleep, hrv_nightly, daily_wellness, ...)."""
     _upsert(conn, table, row, pk="date")

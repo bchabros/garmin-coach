@@ -838,6 +838,44 @@ def test_log_niggle_writes_a_niggle_row(conn):
     assert conn.execute("SELECT severity FROM niggle WHERE body_part='achilles'").fetchone()[0] == 2
 
 
+def test_log_sets_writes_the_overlay_and_returns_the_recompute_date(conn):
+    _seed_activity(conn, aid=1, date="2026-07-28")
+
+    out = tools.log_sets(
+        conn,
+        activity_id=1,
+        stations=["SLED_PULL", "SANDBAG_CARRY", "WALL_WALK"],
+        data_start_date=DATA_START,
+    )
+
+    assert out["data"] == {
+        "activity_id": 1,
+        "date": "2026-07-28",
+        "n_sets": 3,
+        "unmapped": ["WALL_WALK"],
+        "error": None,
+    }
+    assert conn.execute("SELECT COUNT(*) FROM manual_activity_sets").fetchone()[0] == 3
+
+
+def test_log_sets_unknown_activity_returns_error(conn):
+    out = tools.log_sets(conn, activity_id=999, stations=["SLED_PULL"], data_start_date=DATA_START)
+
+    assert "not found" in out["data"]["error"]
+    assert conn.execute("SELECT COUNT(*) FROM manual_activity_sets").fetchone()[0] == 0
+
+
+def test_log_sets_malformed_station_returns_error_without_writing(conn):
+    _seed_activity(conn, aid=1, date="2026-07-28")
+
+    out = tools.log_sets(
+        conn, activity_id=1, stations=["SLED_PULL", ""], data_start_date=DATA_START
+    )
+
+    assert "station 1" in out["data"]["error"]
+    assert conn.execute("SELECT COUNT(*) FROM manual_activity_sets").fetchone()[0] == 0
+
+
 def test_refresh_today_tool_reports_status_and_envelope(conn, fake_client):
     client = fake_client()
 

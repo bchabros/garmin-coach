@@ -10,7 +10,7 @@ import pathlib
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import daily
+from . import daily, retention
 from .coach import digest, report
 from .core import db, manual_sets, plan as _plan
 from .core.config import get_settings
@@ -1004,7 +1004,52 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
     )
     dl.set_defaults(func=_cmd_daily)
+
+    reports = sub.add_parser("reports", help="Maintain local report artifacts (no network).")
+    reports_sub = reports.add_subparsers(dest="reports_command", required=True)
+    prune = reports_sub.add_parser("prune", help="Preview old report files eligible for deletion.")
+    prune.add_argument("--confirm", action="store_true", help="Delete the selected report files.")
+    prune.add_argument(
+        "--older-than", type=_nonnegative_days, default=90, help="Age in days (default: 90)."
+    )
+    prune.add_argument(
+        "--no-keep-digest", action="store_true", help="Also select digest.json and snapshot.json."
+    )
+    prune.set_defaults(func=_cmd_prune_reports)
     return parser
+
+
+def _nonnegative_days(value: str) -> int:
+    days = int(value)
+    if days < 0:
+        raise argparse.ArgumentTypeError("age must be a nonnegative number of days")
+    return days
+
+
+def _cmd_prune_reports(args: argparse.Namespace) -> int:
+    try:
+        result = retention.prune_reports(
+            pathlib.Path("reports"),
+            today=_dt.date.today(),
+            older_than=args.older_than,
+            confirm=args.confirm,
+            keep_digest=not args.no_keep_digest,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"reports prune failed: {exc}")
+        return 2
+    print(
+        "reports prune: confirmed" if args.confirm else "reports prune: dry-run (no files deleted)"
+    )
+    for folder in result.folders:
+        print(
+            f"{folder.path.name}: age={folder.age_days} days "
+            f"files={len(folder.files)} bytes={sum(folder.files.values())}"
+        )
+    print(f"reports prune: folders={len(result.folders)} deleted_files={result.deleted_files}")
+    for error in result.errors:
+        print(f"reports prune failed: {error}")
+    return result.exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

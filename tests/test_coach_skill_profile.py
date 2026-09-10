@@ -93,3 +93,14 @@ def test_the_profile_date_line_matches_the_contract():
         f"{PROFILE_PATH} has no `{DATE_LINE_TOKEN} YYYY-MM-DD` line, so the coach skill "
         "cannot tell how old it is. Restore the line at the top of the profile."
     )
+
+
+def test_profile_editing_routes_to_the_structure_contract():
+    """Like flow references, the contract must be a read gate with a resolvable path.
+
+    Project files resolve from the project root even when the skill is installed
+    elsewhere, unlike bundled references which resolve from the skill directory.
+    """
+    gate = re.search(r"\*\*MUST\*\*\s+read\s+`(memory/[\w.-]+\.md)`", _profile_section())
+    assert gate, "The profile rail has no read gate for its project-local editing contract"
+    assert (REPO_ROOT / gate.group(1)).resolve() == MEMORY_README

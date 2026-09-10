@@ -84,6 +84,11 @@ tasks:
     cmds:
       - poetry run pytest tests/test_schema_sync.py -p no:cacheprovider
 
+  prune-reports:
+    desc: Preview expired report files. Pass -- --confirm only after preserving durable lessons.
+    cmds:
+      - poetry run garmin-coach reports prune {{.CLI_ARGS}}
+
   claude:check:
     desc: Report whether Claude Desktop has the coach MCP server and an up-to-date coach skill.
     cmds:

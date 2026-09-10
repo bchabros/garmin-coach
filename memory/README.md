@@ -15,10 +15,46 @@ Files:
 ## Rules
 
 - Markdown, written in the athlete's language (Polish), read at the start of a session and
-  appended to as facts appear. This README is the exception: it documents conventions, so
+  reconciled in place as facts change. This README is the exception: it documents conventions, so
   it is English like the rest of the repo's docs.
 - Numbers always come from the DB. The profile summarises them, it never replaces them.
 - One fact, one place. When cleaning, merge duplicates and correct what has gone stale.
+
+## Profile structure and history
+
+Keep the current-state sections (goal, context, interpretations, tendencies, standing
+coaching decisions, preferences, open threads) about what is true now. Finish the file
+with `## Decyzje`: a dated history of replaced facts and decisions that still explain
+the coaching. An active decision stays in the current-state section; its superseded
+version belongs only in the log, with the reason for the change when known.
+
+- **Replace, then preserve the useful history.** A fact on an existing subject changes
+  that sentence; a new subject may add one. Move a superseded fact with coaching value
+  into one dated log entry, for example `- [2026-07-29] Do 07.2026: trening bez daty
+  startu; odtąd periodyzacja pod A-race.` Do not invent a replacement fact or silently
+  erase the only record of an old decision. Merge true duplicates without duplicating
+  them again in the log.
+- **Budget: about 150 lines for the whole file**, including the date line, blank lines
+  and history. Above 150 lines, or when a proposed edit would cross that budget, propose
+  consolidation: merge duplicates, reconcile stale statements, and condense the history
+  without losing its dates or reasons. This is a proposal trigger, not a hard cap or
+  permission to trim. If it cannot fit without losing useful context, explain that in
+  the proposal and let the athlete decide; do not silently discard history.
+- **Date volatile facts inline.** Temporary constraints, niggle-related context and
+  open threads carry a known observation or due date. Preserve uncertainty: an expired
+  deadline prompts a check, not an invented resolution. Niggle measurements still belong
+  in the DB; only the qualitative constraint belongs here.
+- **Every edit, including the first restructuring, needs approval of the exact diff.**
+  Propose the old and new lines, including moves into `Decyzje` and the date-line change.
+  A declined or unanswered proposal leaves the whole file byte-identical. Keep the
+  profile gitignored; neither its content nor its private restructuring diff goes in
+  a commit, issue or PR.
+
+Before pruning old reports (#54), review the selected narratives and promote any lasting
+lesson into this profile, with its source report date, through the same approval loop.
+A pending or declined promotion means keep its source narrative. The prune command
+cannot make or verify this judgement; only run it on a selection whose lessons are
+already preserved. The dated reference records provenance even after a report expires.
 
 ## What belongs here
 

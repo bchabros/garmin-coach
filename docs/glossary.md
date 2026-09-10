@@ -110,9 +110,20 @@ code, docstrings, PRDs, and ADRs.
 - **garmin_agrees** - whether our derived signal concurs with Garmin's own phrase for
   the same finding; strengthens or hedges the report wording, never a passthrough.
 - **report** - the dated coach artifact under `reports/{date}/`: `report.md` (narrative
-  written by the skill from the digest), `digest.json`, and two PNG charts
+  written by the skill from the digest), `digest.json`, `snapshot.json`, and two PNG charts
   (`hrv_band.png`, `acwr.png`). `garmin-coach report` produces everything except the
   Markdown narrative.
+- **athlete profile** - private qualitative context in `memory/athlete-profile.md`.
+  Current-state sections hold today's understanding; the final dated `Decyzje` log
+  preserves replaced decisions that still explain the coaching. About 150 lines
+  triggers a consolidation proposal, never silent deletion. Edits require approval
+  of the exact diff; the profile stays gitignored (ADR 0025).
+- **report retention** - manual age-based expiry of an explicit set of report files,
+  after lasting narrative lessons have reached the profile with source dates.
+  `reports prune` previews by default and deletes only with `--confirm`; it preserves
+  digest and snapshot unless explicitly included, and always preserves workout specs,
+  push receipts and unknown files. The whole report folder is not a disposable cache
+  (ADR 0025).
 
 ## Movement terms (mart -> overlap)
 

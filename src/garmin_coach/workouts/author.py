@@ -140,6 +140,11 @@ _THRESHOLD_CHAIN = _WorkChain(
 )
 
 
+# What each work chain measures to on the hardness scale, so an untargeted work step
+# ranks by what the athlete will actually run rather than counting for nothing.
+_CHAIN_HARDNESS = {"z2": "easy", "z4": "threshold"}
+
+
 class _Role(NamedTuple):
     """One step role a run session offers: what shapes it, and what it defaults to.
 
@@ -298,14 +303,16 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
     _validate_sport_session(request["sport"], request["session_type"])
 
     session_type = request["session_type"]
-    plan_error = _plan.guard_error(request["date"], session_type, context.get("planned_intent"))
-    if plan_error is not None:
-        raise ValueError(plan_error)
+    planned = context.get("planned_intent")
     if request["sport"] == "run" and session_type == "hyrox":
+        # A session with no steps to measure is guarded by its type, and the refusal
+        # must not be reachable only after answering the run-vs-station question.
+        _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
         raise HyroxSplitRequired
 
     warnings = _date_guard(request["date"], context["today"])
     if session_type == "rest":
+        _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
@@ -313,11 +320,14 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(structure, request["sport"], warnings)
+        hardness = None
     else:
         _validate_structure(request.get("structure") or {}, session_type)
         warnings.extend(_pace_band_warning(request, context))
         steps = _expand(session_type, request, context.get("zones"), warnings)
-    return {
+        hardness = _hardness(steps, session_type, context.get("zones"), warnings)
+    _guard(request["date"], session_type, hardness, planned, steps, context.get("zones"))
+    spec = {
         "sport": request["sport"],
         "origin": request["origin"],
         "date": request["date"],
@@ -326,6 +336,90 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         "steps": steps,
         "warnings": warnings,
     }
+    if hardness is not None:
+        spec["hardness"] = hardness
+    return spec
+
+
+def _hardness(
+    steps: list[dict[str, Any]],
+    session_type: str,
+    zones: dict[str, Any] | None,
+    warnings: list[str],
+) -> str | None:
+    """How hard this session measures, or None when the stored ladder cannot say.
+
+    An untargeted work step ranks by the chain it will actually run at, since that is
+    what the watch shows the athlete (issue #62, ADR 0024).
+    """
+    chain = next(
+        (role.default_target for role in _STRUCTURE_ROLES[session_type] if role.name == "work"),
+        None,
+    )
+    measured = _plan.spec_hardness(
+        steps,
+        zones,
+        threshold_tolerance_s=THRESHOLD_PACE_MARGIN_S,
+        untargeted_work=_CHAIN_HARDNESS.get(chain.zone) if chain else None,
+    )
+    if measured is None:
+        warnings.append(
+            "no hardness measured: the zone ladder cannot rank this session's targets; "
+            "the plan guard falls back to the session type"
+        )
+    return measured
+
+
+def _guard(
+    date: str,
+    session_type: str,
+    hardness: str | None,
+    planned: str | None,
+    steps: list[dict[str, Any]],
+    zones: dict[str, Any] | None,
+) -> None:
+    """Refuse a session above the plan of record, by what it measures or by its type.
+
+    Raises:
+        ValueError: If the session is harder than the plan of record for its date.
+    """
+    if hardness is None:
+        _refuse_if_harder(_plan.guard_error(date, session_type, planned))
+        return
+    if not _plan.is_harder(hardness, planned):
+        return
+    step = _plan.hardest_step(steps, zones, threshold_tolerance_s=THRESHOLD_PACE_MARGIN_S)
+    raise ValueError(_plan.spec_guard_error(date, hardness, planned, _describe(step)))
+
+
+def _refuse_if_harder(error: str | None) -> None:
+    """Raise the plan guard's refusal when there is one.
+
+    Raises:
+        ValueError: If the guard produced a refusal.
+    """
+    if error is not None:
+        raise ValueError(error)
+
+
+def _describe(step: dict[str, Any] | None) -> str:
+    """The deciding step in the athlete's terms: which role, and what it targets."""
+    if step is None:
+        return "the session"
+    target = step.get("target") or {}
+    if target.get("type") == "pace_band":
+        band = f"{_mmss(target['fast_s_per_km'])}-{_mmss(target['slow_s_per_km'])}/km"
+    elif target.get("type") == "hr_band":
+        band = f"HR {target['low_bpm']}-{target['high_bpm']}"
+    else:
+        band = "its default target"
+    return f"the {step['kind']} step at {band}"
+
+
+def _mmss(seconds: float) -> str:
+    """A pace in seconds per km as the mm:ss the athlete reads off the watch."""
+    minutes, rest = divmod(round(seconds), 60)
+    return f"{minutes}:{rest:02d}"
 
 
 def _validate_request(request: dict[str, Any]) -> None:

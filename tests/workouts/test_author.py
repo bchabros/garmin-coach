@@ -608,6 +608,7 @@ def test_to_garmin_encodes_a_distance_ended_step():
         "sport": "run",
         "date": "2026-07-17",
         "session_type": "quality",
+        "hardness": "threshold",
         "name": "GC 2026-07-17 quality",
         "steps": [
             {
@@ -865,6 +866,7 @@ def test_estimate_ignores_lap_and_paceless_distance():
         "sport": "run",
         "date": "2026-07-17",
         "session_type": "quality",
+        "hardness": "threshold",
         "name": "GC 2026-07-17 quality",
         "steps": [
             {"kind": "warmup", "end": {"type": "lap"}, "target": {"type": "none"}},
@@ -916,6 +918,7 @@ def test_default_easy_spec_is_unchanged():
         "origin": "recommender",
         "date": "2026-07-17",
         "session_type": "easy",
+        "hardness": "easy",
         "name": "GC 2026-07-17 easy",
         "steps": [
             {
@@ -934,6 +937,7 @@ def test_default_tempo_spec_is_unchanged():
         "origin": "recommender",
         "date": "2026-07-17",
         "session_type": "tempo",
+        "hardness": "threshold",
         "name": "GC 2026-07-17 tempo",
         "steps": [
             {
@@ -962,6 +966,7 @@ def test_default_quality_spec_is_unchanged():
         "origin": "recommender",
         "date": "2026-07-17",
         "session_type": "quality",
+        "hardness": "threshold",
         "name": "GC 2026-07-17 quality",
         "steps": [
             {
@@ -1013,7 +1018,11 @@ def test_default_work_degradation_chain_and_warning_are_unchanged():
     # still says so once, and the other roles stay silent.
     spec = author(_request(session_type="quality", pace=None, cap=None), _context(zones=None))
     assert spec["steps"][1]["steps"][0]["target"] == {"type": "none"}
-    assert spec["warnings"] == ["no target: no measured pace or heart-rate band; time only"]
+    assert spec["warnings"] == [
+        "no target: no measured pace or heart-rate band; time only",
+        "no hardness measured: the zone ladder cannot rank this session's targets; "
+        "the plan guard falls back to the session type",
+    ]
 
 
 # --- issue #46: explicit intensity bands on every step role ------------------
@@ -1310,7 +1319,8 @@ def test_the_2026_09_03_case_authors_an_easy_run_with_lap_ended_edges():
         "work_pace_band": [320, 340],
         "cooldown_end": "lap",
     }
-    spec = author(req, _context(today="2026-09-02", planned_intent="easy"))
+    zones = _zones(z2_ceiling=314, thr=241, z2_hi=158) | {"lthr_bpm": 178}
+    spec = author(req, _context(zones=zones, today="2026-09-02", planned_intent="easy"))
     warmup, work, cooldown = spec["steps"]
     assert warmup == {"kind": "warmup", "end": {"type": "lap"}, "target": {"type": "none"}}
     assert work["end"] == {"type": "distance", "metres": 8000}
@@ -1388,7 +1398,8 @@ def test_the_2026_09_09_case_authors_an_easy_run_with_a_heart_rate_band():
         "work_target": {"hr_band": [140, 150]},
         "cooldown_end": "lap",
     }
-    spec = author(req, _context(today="2026-09-08", planned_intent="easy"))
+    zones = _zones(z2_ceiling=314, thr=241, z2_hi=158) | {"lthr_bpm": 178}
+    spec = author(req, _context(zones=zones, today="2026-09-08", planned_intent="easy"))
     assert _kinds(spec["steps"]) == ["warmup", "work", "cooldown"]
     work = spec["steps"][1]
     assert work["end"] == {"type": "distance", "metres": 10000}
@@ -1416,3 +1427,71 @@ def test_easy_work_min_and_the_older_duration_min_clash_is_refused():
     req["structure"] = {"work_min": 60, "duration_min": 45}
     with pytest.raises(ValueError, match="give only one"):
         author(req, _context())
+
+
+# --- issue #62: the guard reads measured hardness, not the template name --------------
+
+
+def test_the_default_sessions_carry_their_measured_hardness():
+    assert author(_request(session_type="easy"), _context())["hardness"] == "easy"
+    assert author(_request(session_type="tempo", pace=270), _context())["hardness"] == "threshold"
+    assert author(_request(session_type="quality", pace=270), _context())["hardness"] == "threshold"
+
+
+def test_the_2026_09_03_session_measures_easy_on_the_athletes_own_zones():
+    req = _request(session_type="easy", date="2026-09-03", origin="athlete", pace=None)
+    req["structure"] = {
+        "warmup_end": "lap",
+        "work_end": {"distance_m": 8000},
+        "work_pace_band": [320, 340],
+        "cooldown_end": "lap",
+    }
+    zones = _zones(z2_ceiling=314, thr=241, z2_hi=158)
+    zones["lthr_bpm"] = 178
+    spec = author(req, _context(zones=zones, today="2026-09-02", planned_intent="easy"))
+    assert spec["hardness"] == "easy"
+
+
+def test_an_easy_named_session_at_threshold_pace_is_refused_on_a_planned_easy_day():
+    req = _request(session_type="easy", origin="athlete", pace=None)
+    req["structure"] = {"work_pace_band": [265, 275]}
+    with pytest.raises(ValueError, match="work step"):
+        author(req, _context(planned_intent="easy"))
+
+
+def test_threshold_repeats_named_quality_pass_on_a_planned_tempo_day():
+    req = _request(session_type="quality", origin="athlete", pace=None)
+    req["structure"] = {"reps": 4, "work_pace_band": [265, 275]}
+    spec = author(req, _context(planned_intent="tempo"))
+    assert spec["hardness"] == "threshold"
+
+
+def test_a_session_faster_than_threshold_is_still_refused_on_a_planned_tempo_day():
+    req = _request(session_type="quality", origin="athlete", pace=None)
+    req["structure"] = {"reps": 8, "work_pace_band": [220, 240]}
+    with pytest.raises(ValueError, match="planned as tempo"):
+        author(req, _context(planned_intent="tempo"))
+
+
+def test_a_targeted_warmup_alone_lifts_an_otherwise_easy_session():
+    req = _request(session_type="easy", origin="athlete", pace=None)
+    req["structure"] = {"warmup_target": "z3", "work_target": {"pace_band": [340, 360]}}
+    spec = author(req, _context())
+    assert spec["hardness"] == "threshold"
+
+
+def test_nothing_is_measured_without_zones_and_the_spec_says_so():
+    spec = author(_request(session_type="tempo", pace=None, cap=None), _context(zones=None))
+    assert "hardness" not in spec
+    assert any("hardness" in w for w in spec["warnings"])
+
+
+def test_an_exercise_sport_spec_carries_no_measured_hardness():
+    req = {
+        "sport": "strength",
+        "origin": "athlete",
+        "date": "2026-07-17",
+        "session_type": "strength",
+        "structure": {"exercises": [{"exercise": "back squat", "sets": 3, "reps": 5}]},
+    }
+    assert "hardness" not in author(req, _context())

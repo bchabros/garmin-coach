@@ -7,7 +7,7 @@ are exercised without any live Garmin call. Prior art: ``tests/test_sync.py``.
 
 from __future__ import annotations
 
-from garmin_coach.workouts.publish import confirm_token, publish, spec_hash
+from garmin_coach.workouts.publish import confirm_token, plan_divergence, publish, spec_hash
 from tests.conftest import FakePublisher
 from tests.conftest import run_spec as _spec
 
@@ -353,3 +353,63 @@ def test_the_confirm_token_reacts_to_the_plan_of_record():
     way retargeting the spec does."""
     assert confirm_token(_spec(), "quality") != confirm_token(_spec(), "easy")
     assert confirm_token(_spec(), "quality") == confirm_token(_spec(), "quality")
+
+
+# --- issue #62: the push guard reads the spec's measured hardness --------------------
+
+
+def test_a_spec_measuring_above_the_plan_is_refused_whatever_its_type_is_called():
+    spec = _spec() | {"session_type": "easy", "hardness": "threshold"}
+    result = publish(spec, FakePublisher(), confirm=True, planned_intent="easy")
+    assert result.action == "refuse"
+    assert result.applied is False
+    assert "threshold" in result.message
+
+
+def test_a_spec_measuring_at_the_plan_pushes_even_when_its_type_outranks_it():
+    spec = _spec() | {"session_type": "quality", "hardness": "threshold"}
+    result = publish(spec, FakePublisher(), confirm=True, planned_intent="tempo")
+    assert result.action != "refuse"
+    assert result.applied is True
+
+
+def test_a_spec_without_a_measured_hardness_is_still_guarded_by_its_type():
+    spec = _spec() | {"session_type": "quality"}
+    result = publish(spec, FakePublisher(), confirm=True, planned_intent="easy")
+    assert result.action == "refuse"
+
+
+def test_the_receipt_records_the_measured_hardness():
+    spec = _spec() | {"session_type": "easy", "hardness": "easy"}
+    receipt = publish(spec, FakePublisher(), confirm=True, planned_intent="easy").as_receipt()
+    assert receipt["hardness"] == "easy"
+
+
+def test_the_receipt_of_an_unmeasured_spec_carries_no_hardness():
+    receipt = publish(_spec(), FakePublisher(), confirm=True).as_receipt()
+    assert receipt["hardness"] is None
+
+
+def test_divergence_compares_the_measured_hardness_when_the_receipt_has_one():
+    receipt = {
+        "workout_id": 1,
+        "session_type": "quality",
+        "hardness": "threshold",
+        "pushed_at": "x",
+    }
+    assert plan_divergence(receipt, None, "tempo") is None
+    conflict = plan_divergence(receipt, None, "easy")
+    assert conflict["pushed_type"] == "threshold"
+
+
+def test_divergence_falls_back_to_the_pushed_type_without_a_measured_hardness():
+    receipt = {"workout_id": 1, "session_type": "quality", "pushed_at": "x"}
+    conflict = plan_divergence(receipt, None, "tempo")
+    assert conflict["pushed_type"] == "quality"
+
+
+def test_the_measured_hardness_stays_out_of_both_hashes():
+    plain = _spec()
+    measured = plain | {"hardness": "easy"}
+    assert spec_hash(measured) == spec_hash(plain)
+    assert confirm_token(measured, "easy") == confirm_token(plain, "easy")

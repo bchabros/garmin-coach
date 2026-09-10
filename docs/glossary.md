@@ -182,9 +182,19 @@ code, docstrings, PRDs, and ADRs.
 - **intent rank (hardness ladder)** - how hard each planned intent is, as one order
   over the whole vocabulary: `rest 0 < easy 1 < tempo = strength 2 < hyrox =
   crossfit = quality 3`. The top three share a rank because they are different
-  sessions, not different intensities. One ladder read in two directions: the
-  recommender only ever descends it (see *downgrade*), and the *plan guard* refuses
-  to climb it. See ADR 0021.
+  sessions, not different intensities. One *scale* reached two ways: the recommender
+  descends it by the plan's words (see *downgrade*), and the *plan guard* refuses to
+  climb it by what a spec measures (see *hardness*). See ADR 0021 and ADR 0024.
+- **hardness (workout spec)** - how hard an authored session actually is, measured
+  from the targets its steps will put on the watch: `easy`, `threshold` or `hard`,
+  on the same numeric scale as *intent rank* (1, 2, 3). The hardest step decides and
+  a band's harder edge decides - the faster pace, the higher heart rate. The
+  boundaries are the athlete's own: the Z2 pace ceiling and Z2 heart-rate bound for
+  `easy`, threshold pace (within the authoring chain's margin) and LTHR for
+  `threshold`. **Absent means unmeasured** - no zone ladder, an exercise sport, or a
+  Hyrox run-station sequence - and the *plan guard* then ranks the session type
+  instead, as it did before ADR 0024. Its own words on purpose: a threshold interval
+  session is not a `tempo` session, it is one that measures `threshold`.
 - **intent class** - the measurable class a planned intent collapses to for
   comparison: `rest`, `easy`, `strength`, or `quality` (which absorbs `tempo`,
   `hyrox`, `crossfit`). The planned vocabulary is deliberately richer than the mart
@@ -389,7 +399,8 @@ code, docstrings, PRDs, and ADRs.
   exercise entry gives none: 90 s for `strength`, 60 s for `hiit`; overridable
   per entry (`{"min"/"s"}` or `"lap"`). The session's trailing rest is dropped.
 - **plan guard** - the refusal of any session harder than the plan of record for its
-  date, measured on the *intent rank* ladder (issue #22, ADR 0021). It runs twice:
+  date, measured by the spec's *hardness* where it has one and by its session type
+  where it does not (issue #22, ADR 0021; issue #62, ADR 0024). It runs twice:
   `author` refuses to write such a spec, and `publish` refuses to send one, because a
   spec authored before the plan was revised is exactly what the author-time check
   cannot see. Softer is never refused - that is the recommender's downgrade. Not

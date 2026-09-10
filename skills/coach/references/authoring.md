@@ -16,8 +16,8 @@ step role** - the type only sets what happens when you say nothing (ADR 0023):
   request when this refines a recommendation, so a faster band gets a cited warning.
 - **session_type** the session's default shape, not a limit on it: `easy` -> one work
   step, `tempo` -> warm-up + work + cool-down, `quality` -> warm-up + repeats + cool-down.
-  Pick the one that names the session honestly and add whatever roles it needs; never pick
-  a harder type just to reach a role, because the plan guard reads the type.
+  Pick the one that names the session honestly and add whatever roles it needs - the plan
+  guard reads the targets, not the name (see *hardness* below).
 - **`<role>_end` / `<role>_min` / `<role>_target`** per role (`warmup`/`work`/`recovery`/
   `rest`/`cooldown`). **Any one of these three summons the role**, so `"warmup_target":
   "z2"` on an `easy` run authors a Z2 warm-up. Ends: `"lap"` for "on-click",
@@ -34,6 +34,29 @@ step role** - the type only sets what happens when you say nothing (ADR 0023):
   on `easy`, as the older spelling; setting both is refused).
 - **work_pace_band** `[fast_s_per_km, slow_s_per_km]`, faster bound first - convert
   mm:ss to seconds ("3:40-4:00" -> `[220, 240]`). It overrides the recommender's pace.
+
+### What the plan guard measures
+
+The authored spec carries **`hardness`** - `easy`, `threshold` or `hard` - measured from
+the targets, not from `session_type` (ADR 0024). The hardest step decides, and a band's
+harder edge decides: a work step at `[265, 275]` is threshold work whatever the session is
+called, and a Z4 warm-up alone lifts the whole session. Show it in the preview beside the
+session type; they answer different questions.
+
+The guard refuses anything above the plan of record for that date and names what decided:
+`2026-09-03 is planned as easy; the work step at 4:25-4:35/km is threshold - harder than
+the plan of record.` The remedy is to ease the session or revise the plan - never to rename
+the session type, which changes nothing the guard reads.
+
+Two consequences worth telling the athlete before they ask:
+
+- An easy-named session with a threshold band on a planned easy day is **refused**. That is
+  the point: the name no longer buys anything.
+- Threshold repeats are fine on a planned `tempo` day, whatever type you author them under.
+
+When the spec has **no `hardness`** - no zone ladder yet, an exercise sport, or a Hyrox
+station sequence - the guard falls back to ranking `session_type`, and the spec says so in
+its warnings.
 
 Example (the tempo above), also in `tests/fixtures/tempo_request.json`:
 

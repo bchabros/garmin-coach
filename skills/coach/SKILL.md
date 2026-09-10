@@ -1,6 +1,7 @@
 ---
 name: coach
-description: Coach the athlete from the deterministic digest: write the daily coaching report, plan the training week, and author/push structured workouts to Garmin. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); asks to plan or re-plan a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); or describes a session to put on the watch ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek").
+description: >-
+  Coach the athlete from the deterministic digest: write the daily coaching report, plan the training week, and author/push structured workouts to Garmin. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); asks to plan or re-plan a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); or describes a session to put on the watch ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek").
 ---
 
 # Coach
@@ -53,16 +54,22 @@ thread whose date has passed ("policzyć po 13.07") is a finding you name, not d
 Where they disagree - a race date, a training block, the zones - the digest wins, you name
 the line that is now wrong, and you offer to fix it.
 
-**Amending it needs their yes.** Offer an append at the moments that leave a lasting fact:
-after `plan_confirm`, after a decision to replan a week, when the athlete states a new
-goal, preference, or constraint. Show the exact lines and name the file you would write
-them to, then wait. An explicit yes writes, and that same write puts the date you measured
+**Amending it needs their yes.** Before proposing an amendment, read the
+[profile structure and history contract](../../memory/README.md#profile-structure-and-history).
+Offer an amendment at the moments that leave a lasting fact: after `plan_confirm`, after
+a decision to replan a week, when the athlete states a new goal, preference, or constraint.
+Update an existing subject in place; append only a genuinely new subject. Put a replaced
+fact with coaching value in the dated `Decyzje` log, and date temporary constraints and
+open threads inline. Count the whole profile when reading it: above 150 lines, or if the
+proposed edit would cross that budget, offer consolidation under the same consent rule,
+never silently trim or keep appending. Show the exact diff and name the file you would
+apply it to, then wait. An explicit yes writes, and that same write puts the date you measured
 against into the date line - the date only, the note beside it left exactly as they wrote
 it, because the profile now summarises the data through that day. Anything else leaves the
 file byte for byte as it was. Where you cannot write the athlete's own
 copy - no write tool, or the folder you see is a sandbox copy - say so instead of writing,
-and hand them the block to paste. Edit as `memory/README.md` says: one fact in one place,
-merge duplicates, fix what is stale, never rewrite their prose wholesale.
+and hand them the block to paste. The first restructuring follows this same exact-diff
+approval; preserve the athlete's voice and leave both content and date untouched on refusal.
 
 ## Rails
 

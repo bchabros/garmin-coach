@@ -11,8 +11,9 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
 
 ## Directory map (what lives where)
 
-- `reports/{date}/` -- deterministic coach artifacts: `digest.json`, `hrv_band.png`,
-  `acwr.png`, and the narrative `report.md`. One folder per report run day.
+- `reports/{date}/` -- derived `digest.json`, `snapshot.json`, `hrv_band.png`, and
+  `acwr.png`, plus the coach-written narrative `report.md`. These folders can also
+  hold `workout.json` (authored session) and `push.json` (push history): preserve both.
 - `plans/` -- weekly training plans as Markdown (e.g. `2026-07-06_week.md`): the athlete's
   **plan of record**, with session detail the DB does not store, plus notes and the
   plan-vs-actual follow-up date. The `Zamiar (dla silnika)` column is ingested into
@@ -81,6 +82,51 @@ A crash in the `features` stage rolls the **whole** mart pass back: daily metric
 plan blocks, weekly rollups, zones, overlap and the snapshot either all advance
 together or none of them do. After a `failed` run the marts still hold the last
 good generation, so a report read against them is stale but never mixed.
+
+## Report retention
+
+Run from the project root. The command only walks `./reports`; there is no
+`--reports-dir` option that could point it at `plans/` or the athlete profile.
+
+```bash
+poetry run garmin-coach reports prune                  # dry-run, default age > 90 days
+poetry run garmin-coach reports prune --older-than 120 # another nonnegative day threshold
+task prune-reports                                    # same default preview
+poetry run garmin-coach reports prune --confirm        # only after the review below
+```
+
+The preview lists selected dated folders with age, file count and selected bytes.
+Age comes from the folder's `YYYY-MM-DD` name and the local calendar date, not its
+modification time. A folder exactly 90 days old stays at the default threshold.
+
+Only `report.md`, `hrv_band.png` and `acwr.png` are eligible by default.
+`digest.json` and `snapshot.json` stay as a compact trace; `--no-keep-digest` adds
+both to the selection, including in a dry-run. `workout.json`, `push.json`, unknown
+files, non-dated entries, nested directories and symbolic links are never selected.
+The root itself must not be a symbolic link. Empty dated folders are removed only
+after confirmed deletion of their selected files; there is no recursive cleanup.
+
+**Before the first confirmed run:** finish the profile editing rules and initial
+profile review (#53, building on #52). Review the narratives selected by the preview
+and move lasting lessons into the profile, with the source report date, through its
+exact-diff approval loop. A pending or declined promotion means keep its source
+narrative and do not confirm that selection. The command does not read the profile,
+consult a model, or decide whether a lesson matters. Re-run the preview if the
+selection or day has changed before confirmation.
+
+`--confirm` is the explicit deletion step; the Task equivalent is
+`task prune-reports -- --confirm`. Retention is manual, never part of `daily`.
+A missing reports directory succeeds without creating one. Exit 0 means the run
+completed; exit 1 means some deletions succeeded and others failed; exit 2 means
+invalid input, a failed scan, or no successful deletion in a run with errors.
+Failures name the affected paths, and the summary reports actual deleted files.
+There is no rollback for files already deleted; retry after fixing the reported cause.
+
+The digest, snapshot and charts can be rebuilt from SQLite. The exact coach narrative
+cannot: preserve its useful judgements before expiry. Rebuilding with newer code or
+corrected data can also change derived results. `plans/`, workout specs and push
+receipts are records, never disposable report output. See
+[ADR 0025](adr/0025-profile-history-and-report-retention.md).
 
 ## Logs
 

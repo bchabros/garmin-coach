@@ -53,7 +53,8 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 `thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
 (`author.py`/`exercises.py`/`hardness.py`/`publish.py`, the only Garmin write) - `mcp/`
 (`server.py`/`tools.py`)
-- top-level `cli.py` (argparse) and `daily.py` (nightly orchestrator).
+- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), and `retention.py`
+  (manual report-file retention, with no DB or transport access).
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess
 without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
@@ -85,6 +86,10 @@ ones sparingly:
   router's `## The athlete profile` section against the path and the date line it has to
   name, and -- where the gitignored profile exists -- that file against the same date-line
   contract. It skips wherever the profile is absent, so CI and a fresh clone stay green.
+- Test report retention through `cli.main` on temporary dated folders
+  (`tests/test_report_retention.py`): preview, confirmed deletion, preserved records,
+  age boundaries, symlink exclusion and filesystem failure exit codes. Only filesystem
+  failures are faked; no Garmin or database setup is needed.
 
 ## Conventions
 

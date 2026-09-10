@@ -1503,3 +1503,163 @@ def test_the_refusal_names_an_untargeted_work_step_by_its_default_chain():
     req["structure"] = {"work_target": "none"}
     with pytest.raises(ValueError, match="the work step at its default target is threshold"):
         author(req, _context(planned_intent="easy"))
+
+
+# --- hyrox run-station sequence ----------------------------------------------
+
+
+_STATIONS = ["SkiErg 1000 m", "Sled Push 50 m", "Wall Balls 100"]
+
+
+def _hyrox_request(structure=None, date="2026-07-17", pace=None):
+    return _request(session_type="hyrox", date=date, pace=pace, origin="athlete") | {
+        "structure": {"stations": list(_STATIONS)} | (structure or {})
+    }
+
+
+def _hyrox_steps(payload):
+    return payload["workoutSegments"][0]["workoutSteps"]
+
+
+def test_hyrox_stations_expand_to_a_run_before_every_station():
+    spec = author(_hyrox_request(), _context())
+    assert spec["name"] == "GC 2026-07-17 hyrox"
+    assert _kinds(spec["steps"]) == ["work", "station"] * 3
+    assert spec["warnings"] == []
+
+
+def test_hyrox_run_defaults_to_the_race_kilometre_and_no_target():
+    spec = author(_hyrox_request(), _context())
+    run = spec["steps"][0]
+    assert run["end"] == {"type": "distance", "metres": 1000}
+    assert run["target"] == {"type": "none"}
+
+
+def test_hyrox_station_defaults_to_the_lap_button_and_carries_its_label():
+    spec = author(_hyrox_request(), _context())
+    stations = [s for s in spec["steps"] if s["kind"] == "station"]
+    assert [s["label"] for s in stations] == _STATIONS
+    assert all(s["end"] == {"type": "lap"} for s in stations)
+    assert all(s["target"] == {"type": "none"} for s in stations)
+
+
+def test_hyrox_run_target_band_is_on_every_run():
+    spec = author(_hyrox_request({"run_target": {"pace_band": [235, 250]}}), _context())
+    runs = [s for s in spec["steps"] if s["kind"] == "work"]
+    assert len(runs) == 3
+    assert all(
+        s["target"] == {"type": "pace_band", "fast_s_per_km": 235, "slow_s_per_km": 250}
+        for s in runs
+    )
+
+
+def test_hyrox_station_target_zone_resolves_from_the_ladder_once():
+    spec = author(_hyrox_request({"station_target": "z4"}), _context())
+    stations = [s for s in spec["steps"] if s["kind"] == "station"]
+    assert all(
+        s["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178} for s in stations
+    )
+    assert spec["warnings"] == []
+
+
+def test_hyrox_steps_are_not_aliased():
+    spec = author(_hyrox_request({"run_target": {"pace_band": [235, 250]}}), _context())
+    runs = [s for s in spec["steps"] if s["kind"] == "work"]
+    runs[0]["target"]["fast_s_per_km"] = 1
+    assert runs[1]["target"]["fast_s_per_km"] == 235
+
+
+def test_hyrox_run_may_end_on_the_lap_button_for_race_day():
+    spec = author(_hyrox_request({"run_end": "lap"}), _context())
+    assert spec["steps"][0]["end"] == {"type": "lap"}
+
+
+def test_hyrox_edges_are_authored_only_when_given_an_end():
+    bare = author(_hyrox_request(), _context())
+    assert _kinds(bare["steps"])[0] == "work"
+    assert _kinds(bare["steps"])[-1] == "station"
+    edged = author(_hyrox_request({"warmup_end": "lap", "cooldown_min": 5}), _context())
+    assert _kinds(edged["steps"]) == ["warmup", *(["work", "station"] * 3), "cooldown"]
+    assert edged["steps"][0]["end"] == {"type": "lap"}
+    assert edged["steps"][-1]["end"] == {"type": "time", "seconds": 300}
+
+
+def test_hyrox_station_entry_may_end_on_a_clock():
+    structure = {"stations": ["SkiErg", {"label": "Sled Push", "end": {"min": 3}}]}
+    spec = author(_hyrox_request(structure), _context())
+    assert spec["steps"][3]["end"] == {"type": "time", "seconds": 180}
+    assert spec["steps"][3]["label"] == "Sled Push"
+
+
+def test_hyrox_station_cannot_end_on_a_distance():
+    structure = {"stations": [{"label": "SkiErg", "end": {"distance_m": 1000}}]}
+    with pytest.raises(ValueError, match="cannot end on a distance"):
+        author(_hyrox_request(structure), _context())
+
+
+@pytest.mark.parametrize("stations", [[], None, ["SkiErg", ""], [{"end": "lap"}], [3]])
+def test_hyrox_malformed_stations_are_refused(stations):
+    with pytest.raises(ValueError):
+        author(_hyrox_request({"stations": stations}), _context())
+
+
+def test_hyrox_structure_rejects_template_keys():
+    with pytest.raises(ValueError, match="unknown structure keys for hyrox: reps"):
+        author(_hyrox_request({"reps": 4}), _context())
+
+
+def test_hyrox_without_stations_still_asks_for_the_split():
+    request = _hyrox_request() | {"structure": {"run_end": "lap"}}
+    with pytest.raises(HyroxSplitRequired, match="structure.stations"):
+        author(request, _context())
+
+
+def test_hyrox_is_bounded_by_the_plan_of_record():
+    with pytest.raises(ValueError, match="harder than the plan"):
+        author(_hyrox_request(), _context(planned_intent="tempo"))
+
+
+def test_hyrox_run_band_faster_than_the_recommendation_is_cited():
+    request = _hyrox_request({"run_target": {"pace_band": [220, 240]}}, pace=250)
+    spec = author(request, _context_with_rec("hyrox", ["HYROX_RACE_PREP"]))
+    assert any("faster than the recommended 250" in w for w in spec["warnings"])
+    assert any("HYROX_RACE_PREP" in w for w in spec["warnings"])
+
+
+def test_to_garmin_hyrox_station_is_a_lap_ended_interval_with_its_label():
+    spec = author(_hyrox_request({"station_target": "z4"}), _context())
+    payload = to_garmin(spec)
+    assert payload["sportType"]["sportTypeKey"] == "running"
+    station = _hyrox_steps(payload)[1]
+    assert station["stepType"]["stepTypeKey"] == "interval"
+    assert station["endCondition"]["conditionTypeKey"] == "lap.button"
+    assert "endConditionValue" not in station
+    assert station["description"] == "SkiErg 1000 m"
+    assert station["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert (station["targetValueOne"], station["targetValueTwo"]) == (168, 178)
+
+
+def test_to_garmin_hyrox_run_is_a_distance_ended_interval_without_notes():
+    spec = author(_hyrox_request({"run_target": {"pace_band": [235, 250]}}), _context())
+    run = _hyrox_steps(to_garmin(spec))[0]
+    assert run["endCondition"]["conditionTypeKey"] == "distance"
+    assert run["endConditionValue"] == 1000.0
+    assert run["targetType"]["workoutTargetTypeKey"] == "pace.zone"
+    assert "description" not in run
+
+
+def test_to_garmin_hyrox_estimates_the_runs_and_nothing_for_lap_stations():
+    spec = author(_hyrox_request({"run_target": {"pace_band": [230, 250]}}), _context())
+    # three runs at the 240 s/km midpoint; the lap-ended stations are unknowable
+    assert to_garmin(spec)["estimatedDurationInSecs"] == 3 * 240
+
+
+def test_a_hyrox_sequence_carries_no_measured_hardness():
+    """It expands from a list, not the role table: there is no chain to rank it against."""
+    spec = author(_hyrox_request(), _context())
+    assert "hardness" not in spec
+
+
+def test_a_hyrox_sequence_is_still_guarded_by_its_session_type():
+    with pytest.raises(ValueError, match="planned as easy"):
+        author(_hyrox_request(), _context(planned_intent="easy"))

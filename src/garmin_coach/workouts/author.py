@@ -12,9 +12,13 @@ finished spec into the Garmin ``RunningWorkout`` JSON the transport uploads,
 reusing garminconnect's verified step/target structures.
 
 Run authoring covers ``easy``/``tempo``/``quality``; ``rest`` yields no spec, a
-``hyrox`` recommendation asks the athlete for the run/station split. The exercise
-sports (``strength``, ``hiit``) expand ``structure.exercises`` entries into flat
-per-set steps with rests between sets (issue #16).
+``hyrox`` recommendation asks the athlete for the run/station split. A ``hyrox``
+run request carrying ``structure.stations`` authors the race's own shape: one run
+then one station per entry, the runs ended by distance (or the lap button on race
+day) and the stations by the lap button, each station named on the step so the
+watch shows what comes next. The exercise sports (``strength``, ``hiit``) expand
+``structure.exercises`` entries into flat per-set steps with rests between sets
+(issue #16).
 """
 
 from __future__ import annotations
@@ -70,6 +74,7 @@ QUALITY_RECOVERY_S = 2 * 60
 _STEP_BUILDERS = {
     "warmup": create_warmup_step,
     "work": create_interval_step,
+    "station": create_interval_step,
     "recovery": create_recovery_step,
     "rest": create_recovery_step,
     "cooldown": create_cooldown_step,
@@ -224,6 +229,28 @@ _PAUSE_ROLES = ("recovery", "rest")
 # The pause a repeat block falls back to when the request asks for repeats but no pause.
 _DEFAULT_PAUSE_ROLE = "recovery"
 
+# A Hyrox run-station sequence: one run then one station per ``structure.stations``
+# entry, in race order. Neither role has a default target - a Hyrox run is paced by
+# the athlete's own band, not the threshold chain, and a station by heart rate only
+# when asked - so both fall back to no target. The warmup and cooldown are optional
+# here: authored only when the structure gives them an end.
+_HYROX_RUN_ROLE = _Role("run", "run_min", 0)
+_HYROX_STATION_ROLE = _Role("station", "station_min", 0)
+_HYROX_EDGE_ROLES = (
+    _Role("warmup", "warmup_min", TEMPO_WARMUP_S),
+    _Role("cooldown", "cooldown_min", TEMPO_COOLDOWN_S),
+)
+_HYROX_TARGET_KEYS = tuple(
+    role.target_key for role in (*_HYROX_EDGE_ROLES, _HYROX_RUN_ROLE, _HYROX_STATION_ROLE)
+)
+_HYROX_STRUCTURE_KEYS = frozenset(
+    {"stations", _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
+    | {key for role in _HYROX_EDGE_ROLES for key in (role.end_key, role.min_key)}
+)
+
+# The race run between stations, when the structure does not say otherwise.
+HYROX_RUN_DEFAULT_M = 1000
+
 # What an athlete writes in a ``<role>_target`` to ask for no target at all.
 _NO_TARGET_WORD = "none"
 
@@ -274,8 +301,9 @@ class HyroxSplitRequired(Exception):
     def __init__(self) -> None:
         super().__init__(
             "hyrox is run-dominant or station-based; author it as a run session type "
-            "(easy/tempo/quality with explicit structure), or as a hiit request carrying "
-            "the station exercises"
+            "(easy/tempo/quality with explicit structure), as a hyrox run request whose "
+            "structure.stations lists the race's stations (one run before each), or as a "
+            "hiit request carrying the station exercises"
         )
 
 
@@ -304,7 +332,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
 
     session_type = request["session_type"]
     planned = context.get("planned_intent")
-    if request["sport"] == "run" and session_type == "hyrox":
+    if request["sport"] == "run" and session_type == "hyrox" and not _is_hyrox_sequence(request):
         # A session with no steps to measure is guarded by its type, and the refusal
         # must not be reachable only after answering the run-vs-station question.
         _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
@@ -320,6 +348,14 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(structure, request["sport"], warnings)
+        measured = None
+    elif session_type == "hyrox":
+        _validate_hyrox_structure(request["structure"])
+        warnings.extend(_pace_band_warning(request, context))
+        steps = _expand_hyrox(request, context.get("zones"), warnings)
+        # A station sequence expands from a list, not from the role table, so there is
+        # no work chain to rank an untargeted step against and no session-wide pace to
+        # measure: the guard falls back to the session type (ADR 0023, ADR 0024).
         measured = None
     else:
         _validate_structure(request.get("structure") or {}, session_type)
@@ -416,6 +452,70 @@ def _validate_request(request: dict[str, Any]) -> None:
         raise ValueError(f"unknown origin: {request['origin']}")
     if request["session_type"] not in _SESSION_TYPES:
         raise ValueError(f"unknown session_type: {request['session_type']}")
+
+
+def _is_hyrox_sequence(request: dict[str, Any]) -> bool:
+    """Whether a run hyrox request carries the station list that makes it authorable."""
+    structure = request.get("structure")
+    return isinstance(structure, dict) and "stations" in structure
+
+
+def _validate_hyrox_structure(structure: dict[str, Any]) -> None:
+    """Check a Hyrox sequence structure: its stations, ends, and targets.
+
+    Raises:
+        ValueError: If the structure has unknown keys, the station list is malformed,
+            an edge role sets both an end and a minutes alias, or an end or target is
+            malformed.
+    """
+    unknown = set(structure) - _HYROX_STRUCTURE_KEYS
+    if unknown:
+        raise ValueError(f"unknown structure keys for hyrox: {', '.join(sorted(unknown))}")
+    _validate_stations(structure["stations"])
+    run_end = structure.get(_HYROX_RUN_ROLE.end_key)
+    if run_end is not None:
+        _validate_end(run_end, _HYROX_RUN_ROLE.end_key)
+    for role in _HYROX_EDGE_ROLES:
+        end = structure.get(role.end_key)
+        if end is None:
+            continue
+        if structure.get(role.min_key) is not None:
+            raise ValueError(
+                f"structure sets both {role.end_key} and {role.min_key}; give only one"
+            )
+        _validate_end(end, role.end_key)
+    for key in _HYROX_TARGET_KEYS:
+        target = structure.get(key)
+        if target is not None:
+            _validate_target(target, key)
+
+
+def _validate_stations(stations: Any) -> None:
+    """Check the station list: non-empty, each a label or a ``{label, end?}`` mapping.
+
+    A station may end on the lap button or a clock, never a distance: the watch would
+    measure a distance by GPS, which an erg or a sled lane does not move.
+
+    Raises:
+        ValueError: If the list is missing or empty, a label is not a non-empty
+            string, or an end is a distance or otherwise malformed.
+    """
+    if not isinstance(stations, list) or not stations:
+        raise ValueError("a hyrox sequence needs structure.stations: a non-empty list")
+    for station in stations:
+        entry = {"label": station} if isinstance(station, str) else station
+        if not isinstance(entry, dict) or set(entry) - {"label", "end"}:
+            raise ValueError('each station is a label or a {"label": ..., "end": ...} mapping')
+        if not isinstance(entry.get("label"), str) or not entry["label"].strip():
+            raise ValueError("each station needs a non-empty label")
+        end = entry.get("end")
+        if end is None:
+            continue
+        if isinstance(end, dict) and "distance_m" in end:
+            raise ValueError(
+                f"station '{entry['label']}' cannot end on a distance; give \"lap\" or a time"
+            )
+        _validate_end(end, f"station '{entry['label']}' end")
 
 
 def _validate_sport_session(sport: str, session_type: str) -> None:
@@ -588,10 +688,16 @@ def _pace_band_warning(request: dict[str, Any], context: dict[str, Any]) -> list
 
 
 def _work_pace_band(structure: dict[str, Any]) -> Sequence[float] | None:
-    """The work step's explicit pace band from either spelling, or None when unset."""
-    target = structure.get("work_target")
-    if isinstance(target, dict) and "pace_band" in target:
-        return target["pace_band"]
+    """The explicit pace band on the work (or Hyrox run) step, or None when unset.
+
+    Reads all three spellings: ``work_target``, the older ``work_pace_band``, and the
+    Hyrox sequence's ``run_target`` - the latter never coexists with the other two,
+    because no session type accepts both key sets.
+    """
+    for key in ("work_target", _HYROX_RUN_ROLE.target_key):
+        target = structure.get(key)
+        if isinstance(target, dict) and "pace_band" in target:
+            return target["pace_band"]
     return structure.get("work_pace_band")
 
 
@@ -812,6 +918,55 @@ def _repeat_count(session_type: str, structure: dict[str, Any]) -> int | None:
 def _summoned_role(name: str) -> _Role:
     """A role the session type does not default, at the shared length and with no target."""
     return _Role(name, f"{name}_min", _SUMMONED_DEFAULT_S[name])
+
+
+def _expand_hyrox(
+    request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
+) -> list[dict[str, Any]]:
+    """Expand a Hyrox sequence: optional warmup, run + station per entry, optional cooldown.
+
+    Every run shares one end and one target, and every station one target, so each
+    resolves once and the step dicts are copied per position rather than aliased.
+    """
+    structure = request["structure"]
+    targets = _Targets(request, zones, warnings)
+    warmup, cooldown = (_hyrox_edge_step(structure, role, targets) for role in _HYROX_EDGE_ROLES)
+    run_end = _hyrox_run_end(structure)
+    run_target = targets.for_role(_HYROX_RUN_ROLE)
+    station_target = targets.for_role(_HYROX_STATION_ROLE)
+    steps: list[dict[str, Any]] = [warmup] if warmup else []
+    for station in structure["stations"]:
+        steps.append(_step("work", dict(run_end), dict(run_target)))
+        steps.append(_station_step(station, dict(station_target)))
+    if cooldown:
+        steps.append(cooldown)
+    return steps
+
+
+def _hyrox_edge_step(
+    structure: dict[str, Any], role: _Role, targets: _Targets
+) -> dict[str, Any] | None:
+    """A warmup or cooldown step when the structure gives the role an end, else None."""
+    if structure.get(role.end_key) is None and structure.get(role.min_key) is None:
+        return None
+    return _role_step(structure, role, targets)
+
+
+def _hyrox_run_end(structure: dict[str, Any]) -> dict[str, Any]:
+    """The end every Hyrox run shares: the explicit ``run_end``, else the race kilometre."""
+    end = structure.get(_HYROX_RUN_ROLE.end_key)
+    if end is not None:
+        return _end_descriptor(end)
+    return {"type": "distance", "metres": HYROX_RUN_DEFAULT_M}
+
+
+def _station_step(station: str | dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:
+    """One station step: lap-ended unless the entry says a time, labelled for the watch."""
+    entry = {"label": station} if isinstance(station, str) else station
+    end = entry.get("end")
+    step = _step("station", _end_descriptor(end) if end is not None else {"type": "lap"}, target)
+    step["label"] = entry["label"].strip()
+    return step
 
 
 def _role_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any]:
@@ -1292,6 +1447,9 @@ def _garmin_step(step: dict[str, Any], order: int) -> Any:
         # garminconnect ships no rest builder: a standing rest is a recovery step
         # restamped with the rest step type the exercise sports already push.
         executable.stepType = _REST_STEP_TYPE
+    if "label" in step:
+        # The step's notes: what the watch shows for a station beside the timer.
+        executable.description = step["label"]
     return executable
 
 

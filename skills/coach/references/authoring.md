@@ -125,6 +125,39 @@ Example (fuller ones in `tests/fixtures/strength_request.json` and
 }
 ```
 
+**Hyrox race simulation** (run-station sequence) authors as `sport: run`,
+`session_type: hyrox` with a `structure.stations` list - one run *before* each station,
+in race order. Runs share one end and one target; stations share one target and end on
+the lap button unless an entry says otherwise:
+
+- **stations** - labels in the athlete's words (`"SkiErg 1000 m"`), shown on the watch as
+  the step's notes; an entry may be `{"label": ..., "end": {"min": N}}` for a time-boxed
+  station. A distance end is refused (the watch would GPS-measure an erg).
+- **run_end** - `{"distance_m": 1000}` by default (training); `"lap"` for race day, where
+  the course is never exactly a kilometre.
+- **run_target** / **station_target** - the usual target spellings (`{"pace_band": [fast,
+  slow]}`, a zone name, `{"hr_band": [...]}`, `"none"`); both default to no target. A
+  `run_target` band faster than a recommendation gets the same cited warning as
+  `work_pace_band`.
+- **warmup_end** / **cooldown_end** (or the `_min` aliases) - optional; the step is
+  authored only when given. Without `stations`, a run hyrox request still asks for the
+  split.
+
+```json
+{
+  "sport": "run", "origin": "athlete", "date": "2026-09-13", "session_type": "hyrox",
+  "structure": {
+    "warmup_end": "lap",
+    "run_end": {"distance_m": 1000},
+    "run_target": {"pace_band": [235, 250]},
+    "station_target": "none",
+    "stations": ["SkiErg 1000 m", "Sled Push 50 m", "Sled Pull 50 m",
+                 "Burpee Broad Jumps 80 m", "Row 1000 m", "Farmers Carry 200 m",
+                 "Sandbag Lunges 100 m", "Wall Balls 100"]
+  }
+}
+```
+
 Then, per the runbook in `docs/OPERATIONS.md`: `garmin-coach author --date D --request
 <path>` writes the spec, `push --date D` dry-runs it (show the athlete), and `push --date
 D --confirm` is the athlete's deliberate write. Where the coach tools are present the same

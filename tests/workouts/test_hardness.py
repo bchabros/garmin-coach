@@ -117,8 +117,6 @@ def test_a_spec_with_no_targeted_step_measures_nothing():
     assert _hardness([{"kind": "work", "target": {"type": "none"}}]) is None
 
 
-
-
 def test_the_measurement_names_the_step_that_decided_it():
     steps = [
         {"kind": "warmup", "target": {"type": "none"}},

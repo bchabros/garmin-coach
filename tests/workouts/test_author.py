@@ -835,9 +835,9 @@ def test_unknown_structure_key_is_refused():
         author(req, _context())
 
 
-def test_role_not_valid_for_session_type_is_refused():
+def test_a_pause_without_a_repeat_count_is_refused():
     req = _request(session_type="tempo", pace=270, origin="athlete")
-    req["structure"] = {"recovery_end": {"min": 2}}  # tempo has no recovery role
+    req["structure"] = {"recovery_end": {"min": 2}}  # a recovery runs between repeats
     with pytest.raises(ValueError, match="recovery_end"):
         author(req, _context())
 
@@ -1094,7 +1094,7 @@ def test_a_resolved_explicit_target_adds_no_warning():
     assert spec["warnings"] == []
 
 
-def test_target_key_for_a_role_the_session_type_lacks_is_refused():
+def test_a_pause_target_without_a_repeat_count_is_refused():
     req = _targets(session_type="tempo", recovery_target={"hr_band": [115, 135]})
     with pytest.raises(ValueError, match="recovery_target"):
         author(req, _context())
@@ -1297,3 +1297,122 @@ def test_the_2026_07_16_case_authors_z2_warmup_and_cooldown_on_the_lap_button():
 # The authored-shape projection deliberately has no seam of its own (issue #42):
 # asserting it directly would assert the implementation, so it is exercised through
 # get_workout_status against a fake account - see tests/mcp/test_tools.py.
+
+
+# --- issue #61: a session type is a default shape, not a permitted shape --------------
+
+
+def test_the_2026_09_03_case_authors_an_easy_run_with_lap_ended_edges():
+    req = _request(session_type="easy", date="2026-09-03", origin="athlete", pace=None)
+    req["structure"] = {
+        "warmup_end": "lap",
+        "work_end": {"distance_m": 8000},
+        "work_pace_band": [320, 340],
+        "cooldown_end": "lap",
+    }
+    spec = author(req, _context(today="2026-09-02", planned_intent="easy"))
+    warmup, work, cooldown = spec["steps"]
+    assert warmup == {"kind": "warmup", "end": {"type": "lap"}, "target": {"type": "none"}}
+    assert work["end"] == {"type": "distance", "metres": 8000}
+    assert work["target"] == {"type": "pace_band", "fast_s_per_km": 320, "slow_s_per_km": 340}
+    assert cooldown == {"kind": "cooldown", "end": {"type": "lap"}, "target": {"type": "none"}}
+    assert spec["session_type"] == "easy"
+    assert spec["warnings"] == []
+
+
+def test_tempo_with_reps_folds_work_and_recovery_into_a_repeat_block():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"reps": 4, "work_min": 8, "recovery_min": 2}
+    spec = author(req, _context())
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+    repeat = spec["steps"][1]
+    assert repeat["reps"] == 4
+    assert _kinds(repeat["steps"]) == ["work", "recovery"]
+    assert repeat["steps"][0]["end"] == {"type": "time", "seconds": 480}
+    assert repeat["steps"][1]["end"] == {"type": "time", "seconds": 120}
+
+
+def test_reps_alone_defaults_the_pause_to_a_two_minute_recovery():
+    req = _request(session_type="tempo", pace=270, origin="athlete")
+    req["structure"] = {"reps": 3}
+    spec = author(req, _context())
+    recovery = spec["steps"][1]["steps"][1]
+    assert recovery == {
+        "kind": "recovery",
+        "end": {"type": "time", "seconds": 120},
+        "target": {"type": "none"},
+    }
+
+
+def test_standing_rest_runs_between_repeats_instead_of_a_jog():
+    req = _request(session_type="easy", pace=None, origin="athlete")
+    req["structure"] = {"reps": 6, "work_end": {"distance_m": 1000}, "rest_end": {"min": 1.5}}
+    spec = author(req, _context())
+    repeat = spec["steps"][0]
+    assert repeat["reps"] == 6
+    assert _kinds(repeat["steps"]) == ["work", "rest"]
+    assert repeat["steps"][1]["end"] == {"type": "time", "seconds": 90}
+
+
+def test_a_jog_recovery_and_a_standing_rest_together_are_refused():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"reps": 4, "recovery_min": 2, "rest_min": 1}
+    with pytest.raises(ValueError, match="recovery.*rest|rest.*recovery"):
+        author(req, _context())
+
+
+def test_to_garmin_encodes_a_standing_rest_inside_the_repeat_group():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"reps": 4, "rest_min": 1}
+    spec = author(req, _context())
+    nested = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][1]["workoutSteps"]
+    assert nested[0]["stepType"]["stepTypeKey"] == "interval"
+    assert nested[1]["stepType"]["stepTypeKey"] == "rest"
+    assert nested[1]["endCondition"]["conditionTypeKey"] == "time"
+    assert nested[1]["endConditionValue"] == 60.0
+
+
+def test_an_asked_for_standing_rest_replaces_the_types_default_jog():
+    req = _request(session_type="quality", pace=270, origin="athlete")
+    req["structure"] = {"rest_min": 1}
+    spec = author(req, _context())
+    assert _kinds(spec["steps"]) == ["warmup", "repeat", "cooldown"]
+    assert _kinds(spec["steps"][1]["steps"]) == ["work", "rest"]
+
+
+def test_the_2026_09_09_case_authors_an_easy_run_with_a_heart_rate_band():
+    req = _request(session_type="easy", date="2026-09-09", origin="athlete", pace=None)
+    req["structure"] = {
+        "warmup_end": "lap",
+        "work_end": {"distance_m": 10000},
+        "work_target": {"hr_band": [140, 150]},
+        "cooldown_end": "lap",
+    }
+    spec = author(req, _context(today="2026-09-08", planned_intent="easy"))
+    assert _kinds(spec["steps"]) == ["warmup", "work", "cooldown"]
+    work = spec["steps"][1]
+    assert work["end"] == {"type": "distance", "metres": 10000}
+    assert work["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 150}
+    assert spec["warnings"] == []
+
+
+def test_a_role_summoned_by_its_target_alone_takes_the_shared_default_length():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"warmup_target": "z2"}
+    spec = author(req, _context())
+    warmup = spec["steps"][0]
+    assert warmup["end"] == {"type": "time", "seconds": 600}
+    assert warmup["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 155}
+
+
+def test_work_min_is_the_spelling_on_every_session_type():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"work_min": 60}
+    assert author(req, _context())["steps"][0]["end"] == {"type": "time", "seconds": 3600}
+
+
+def test_easy_work_min_and_the_older_duration_min_clash_is_refused():
+    req = _request(session_type="easy", origin="athlete")
+    req["structure"] = {"work_min": 60, "duration_min": 45}
+    with pytest.raises(ValueError, match="give only one"):
+        author(req, _context())

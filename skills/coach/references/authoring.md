@@ -9,17 +9,29 @@ on-click, 8x1km at 3:40-4:00 with 2:00 jog, cool-down on-click"), turn it into a
 compose the JSON; the deterministic layer fills the numbers and writes to Garmin - never
 hand-edit Garmin, never push without the athlete's explicit go-ahead.
 
-Map the words to the request's `structure` block (the template is `warmup + reps x (work
-+ recovery) + cooldown`, one homogeneous interval block):
+Map the words to the request's `structure` block. **Every run session type offers every
+step role** - the type only sets what happens when you say nothing (ADR 0023):
 
 - **origin** `athlete` (their idea) - keep the recommender's `pace_target_s_per_km` in the
   request when this refines a recommendation, so a faster band gets a cited warning.
-- **session_type** `quality` for reps, `tempo` for one continuous block, `easy` for a
-  single steady run.
-- **reps** the interval count (`8`).
-- **`<role>_end`** per role (`warmup`/`work`/`recovery`/`cooldown`): `"lap"` for
-  "on-click", `{"distance_m": N}` for a distance ("1km" -> `1000`), `{"min": N}` for a
-  clock ("2:00" -> `2`). A `work` step may not be `"lap"` (it needs a defined end).
+- **session_type** the session's default shape, not a limit on it: `easy` -> one work
+  step, `tempo` -> warm-up + work + cool-down, `quality` -> warm-up + repeats + cool-down.
+  Pick the one that names the session honestly and add whatever roles it needs; never pick
+  a harder type just to reach a role, because the plan guard reads the type.
+- **`<role>_end` / `<role>_min` / `<role>_target`** per role (`warmup`/`work`/`recovery`/
+  `rest`/`cooldown`). **Any one of these three summons the role**, so `"warmup_target":
+  "z2"` on an `easy` run authors a Z2 warm-up. Ends: `"lap"` for "on-click",
+  `{"distance_m": N}` for a distance ("1km" -> `1000`), `{"min": N}` for a clock ("2:00"
+  -> `2`). A `work` step may not be `"lap"` (it needs a defined end). A summoned role runs
+  10 min (warm-up, cool-down) or 2 min (recovery, rest) unless you say otherwise.
+- **reps** the interval count (`8`), valid on any session type. It folds `work` and the
+  pause after it into a repeat block, so `tempo` with `reps` is a normal interval session.
+- **recovery vs rest** - `recovery` is a jog between repeats, `rest` is standing still.
+  Exactly one per session: asking for both is refused, and asking for `rest` on `quality`
+  replaces its default jog. A pause without `reps` is refused (it names a repeat session
+  written without its count).
+- **work_min** the work step's length in minutes on every type (`duration_min` still works
+  on `easy`, as the older spelling; setting both is refused).
 - **work_pace_band** `[fast_s_per_km, slow_s_per_km]`, faster bound first - convert
   mm:ss to seconds ("3:40-4:00" -> `[220, 240]`). It overrides the recommender's pace.
 
@@ -35,6 +47,22 @@ Example (the tempo above), also in `tests/fixtures/tempo_request.json`:
     "work_end": {"distance_m": 1000},
     "work_pace_band": [220, 240],
     "recovery_end": {"min": 2},
+    "cooldown_end": "lap"
+  }
+}
+```
+
+An easy run with edges - the 2026-09-03 session, which before ADR 0023 could not be
+authored under `easy` at all:
+
+```json
+{
+  "sport": "run", "origin": "athlete", "date": "2026-09-03",
+  "session_type": "easy",
+  "structure": {
+    "warmup_end": "lap",
+    "work_end": {"distance_m": 8000},
+    "work_pace_band": [320, 340],
     "cooldown_end": "lap"
   }
 }

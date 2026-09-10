@@ -318,15 +318,33 @@ code, docstrings, PRDs, and ADRs.
   recommendation intents map to a sport automatically (`strength` -> strength,
   `crossfit` -> hiit); `intended_type: hyrox` never does - the athlete says
   which kind it is.
+- **session type (workout request)** - the **default shape and default targets** a
+  run request starts from, not the shape it is limited to: `easy` expands to one
+  work step, `tempo` to warm-up + work + cool-down, `quality` to warm-up + repeats
+  + cool-down, `rest` to no spec at all. Any role the vocabulary knows can be added
+  to any of them (ADR 0023); the type says only what happens in silence. It is
+  *not* how hard the session is - that is *hardness* (ADR 0024).
+- **step role (workout request)** - one named part of a run session:
+  `warmup | work | recovery | rest | cooldown`. Every run session type offers every
+  role; each is shaped by its own keys (`<role>_end`, `<role>_min`,
+  `<role>_target`), and any one of them summons the role into the spec. A role the
+  request never mentions appears only when the session type defaults it, at that
+  type's length; a summoned role takes the shared default length (warm-up and
+  cool-down 10 min, recovery and rest 2 min). Distinct from *spec step kind*, which
+  is what the role becomes on the watch.
+- **rest (step role)** - standing rest between run repeats, as against *recovery*,
+  which is a jog. One repeat block runs exactly one of the two: asking for both is
+  refused, and a pause asked for explicitly replaces the session type's default
+  pause. Not to be confused with the `rest` *session type* (a day off, which yields
+  no spec) - the two share a word on different axes (ADR 0023).
 - **structure override (workout request)** - the optional `structure` block in an
-  `athlete`/hybrid request that shapes the session type's template beyond its
-  defaults: for runs, `reps` plus, per role (`warmup | work | recovery |
-  cooldown`), an end condition and an intensity target; for the
+  `athlete`/hybrid request that shapes the session type's defaults: for runs,
+  `reps` plus, per *step role*, an end condition and an intensity target; for the
   exercise sports, the `exercises` list (see *exercise entry*), where it is
-  required rather than optional. A role a session type does not have accepts
-  neither. The recommender never emits one (`request_from_recommendation` sets
-  `structure: None`); overrides are the athlete finalizing what the recommender
-  suggested (Phase 11a).
+  required rather than optional. A repeat count folds the work step and its pause
+  into a repeat block on any session type. The recommender never emits an override
+  (`request_from_recommendation` sets `structure: None`); overrides are the athlete
+  finalizing what the recommender suggested (Phase 11a).
 - **intensity target (workout request)** - what a role's `<role>_target` sets:
   how hard that step should be, as `none`, a *nameable zone*, or an explicit
   *target band*. Absent means the role's default - no target on `warmup`,

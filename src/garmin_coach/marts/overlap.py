@@ -1,12 +1,13 @@
 """Movement-overlap mart: the same pattern/muscle loaded on adjacent days.
 
-Pure aggregation over core (``activities``, ``activity_sets``, ``exercise_pattern``)
-plus the blended session load. Each session's load is split across its
-movement patterns and muscle groups by set-share, summed per day, then compared to
-the day before: a key loaded on both D-1 and D (each above ``pattern_load_floor``)
-stacks, and ``overlap = min`` of the two days lands in ``pattern_overlap``. A single
-rest day clears the stack. Only overlap>0 rows are materialized; the mart is safe to
-drop and rebuild from core. See docs/adr/0011-phase-8-movement-overlap.md.
+Pure aggregation over core (``activities``, the ``movement_sets`` view over
+``activity_sets`` + ``manual_activity_sets``, ``exercise_pattern``) plus the blended
+session load. Each session's load is split across its movement patterns and muscle
+groups by set-share, summed per day, then compared to the day before: a key loaded on
+both D-1 and D (each above ``pattern_load_floor``) stacks, and ``overlap = min`` of the
+two days lands in ``pattern_overlap``. A single rest day clears the stack. Only
+overlap>0 rows are materialized; the mart is safe to drop and rebuild from core. See
+docs/adr/0011-phase-8-movement-overlap.md and 0022-manual-set-overlay.md.
 """
 
 from __future__ import annotations
@@ -25,11 +26,13 @@ logger = logging.getLogger(__name__)
 
 DIMS = ("pattern", "muscle")
 
-# Shared FROM/JOIN for reading captured sets against the movement map. A set's
-# ``subcategory`` (real exercise name, or the category fallback) joins to
-# ``exercise_pattern``; an unmatched row means an exercise not yet in the map.
+# Shared FROM/JOIN for reading sets against the movement map. ``movement_sets`` is
+# the one read surface: an activity's hand-logged stations when it has any (a Hyrox
+# circuit the watch recorded as one nameless round, issue #60), its captured sets
+# otherwise. A set's ``subcategory`` (real exercise name, or the category fallback)
+# joins to ``exercise_pattern``; an unmatched row means an exercise not yet in the map.
 _SETS_JOIN_MAP = (
-    "FROM activity_sets s LEFT JOIN exercise_pattern p ON s.subcategory = p.subcategory"
+    "FROM movement_sets s LEFT JOIN exercise_pattern p ON s.subcategory = p.subcategory"
 )
 
 
@@ -122,7 +125,7 @@ def _overlap_rows(daily: dict[tuple[str, str, str], float], floor: float) -> lis
 
 
 def coverage(conn: sqlite3.Connection, *, through_date: str | None = None) -> dict[str, Any]:
-    """Movement-map coverage over captured sets (for the digest + drift warning).
+    """Movement-map coverage over the sets the mart reads (digest + drift warning).
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.

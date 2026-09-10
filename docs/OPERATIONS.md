@@ -56,6 +56,14 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   Alerts are the digest's `warn`/`alert` signals, logged; **no charts** on the nightly path.
   A malformed plan file **degrades** the run (exit 1) and names the file -- it never falls
   back silently to the template.
+- **Logging a circuit's stations:** a Hyrox / group-HIIT session reaches the DB as one
+  nameless `UNKNOWN` set, so the movement-overlap read cannot see what it loaded.
+  `poetry run garmin-coach log-sets --activity <id> SLED_PULL SANDBAG_CARRY ...` writes
+  the stations (Garmin names, in order; any case, spaces or hyphens tolerated) to the
+  core overlay `manual_activity_sets` and recomputes the marts from that day (ADR 0022).
+  A re-log replaces the list; the ETL never touches these rows. Names the movement map
+  does not know are printed as drift, not refused - add them to `exercise_pattern`.
+  Same shape as `log-rpe --activity <id> --rpe N`, the other transport-free writer.
 - Scheduling is documented, not auto-installed: see
   `scripts/com.garmincoach.daily.plist.example` for a launchd template.
 
@@ -314,7 +322,12 @@ Which clients pick it up and how is covered in "Registering the server" below �
   `get_plan(week_start)`, `get_recommendation(date)`, `get_events`,
   `get_workout_status(date)`.
 - **Local writes** (transport-free): `log_rpe(activity_id, rpe, ...)`,
-  `log_niggle(body_part, severity, ...)` — same validation as `log-rpe` in the CLI.
+  `log_niggle(body_part, severity, ...)` — same validation as `log-rpe` in the CLI —
+  and `log_sets(activity_id, stations)`, the MCP form of `log-sets` (see "Running the
+  pipeline"): the
+  stations of a Hyrox circuit the watch recorded as one nameless set, so the
+  movement-overlap read can see what it loaded (ADR 0022). Names the movement map does
+  not know come back as `unmapped`.
 - **Plan of record** — `get_plan(week_start?)` returns the resolved week with a
   per-day `source` (`plan_week` = the athlete authored it, `plan_template` = the
   fallback shape answered) and `has_plan`. When a week is unplanned the digest also

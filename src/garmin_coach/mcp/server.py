@@ -240,6 +240,30 @@ def log_niggle(
 
 
 @server.tool()
+def log_sets(activity_id: int, stations: list[str | dict[str, Any]]) -> dict[str, Any]:
+    """Log the stations of a circuit the watch recorded as one nameless set.
+
+    A Hyrox / group-HIIT session reaches the DB as a single UNKNOWN set, invisible
+    to the movement-overlap read. Pass the stations in order, as Garmin names
+    (``SLED_PULL``, ``SANDBAG_CARRY``, ...) or as ``{subcategory, reps?, sets?,
+    duration_s?, max_weight?}`` mappings; a re-log replaces the prior list. The
+    day's load split is recomputed at once. Names outside the movement map come
+    back as ``unmapped``.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.log_sets(
+            conn,
+            activity_id=activity_id,
+            stations=stations,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
 def refresh_today() -> dict[str, Any]:
     """Pull today's (partial) Garmin data and rebuild the mart through today.
 

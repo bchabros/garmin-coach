@@ -329,6 +329,29 @@ def log_niggle(
     return _wrap(conn, {"body_part": body_part, "severity": severity, "date": day, "error": None})
 
 
+def log_sets(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    stations: list[Any],
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Log a circuit's stations from chat (issue #60); recomputes from that day.
+
+    The station list is what the box published, in order - bare Garmin names or
+    ``{subcategory, reps?, sets?, duration_s?, max_weight?}`` mappings. Names the
+    movement map does not know come back as ``unmapped`` so the chat can say the
+    overlap read is partial for them.
+    """
+    try:
+        out = cli.log_activity_sets(
+            conn, activity_id=activity_id, stations=stations, data_start_date=data_start_date
+        )
+    except ValueError as exc:
+        return _wrap(conn, {"error": str(exc)})
+    return _wrap(conn, {"activity_id": activity_id, **out, "error": None})
+
+
 def refresh_today(
     conn: sqlite3.Connection,
     client: GarminClient,

@@ -135,6 +135,27 @@ CREATE TABLE IF NOT EXISTS activity_sets (
   FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
 );
 
+-- Manual set overlay: the stations of a circuit the watch recorded as one nameless
+-- round (a Hyrox / group-HIIT session comes back as a single ACTIVE set with
+-- category=UNKNOWN). Hand-logged (garmin-coach log-sets), never written or
+-- overwritten by the ETL - ground truth, system of record, like session_rpe.
+-- Same shape as activity_sets. One row per station (set-share, not tonnage, ADR
+-- 0011), so reps/sets/duration_s/max_weight are recorded for the record only.
+-- Read through the movement_sets view, which lets these rows supersede the captured
+-- ones per activity. Issue #60, ADR 0022.
+CREATE TABLE IF NOT EXISTS manual_activity_sets (
+  activity_id  INTEGER NOT NULL,
+  set_idx      INTEGER NOT NULL,
+  category     TEXT,
+  subcategory  TEXT,                       -- Garmin vocabulary, e.g. SLED_PULL
+  reps         INTEGER,
+  sets         INTEGER,
+  duration_s   REAL,
+  max_weight   REAL,
+  PRIMARY KEY (activity_id, set_idx),
+  FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
+);
+
 -- Session-RPE (Borg CR10) per activity: the subjective load for strength/Hyrox
 -- work that Garmin's HR-driven training_load under-counts. Manually logged
 -- (garmin-coach log-rpe), never from Garmin - ground truth, system of record. Phase 7.
@@ -229,10 +250,31 @@ INSERT OR IGNORE INTO exercise_pattern(subcategory, pattern, muscle_group) VALUE
  ('SANDBAG_CARRY',            'carry', 'grip'),
  ('SLED_PUSH',                'carry', 'quads'),
  ('SLED_PULL',                'carry', 'grip'),
+ -- Hyrox circuit stations logged by hand through the manual set overlay (issue #60,
+ -- ADR 0022). Judgment calls: knee-dominant stations read as squat/quads, the
+ -- double-pole ski erg as a hip hinge, and two stations with no clean pattern count
+ -- on the muscle axis only.
+ ('SPANISH_SQUAT',            'squat', 'quads'),
+ ('BOX_STEP_OVER',            'squat', 'quads'),
+ ('BOX_JUMP',                 'squat', 'quads'),
+ ('SKI_ERG',                  'hinge', 'posterior'),
+ ('INDOOR_ROW',               'hinge', 'posterior'),
+ ('ROW',                      'hinge', 'posterior'),
+ ('BATTLE_ROPE',              NULL,    'shoulders'),
+ ('V_UP',                     NULL,    'core'),
+ ('SIT_UP',                   NULL,    'core'),
+ -- Garmin's bare category names: the watch sends these when the exercise name is
+ -- missing (normalize_exercise_sets falls back to the category), so the same lift
+ -- arrives under two spellings. Aliases of the rows above (issue #60).
+ ('BENCH_PRESS',              'push',  'chest'),
+ ('BACK_SQUAT',               'squat', 'quads'),
+ ('SQUAT',                    'squat', 'quads'),
  -- known non-movement: a Garmin CARDIO pseudo-set (e.g. a Hyrox run leg) is a
  -- real ACTIVE set with no exercise name. Mapped to no pattern/muscle so it is
  -- excluded from the overlap load-split, yet stays out of the unmapped drift fact.
- ('CARDIO',                   NULL,    NULL);
+ -- JUMPING_JACKS is the same kind of row: a warm-up filler, not a movement to track.
+ ('CARDIO',                   NULL,    NULL),
+ ('JUMPING_JACKS',            NULL,    NULL);
 
 -- =============================================================================
 -- CORE · DAILY WELLNESS STREAMS  (one row per date; has_data=0 = explicit gap)
@@ -712,6 +754,22 @@ SELECT a.*,
             WHEN a.aero_te   <  2.5 THEN 'aerobic_low'
             ELSE 'aerobic_high' END AS load_bucket
 FROM activities a;
+
+-- The single read surface for the movement-overlap mart: an activity's manual rows
+-- when it has any, its captured rows otherwise. Per-activity supersede, never a
+-- row-level merge - the captured row of a circuit is one pseudo-set standing in for
+-- the same work the manual rows describe, so merging would double-count. A read-time
+-- decision: activity_sets stays untouched, and a firmware that one day names the
+-- stations needs only the manual rows deleted. Issue #60, ADR 0022.
+CREATE VIEW IF NOT EXISTS movement_sets AS
+SELECT activity_id, set_idx, category, subcategory, reps, sets, duration_s, max_weight,
+       'manual' AS source
+FROM manual_activity_sets
+UNION ALL
+SELECT s.activity_id, s.set_idx, s.category, s.subcategory, s.reps, s.sets, s.duration_s,
+       s.max_weight, 'captured' AS source
+FROM activity_sets s
+WHERE NOT EXISTS (SELECT 1 FROM manual_activity_sets m WHERE m.activity_id = s.activity_id);
 
 -- Days flagged for the coach (low HRV / ACWR out of band / illness watch).
 CREATE VIEW IF NOT EXISTS v_flags AS

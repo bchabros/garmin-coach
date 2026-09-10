@@ -95,7 +95,7 @@ garmin-coach/
 │   │   ├── server.py         # FastMCP wiring: tools, confirm interlock, live client
 │   │   └── tools.py          # one-call read/refresh/push tool implementations
 │   ├── daily.py              # nightly orchestrator: sync → features → alerts
-│   └── cli.py                # argparse entry point (backfill/sync/features/report/snapshot/event/log-rpe/daily)
+│   └── cli.py                # argparse entry point (backfill/sync/features/report/snapshot/event/log-rpe/log-sets/daily)
 ├── tests/                    # mirrors the src packages (core/, etl/, marts/, coach/, workouts/, mcp/)
 │   ├── conftest.py           # in-memory DB + FakeGarminClient + fixture loader
 │   ├── fixtures/             # anonymized real Garmin payloads + golden fixtures

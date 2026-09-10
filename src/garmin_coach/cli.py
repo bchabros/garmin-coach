@@ -7,7 +7,9 @@ import datetime as _dt
 import json
 import os
 import pathlib
+import re
 import sqlite3
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from . import daily
@@ -134,6 +136,114 @@ def log_niggle(
     )
     conn.commit()
     return day
+
+
+# A station name in Garmin's vocabulary (SCREAMING_SNAKE_CASE), after normalization.
+_STATION_NAME = re.compile(r"^[A-Z0-9_]+$")
+_STATION_INTS = ("reps", "sets")
+_STATION_REALS = ("duration_s", "max_weight")
+
+
+def _station_name(raw: Any, idx: int) -> str:
+    """Normalize one station name to Garmin's vocabulary (``sled pull`` -> ``SLED_PULL``)."""
+    name = re.sub(r"[\s\-]+", "_", str(raw).strip().upper())
+    if not name:
+        raise ValueError(f"station {idx}: empty name")
+    if not _STATION_NAME.match(name):
+        raise ValueError(
+            f"station {idx}: a name may use letters, digits and underscores only (got {raw!r})"
+        )
+    return name
+
+
+def _non_negative(name: str, value: Any, idx: int, *, integer: bool) -> int | float | None:
+    """Return an optional non-negative number, or raise naming the offending field."""
+    if value is None:
+        return None
+    kind = "integer" if integer else "number"
+    ok = isinstance(value, int) if integer else isinstance(value, (int, float))
+    if not ok or isinstance(value, bool) or value < 0:
+        raise ValueError(f"station {idx}: {name} must be a non-negative {kind} (got {value!r})")
+    return value
+
+
+def _station_row(activity_id: int, idx: int, station: Any) -> dict[str, Any]:
+    """One ``manual_activity_sets`` row from a bare name or a ``{subcategory, ...}`` mapping."""
+    detail: Mapping[str, Any] = (
+        station if isinstance(station, Mapping) else {"subcategory": station}
+    )
+    if detail.get("subcategory") is None:
+        raise ValueError(f"station {idx}: 'subcategory' is required")
+    row: dict[str, Any] = {
+        "activity_id": activity_id,
+        "set_idx": idx,
+        "category": detail.get("category"),
+        "subcategory": _station_name(detail["subcategory"], idx),
+    }
+    for field in _STATION_INTS:
+        row[field] = _non_negative(field, detail.get(field), idx, integer=True)
+    for field in _STATION_REALS:
+        row[field] = _non_negative(field, detail.get(field), idx, integer=False)
+    return row
+
+
+def _unmapped_stations(conn: sqlite3.Connection, names: list[str]) -> list[str]:
+    """The logged names that ``exercise_pattern`` does not know yet (coverage drift)."""
+    known = {r[0] for r in conn.execute("SELECT subcategory FROM exercise_pattern")}
+    return sorted({n for n in names if n not in known})
+
+
+def log_activity_sets(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    stations: list[Any],
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Write a circuit's stations to the manual set overlay and recompute from that day.
+
+    A Hyrox / group-HIIT session reaches the DB as one nameless set, so the
+    movement-overlap mart cannot see what it loaded (issue #60). The athlete logs the
+    stations by hand here; the rows land in ``manual_activity_sets`` (core ground
+    truth the ETL never touches), supersede the captured round through the
+    ``movement_sets`` view, and ``features`` is recomputed from the activity's date so
+    ``pattern_overlap`` reflects them at once. Transport-free (never calls Garmin).
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        activity_id: The circuit; must already exist in ``activities``.
+        stations: One entry per station, in order: a bare name (``SLED_PULL``, any
+            case, spaces or hyphens tolerated) or a mapping with ``subcategory`` and
+            optional ``category``, ``reps``, ``sets``, ``duration_s``, ``max_weight``.
+            A re-log replaces the prior stations wholesale.
+        data_start_date: First real-data date, passed to the recompute.
+
+    Returns:
+        ``{"date", "n_sets", "unmapped"}`` - the activity's calendar date (the
+        recompute start), how many rows were written, and the logged names the
+        movement map does not know yet (they count as coverage drift, not as load).
+
+    Raises:
+        ValueError: If the list is empty, a station is malformed, or the activity
+            does not exist.
+    """
+    if not stations:
+        raise ValueError("at least one station is required")
+    rows = [_station_row(activity_id, i, station) for i, station in enumerate(stations)]
+    found = conn.execute(
+        "SELECT date(start_local) FROM activities WHERE activity_id = ?", (activity_id,)
+    ).fetchone()
+    if found is None:
+        raise ValueError(f"activity {activity_id} not found; run `garmin-coach sync` first")
+    activity_date = found[0]
+    db.replace_manual_activity_sets(conn, activity_id, rows)
+    conn.commit()
+    features.features(conn, data_start_date=data_start_date, from_date=activity_date)
+    return {
+        "date": activity_date,
+        "n_sets": len(rows),
+        "unmapped": _unmapped_stations(conn, [r["subcategory"] for r in rows]),
+    }
 
 
 EVENT_TYPES = ("hyrox", "run_race")
@@ -553,6 +663,33 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_log_sets(args: argparse.Namespace) -> int:
+    settings = get_settings()
+    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
+    conn = db.connect(settings.db_path)
+    db.bootstrap(conn)
+
+    try:
+        out = log_activity_sets(
+            conn,
+            activity_id=args.activity_id,
+            stations=args.stations,
+            data_start_date=settings.data_start_date,
+        )
+    except ValueError as exc:
+        conn.close()
+        print(f"log-sets failed: {exc}")
+        return 2
+
+    conn.close()
+    drift = f" (not in the movement map: {', '.join(out['unmapped'])})" if out["unmapped"] else ""
+    print(
+        f"log-sets complete: activity {args.activity_id} stations={out['n_sets']}{drift}; "
+        f"load split recomputed from {out['date']}"
+    )
+    return 0
+
+
 def _format_event(row: dict[str, Any]) -> str:
     """Render one `event list` line: the race, its two uncertainty axes, its countdown."""
     anchor = "*" if row["is_anchor"] else " "
@@ -822,6 +959,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
     lr.set_defaults(func=_cmd_log_rpe)
+
+    ls = sub.add_parser(
+        "log-sets",
+        help="Log the stations of a circuit the watch recorded as one set (transport-free).",
+    )
+    ls.add_argument(
+        "--activity",
+        dest="activity_id",
+        type=int,
+        required=True,
+        help="Activity ID of the circuit; its manual stations are replaced wholesale.",
+    )
+    ls.add_argument(
+        "stations",
+        nargs="+",
+        help="Station names in order, Garmin vocabulary (SLED_PULL SANDBAG_CARRY ...).",
+    )
+    ls.set_defaults(func=_cmd_log_sets)
 
     pl = sub.add_parser("plan", help="Ingest the authored weekly plans of record (transport-free).")
     pl_sub = pl.add_subparsers(dest="plan_command", required=True)

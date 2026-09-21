@@ -332,6 +332,21 @@ def backfill(
         conn.commit()
 
 
+def _stream_start(ctx: SyncContext, stream: str, core_table: str, data_start_date: str) -> dt.date:
+    """The first date ``stream`` still has to fetch: the day after its watermark."""
+    watermark = db.bootstrap_sync_watermark(
+        ctx.conn, stream=stream, core_table=core_table, data_start_date=data_start_date
+    )
+    return _next_date(watermark)
+
+
+def _record_synced(ctx: SyncContext, stream: str, date: str) -> None:
+    """Record that ``stream`` fetched and stored ``date``: watermark, progress, commit."""
+    db.set_sync_watermark(ctx.conn, stream, date)
+    ctx.result.progressed_streams.add(stream)
+    ctx.conn.commit()
+
+
 def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
     """Advance the activities stream, using range fetch then per-day fallback."""
     ctx.result.attempted_streams.add("activities")
@@ -367,14 +382,10 @@ def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
                 break
 
             _store_activities(ctx.conn, date, activities, ctx.client, ctx.result.enrichment_misses)
-            db.set_sync_watermark(ctx.conn, "activities", date)
-            ctx.result.progressed_streams.add("activities")
-            ctx.conn.commit()
+            _record_synced(ctx, "activities", date)
     else:
         _store_activities(ctx.conn, start_s, activities, ctx.client, ctx.result.enrichment_misses)
-        db.set_sync_watermark(ctx.conn, "activities", end_s)
-        ctx.result.progressed_streams.add("activities")
-        ctx.conn.commit()
+        _record_synced(ctx, "activities", end_s)
 
 
 def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end: dt.date) -> None:
@@ -398,9 +409,7 @@ def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end
             break
 
         stream.store(ctx.conn, date, payload)
-        db.set_sync_watermark(ctx.conn, stream.name, date)
-        ctx.result.progressed_streams.add(stream.name)
-        ctx.conn.commit()
+        _record_synced(ctx, stream.name, date)
 
 
 def refresh_day(client: GarminClient, conn: sqlite3.Connection, date: str) -> SyncResult:
@@ -457,18 +466,12 @@ def sync_incremental(
     end = _default_end(to_date)
     ctx = SyncContext(client, conn, SyncResult(), max_attempts, retry_base_seconds)
 
-    activity_watermark = db.bootstrap_sync_watermark(
-        conn, stream="activities", core_table="activities", data_start_date=data_start_date
-    )
-    activity_start = _next_date(activity_watermark)
+    activity_start = _stream_start(ctx, "activities", "activities", data_start_date)
     if activity_start <= end:
         _sync_activities(ctx, activity_start, end)
 
     for stream in _DAY_STREAMS:
-        watermark = db.bootstrap_sync_watermark(
-            conn, stream=stream.name, core_table=stream.table, data_start_date=data_start_date
-        )
-        start = _next_date(watermark)
+        start = _stream_start(ctx, stream.name, stream.table, data_start_date)
         if start > end:
             continue
 

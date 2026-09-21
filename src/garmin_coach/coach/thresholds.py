@@ -11,8 +11,8 @@ DEFAULTS: dict[str, float] = {
     "acwr_risk_high": 1.5,
     "acwr_min_chronic_days": 28,
     "hard_te_load": 150,
-    "aero_low_target_share": 0.60,
-    "aero_high_target_share": 0.40,
+    # Floor for AEROBIC_LOW_SHORTAGE on a day Garmin publishes no lower bound (ADR 0027).
+    "aero_low_target_share": 0.25,
     "hrv_sleep_r_min": 0.5,
     "hrv_sleep_min_pairs": 7,
     "monotony_high": 2.0,

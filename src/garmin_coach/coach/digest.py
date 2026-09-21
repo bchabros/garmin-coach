@@ -105,6 +105,20 @@ def _latest_balance_phrase(conn: sqlite3.Connection, from_date: str, to_date: st
     return row[0] if row else None
 
 
+def _latest_garmin_balance(
+    conn: sqlite3.Connection, from_date: str, to_date: str
+) -> dict[str, float] | None:
+    """Garmin's load balance from the newest window day that carries a lower bound."""
+    keys = ("ml_aero_low_min", "ml_aero_low", "ml_aero_high", "ml_anaerobic")
+    row = conn.execute(
+        f"SELECT {', '.join(keys)} FROM training_status_daily "
+        "WHERE date >= ? AND date <= ? AND ml_aero_low_min IS NOT NULL "
+        "ORDER BY date DESC LIMIT 1",
+        (from_date, to_date),
+    ).fetchone()
+    return dict(zip(keys, row)) if row else None
+
+
 def enrich_hrv_band(rows: list[dict], thresholds: dict[str, float]) -> list[dict]:
     """Fill a missing per-row HRV band from the ``coach_thresholds`` fallback.
 
@@ -316,7 +330,13 @@ def build_digest(
     z2_hi_bpm = zones_section["z2_hi_bpm"] if zones_section else None
     personal_z2_share = _personal_z2_minute_share(conn, from_date, to_date, z2_hi_bpm)
     candidates = (
-        _signals.aerobic_low_shortage(recent, thr, balance_phrase, personal_z2_share),
+        _signals.aerobic_low_shortage(
+            recent,
+            thr,
+            balance_phrase,
+            personal_z2_share,
+            garmin_balance=_latest_garmin_balance(conn, from_date, to_date),
+        ),
         _signals.acwr_out_of_range(rows, thr),
         _signals.hrv_low_morning(rows, thr),
         _signals.two_hard_days(rows, thr, to_date),

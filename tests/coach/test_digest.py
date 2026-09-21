@@ -208,18 +208,29 @@ def test_digest_zones_block_is_none_without_a_row(conn):
     assert build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")["zones"] is None
 
 
-def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(conn):
-    """Too much grey zone: easy share below target AND hard share above target.
-    garmin_agrees mirrors the latest training_status_daily.balance_phrase."""
-    _mart(conn, date="2026-06-08", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
-    _mart(conn, date="2026-06-09", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
-    _status(conn, date="2026-06-09", balance_phrase="AEROBIC_LOW_SHORTAGE")
+def test_aerobic_low_shortage_fires_below_garmins_bound_and_cross_checks_garmin(conn):
+    """Too little easy work: the easy share is below Garmin's own lower bound, read from
+    the newest window day that has it. garmin_agrees mirrors its balance_phrase."""
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _mart(conn, date="2026-06-09", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _status(
+        conn,
+        date="2026-06-08",
+        balance_phrase="AEROBIC_LOW_SHORTAGE",
+        ml_aero_low_min=700,
+        ml_aero_low=1000,
+        ml_aero_high=1500,
+        ml_anaerobic=500,
+    )
+    _status(conn, date="2026-06-09", balance_phrase="AEROBIC_LOW_SHORTAGE")  # no bound that day
 
     d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-09")
     s = _signal(d, "AEROBIC_LOW_SHORTAGE")
     assert s["severity"] == "warn"
-    assert abs(s["facts"]["low_share"] - 100 / 400) < 1e-9  # 0.25
-    assert abs(s["facts"]["high_share"] - 300 / 400) < 1e-9  # 0.75
+    assert abs(s["facts"]["low_share"] - 80 / 400) < 1e-9  # 0.20
+    assert abs(s["facts"]["high_share"] - 320 / 400) < 1e-9  # 0.80
+    assert abs(s["facts"]["target_low_share"] - 700 / 3000) < 1e-9  # 0.2333
+    assert s["facts"]["target_source"] == "garmin"
     assert s["garmin_agrees"] is True
 
     # Garmin disagrees -> flag stays but garmin_agrees is False
@@ -228,10 +239,28 @@ def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(co
     assert _signal(d2, "AEROBIC_LOW_SHORTAGE")["garmin_agrees"] is False
 
 
+def test_aerobic_low_shortage_is_silent_at_a_third_easy_when_garmin_asks_for_less(conn):
+    """The 2026-09-20 shape: 33% easy against a 23% bound. The old 60/40 rule fired."""
+    _mart(conn, date="2026-06-08", load_day=300, load_low=100, load_high=150, load_anaerobic=50)
+    _status(
+        conn,
+        date="2026-06-08",
+        balance_phrase="BALANCED",
+        ml_aero_low_min=698,
+        ml_aero_low=990,
+        ml_aero_high=1460,
+        ml_anaerobic=626,
+    )
+
+    assert "AEROBIC_LOW_SHORTAGE" not in _codes(
+        build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")
+    )
+
+
 def test_aerobic_low_shortage_carries_personal_z2_minute_share(conn):
     """When a Z2 ceiling exists, the grey-zone signal reports the personal read
     alongside the load-bucket read: share of run minutes at avg HR <= ceiling."""
-    _mart(conn, date="2026-06-08", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
     db.upsert_zones(
         conn, {"id": 1, "lthr_bpm": 175, "z2_hi_bpm": 156, "stale": 0, "source": "regression"}
     )

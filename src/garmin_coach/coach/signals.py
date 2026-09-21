@@ -92,16 +92,36 @@ def load_shares(rows: list[dict]) -> tuple[float | None, float | None, float | N
     return low / total, high / total, total
 
 
+def garmin_low_bound(balance: dict | None) -> float | None:
+    """Garmin's lower limit for low-aerobic load, as a share of its balance total.
+
+    Args:
+        balance: One ``training_status_daily`` row's ``ml_aero_low_min`` and the three
+            ``ml_*`` balance values, or None.
+
+    Returns:
+        The bound as a share (about 0.23 in September 2026), or None when Garmin
+        published no limit or no balance that day.
+    """
+    if not balance or balance.get("ml_aero_low_min") is None:
+        return None
+    total = sum(balance.get(k) or 0 for k in ("ml_aero_low", "ml_aero_high", "ml_anaerobic"))
+    return balance["ml_aero_low_min"] / total if total > 0 else None
+
+
 def aerobic_low_shortage(
     recent_rows: list[dict],
     thresholds: dict[str, float],
     balance_phrase: str | None,
     personal_z2_minute_share: float | None = None,
+    garmin_balance: dict | None = None,
 ) -> dict | None:
-    """Rule 1: too much grey zone over the recent window.
+    """Rule 1: too little easy work over the recent window.
 
-    Our own signal: the easy-load share is below target while the hard-load share
-    is above target. ``garmin_agrees`` records whether Garmin's own
+    Our own signal: the easy-load share is below Garmin's own lower bound for
+    low-aerobic load (:func:`garmin_low_bound`), which moves with the athlete's
+    fitness; the fixed ``aero_low_target_share`` floor stands in on a day Garmin
+    publishes none (ADR 0027). ``garmin_agrees`` records whether Garmin's own
     ``balance_phrase`` concurs - never a passthrough.
     ``personal_z2_minute_share`` rides alongside as a second, personal
     read: the share of running minutes at avg HR under the personal Z2 ceiling.
@@ -109,15 +129,15 @@ def aerobic_low_shortage(
     low_share, high_share, total = load_shares(recent_rows)
     if low_share is None or high_share is None or not total:
         return None
-    if not (
-        low_share < thresholds["aero_low_target_share"]
-        and high_share > thresholds["aero_high_target_share"]
-    ):
+    bound = garmin_low_bound(garmin_balance)
+    target = bound if bound is not None else thresholds["aero_low_target_share"]
+    if low_share >= target:
         return None
     facts = {
         "low_share": low_share,
         "high_share": high_share,
-        "target_low_share": thresholds["aero_low_target_share"],
+        "target_low_share": target,
+        "target_source": "garmin" if bound is not None else "fallback",
     }
     if personal_z2_minute_share is not None:
         facts["personal_z2_minute_share"] = personal_z2_minute_share

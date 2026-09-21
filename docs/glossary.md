@@ -33,11 +33,15 @@ code, docstrings, PRDs, and ADRs.
   window, capped to trailing 60 nights). Same value on every row of a run.
 - **hrv_sd** - sample standard deviation (ddof=1) of `avg_hrv` over the same window.
 - **hrv_low_flag** - 1 when `avg_hrv < hrv_baseline - 1 * hrv_sd`.
-- **Load buckets (load balance)** - Garmin-style attribution of `training_load` by
-  Training Effect: `load_anaerobic` (`anaero_te >= 1.0`), else `load_low`
-  (`aero_te < 2.5`), else `load_high`, plus `load_strength` for blended `Siła` load
-  (Phase 7). A different language from HR zones. The three TE buckets remain
-  cardio-only (they feed `AEROBIC_LOW_SHORTAGE`); `load_day` sums all four.
+- **Load buckets (load balance)** - how one session's blended load is shared between
+  easy, hard and anaerobic work, tuned to reproduce Garmin's own 28-day load balance.
+  Every cardio session is split, never filed whole: the anaerobic part
+  (`load_anaerobic`) is the anaerobic Training Effect at half weight against the aerobic
+  one; the rest is divided between `load_low` (time in zones 1-2) and `load_high` (zones
+  3-5) by intensity-weighted zone time, a hard minute counting for more than an easy
+  one. A session with no zone time falls back to the old Training Effect rule
+  (`aero_te < 2.5` is low). `load_strength` takes blended `Siła` load whole (Phase 7).
+  The three cardio buckets feed `AEROBIC_LOW_SHORTAGE`; `load_day` sums all four.
 - **sRPE (session-RPE load)** - Foster load from a subjective Borg CR10 rating:
   `sRPE = srpe_load_scale x rpe x duration_min`, scaled (`srpe_load_scale`, default
   0.3) into Garmin-load units so it is comparable to `training_load` (Phase 7).
@@ -103,10 +107,12 @@ code, docstrings, PRDs, and ADRs.
   `snapshot.json`): whether that singleton row was computed for this report's horizon.
   `False` means a current standing is being shown beside as-of daily/weekly facts, so
   the narrative should hedge it; `None` when either date is unknown.
-- **AEROBIC_LOW_SHORTAGE** - too much grey-zone work: our easy-load share is below
-  target while hard-load share is above ("add Z2"). Computed from our buckets;
-  cross-checked against Garmin's `training_status_daily.balance_phrase` via
-  `garmin_agrees`.
+- **AEROBIC_LOW_SHORTAGE** - too little easy work ("add Z2"): our easy-load share over
+  the recent window is below Garmin's own lower bound for low-aerobic load, expressed as
+  a share of Garmin's balance total (`ml_aero_low_min` over the three `ml_*` sums; about
+  23% in September 2026). On a day Garmin publishes no bound the fixed fallback share
+  (`aero_low_target_share`, 0.25) stands in. Computed from our buckets; cross-checked
+  against Garmin's `training_status_daily.balance_phrase` via `garmin_agrees`.
 - **garmin_agrees** - whether our derived signal concurs with Garmin's own phrase for
   the same finding; strengthens or hedges the report wording, never a passthrough.
 - **report** - the dated coach artifact under `reports/{date}/`: `report.md` (narrative
@@ -528,8 +534,14 @@ code, docstrings, PRDs, and ADRs.
 
 - **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier
   dates are explicit gaps, not zero training.
-- **watermark** - per-stream `sync_state.last_synced_date`; how incremental sync
-  tracks progress.
+- **watermark** - per-stream `sync_state.last_synced_date`; the last date the
+  incremental sync treats as final and never asks Garmin about again. It never passes
+  the first day of the re-check window (ADR 0026).
+- **re-check window** - the trailing 3 days, ending yesterday, that every nightly sync
+  pulls again (`sync_recheck_days`). A day Garmin has answered for is not yet a day
+  whose data has arrived: a watch can upload a run a day late, and Garmin fills HRV and
+  readiness in after the fact. A day is pulled on the three nightly runs after it and
+  becomes final on the third.
 - **stream** - one independently synchronized Garmin data family: `activities`,
   `sleep`, `hrv`, `wellness`, `readiness`, or `status`.
 - **daily stream** - a stream fetched one date at a time: sleep, HRV, wellness,

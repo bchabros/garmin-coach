@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from ..core.models import STRENGTH_DISCIPLINE  # HR-blind discipline replaced by session-RPE
 
-__all__ = ["STRENGTH_DISCIPLINE", "activity_load", "blend", "srpe_load"]
+__all__ = ["STRENGTH_DISCIPLINE", "activity_load", "blend", "cardio_split", "srpe_load"]
+
+# The per-session split of cardio load, tuned on 2026-09-21 to reproduce Garmin's own
+# 28-day load balance (ADR 0027): mean difference under 3 percentage points over 74 days.
+# Changing either number changes a mart column, so it needs a full `features` recompute.
+ANAEROBIC_TE_WEIGHT = 0.5  # anaerobic Training Effect counts half against the aerobic one
+ZONE_LOAD_WEIGHTS = (1.0, 2.0, 4.0, 4.0, 8.0)  # a hard minute counts for more than an easy one
+EASY_ZONES = 2  # zones 1-2 are easy work, zones 3-5 hard
+FALLBACK_EASY_AERO_TE = 2.5  # no zone time: aerobic Training Effect below this is easy
 
 
 def srpe_load(
@@ -78,3 +86,40 @@ def activity_load(
         discipline, logged_rpe, duration_s, scale=scale, sila_default_rpe=sila_default_rpe
     )
     return blend(discipline, garmin_load, srpe)
+
+
+def cardio_split(
+    aero_te: float | None,
+    anaero_te: float | None,
+    zone_seconds: tuple[float | None, ...],
+) -> tuple[float, float, float]:
+    """Share of one cardio session's load that is easy, hard and anaerobic work.
+
+    Every session is split, never filed whole. The anaerobic share is the anaerobic
+    Training Effect at half weight against the aerobic one; the rest is divided between
+    easy (zones 1-2) and hard (zones 3-5) by intensity-weighted time in the watch's own
+    zones. A session with no zone time falls back to the old Training Effect rule for
+    the rest (aerobic TE below 2.5, or absent, is easy). Total over nulls.
+
+    Args:
+        aero_te: Garmin's aerobic Training Effect, 0-5, or None.
+        anaero_te: Garmin's anaerobic Training Effect, 0-5, or None.
+        zone_seconds: Seconds in HR zones 1-5 as recorded by the watch; None counts as 0.
+
+    Returns:
+        ``(easy, hard, anaerobic)`` shares that sum to 1.
+    """
+    aerobic = aero_te or 0.0
+    anaerobic_weighted = ANAEROBIC_TE_WEIGHT * (anaero_te or 0.0)
+    total_te = aerobic + anaerobic_weighted
+    anaerobic = anaerobic_weighted / total_te if total_te > 0 else 0.0
+
+    weighted = [w * (seconds or 0.0) for w, seconds in zip(ZONE_LOAD_WEIGHTS, zone_seconds)]
+    total_time = sum(weighted)
+    if total_time > 0:
+        easy_of_rest = sum(weighted[:EASY_ZONES]) / total_time
+    else:
+        easy_of_rest = 1.0 if aerobic < FALLBACK_EASY_AERO_TE else 0.0
+
+    rest = 1.0 - anaerobic
+    return rest * easy_of_rest, rest * (1.0 - easy_of_rest), anaerobic

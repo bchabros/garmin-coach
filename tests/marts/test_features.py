@@ -79,19 +79,20 @@ def test_hrv_window_respects_to_date(conn):
         assert r["hrv_sd"] == 4.0
 
 
-def _activity(conn, aid, date, aero, anaero, load):
-    db.upsert_activity(
-        conn,
-        {
-            "activity_id": aid,
-            "start_local": f"{date} 12:00:00",
-            "date": date,
-            "gtype": "running",
-            "aero_te": aero,
-            "anaero_te": anaero,
-            "training_load": load,
-        },
-    )
+def _activity(conn, aid, date, aero, anaero, load, zones=None):
+    """One running activity; ``zones`` is the watch's seconds in HR zones 1-5."""
+    row = {
+        "activity_id": aid,
+        "start_local": f"{date} 12:00:00",
+        "date": date,
+        "gtype": "running",
+        "aero_te": aero,
+        "anaero_te": anaero,
+        "training_load": load,
+    }
+    for zone, seconds in enumerate(zones or (), start=1):
+        row[f"hr_z{zone}_s"] = seconds
+    db.upsert_activity(conn, row)
 
 
 def _sila(conn, aid, date, load, dur_s=4200, aero=1.4, anaero=0.3):
@@ -159,24 +160,85 @@ def test_strength_day_lifts_load_day_and_the_four_buckets_sum(conn):
     )
 
 
-def test_load_buckets_by_te_are_total_over_nulls(conn):
-    """anaero_te>=1 -> anaerobic; else aero_te<2.5 -> low, else high. NULL TE
-    counts as 0 (falls into low); NULL load contributes 0. Buckets sum to load_day."""
+def test_an_easy_run_with_no_anaerobic_effect_is_all_easy_load(conn):
+    """The 2026-09-09 shape (issue #70): 46 minutes in zone 2, aerobic TE 3.2."""
     d = "2026-06-08"
-    _activity(conn, 1, d, aero=1.0, anaero=1.5, load=100)  # anaerobic
-    _activity(conn, 2, d, aero=2.0, anaero=0.0, load=50)  # low (aero < 2.5)
-    _activity(conn, 3, d, aero=3.0, anaero=0.5, load=80)  # high
-    _activity(conn, 4, d, aero=None, anaero=None, load=30)  # low (null TE -> 0)
-    _activity(conn, 5, d, aero=4.0, anaero=None, load=None)  # high bucket, 0 load
+    _activity(conn, 1, d, aero=3.2, anaero=0.0, load=104, zones=(300, 2766, 0, 0, 0))
 
     features.features(conn, data_start_date=DATA_START)
 
     r = _by_date(conn)[d]
-    assert r["load_anaerobic"] == 100
-    assert r["load_low"] == 80  # 50 + 30
-    assert r["load_high"] == 80
-    assert r["load_day"] == 260
-    assert r["load_low"] + r["load_high"] + r["load_anaerobic"] == r["load_day"]
+    assert r["load_low"] == pytest.approx(104)
+    assert r["load_high"] == pytest.approx(0)
+    assert r["load_anaerobic"] == pytest.approx(0)
+    assert r["load_day"] == pytest.approx(104)
+
+
+def test_a_tempo_run_feeds_both_the_easy_and_the_hard_bucket(conn):
+    """A hard minute counts for more than an easy one: zones weigh 1, 2, 4, 4, 8.
+
+    35 easy minutes (1200 s x1 + 900 s x2 = 3000) against 12.5 hard ones
+    (250 s x4 + 500 s x4 = 3000) is an even split of the load, not 74% easy.
+    """
+    d = "2026-06-08"
+    _activity(conn, 1, d, aero=3.8, anaero=0.0, load=160, zones=(1200, 900, 250, 500, 0))
+
+    features.features(conn, data_start_date=DATA_START)
+
+    r = _by_date(conn)[d]
+    assert r["load_low"] == pytest.approx(80)
+    assert r["load_high"] == pytest.approx(80)
+    assert r["load_anaerobic"] == pytest.approx(0)
+
+
+def test_an_easy_run_with_strides_stays_mostly_easy(conn):
+    """Anaerobic TE counts half against the aerobic one: 0.5 x 1.0 / (3.0 + 0.5) = 1/7."""
+    d = "2026-06-08"
+    _activity(conn, 1, d, aero=3.0, anaero=1.0, load=140, zones=(0, 3000, 0, 0, 0))
+
+    features.features(conn, data_start_date=DATA_START)
+
+    r = _by_date(conn)[d]
+    assert r["load_anaerobic"] == pytest.approx(20)
+    assert r["load_low"] == pytest.approx(120)
+    assert r["load_high"] == pytest.approx(0)
+
+
+def test_a_hiit_session_splits_three_ways_and_zone_five_is_hard_work(conn):
+    """Anaerobic share 0.5 x 2.0 / (3.0 + 1.0) = 1/4; the rest splits by zone time.
+
+    800 s in zone 2 (x2 = 1600) against 200 s in zone 5 (x8 = 1600): an even split.
+    """
+    d = "2026-06-08"
+    _activity(conn, 1, d, aero=3.0, anaero=2.0, load=200, zones=(0, 800, 0, 0, 200))
+
+    features.features(conn, data_start_date=DATA_START)
+
+    r = _by_date(conn)[d]
+    assert r["load_anaerobic"] == pytest.approx(50)
+    assert r["load_low"] == pytest.approx(75)
+    assert r["load_high"] == pytest.approx(75)
+    assert r["load_day"] == pytest.approx(200)
+
+
+def test_a_session_with_no_zone_time_falls_back_and_buckets_stay_total_over_nulls(conn):
+    """No zone time: aerobic TE below 2.5 (or absent) is easy, else hard. NULL TE counts
+    as 0, NULL load contributes 0, and the buckets always sum to load_day."""
+    d = "2026-06-08"
+    _activity(conn, 1, d, aero=1.5, anaero=1.0, load=100)  # 1/4 anaerobic, rest easy
+    _activity(conn, 2, d, aero=2.0, anaero=0.0, load=50)  # easy (aero < 2.5)
+    _activity(conn, 3, d, aero=3.0, anaero=0.0, load=80)  # hard
+    _activity(conn, 4, d, aero=None, anaero=None, load=30)  # easy (null TE -> 0)
+    _activity(conn, 5, d, aero=4.0, anaero=None, load=None)  # hard bucket, 0 load
+
+    features.features(conn, data_start_date=DATA_START)
+
+    r = _by_date(conn)[d]
+    assert r["load_anaerobic"] == pytest.approx(25)
+    assert r["load_low"] == pytest.approx(155)  # 75 + 50 + 30
+    assert r["load_high"] == pytest.approx(80)
+    assert r["load_day"] == pytest.approx(260)
+    assert r["load_low"] + r["load_high"] + r["load_anaerobic"] == pytest.approx(r["load_day"])
 
 
 def test_activity_metrics_bucket_by_start_local_date(conn):
@@ -200,7 +262,7 @@ def test_activity_metrics_bucket_by_start_local_date(conn):
 
     by_date = _by_date(conn)
     assert by_date["2026-06-08"]["load_day"] == 90
-    assert by_date["2026-06-08"]["load_high"] == 90
+    assert by_date["2026-06-08"]["load_low"] == 90  # all of its time is in zones 1-2
     assert by_date["2026-06-08"]["z1_min"] == 1.0
     assert by_date["2026-06-08"]["z2_min"] == 2.0
     assert by_date["2026-06-09"]["load_day"] == 0

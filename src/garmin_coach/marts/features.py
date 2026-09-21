@@ -61,17 +61,17 @@ def _load_by_day(
     """Aggregate per-day blended load and its four buckets.
 
     Each activity's load is the session-RPE blend (see :mod:`load`): strength work
-    is scored from RPE and lands in ``load_strength``; cardio keeps its Garmin load,
-    raised by a logged RPE, and buckets by Training Effect (anaerobic when
-    anaero_te >= 1.0; else low when aero_te < 2.5, else high). The four buckets
-    always sum to ``load_day``; strength stays out of the aerobic (low/high/anaero)
-    shares that feed ``AEROBIC_LOW_SHORTAGE``.
+    is scored from RPE and lands whole in ``load_strength``; cardio keeps its Garmin
+    load, raised by a logged RPE, and is shared between the easy, hard and anaerobic
+    buckets by :func:`load.cardio_split` (ADR 0027) - every session is split, never
+    filed whole. The four buckets always sum to ``load_day``; strength stays out of
+    the aerobic (low/high/anaero) shares that feed ``AEROBIC_LOW_SHORTAGE``.
     """
     rpe_by_activity = dict(conn.execute("SELECT activity_id, rpe FROM session_rpe"))
     days: dict[str, dict[str, float]] = {}
-    for aid, date, discipline, aero_te, anaero_te, dur_s, garmin_load in conn.execute(
+    for aid, date, discipline, aero_te, anaero_te, dur_s, garmin_load, *zone_s in conn.execute(
         "SELECT activity_id, date(start_local), discipline, aero_te, anaero_te, "
-        "dur_s, training_load FROM activities"
+        "dur_s, training_load, hr_z1_s, hr_z2_s, hr_z3_s, hr_z4_s, hr_z5_s FROM activities"
     ):
         agg = days.setdefault(date, dict(_EMPTY_LOAD))
         srpe = load.srpe_load(
@@ -85,12 +85,11 @@ def _load_by_day(
         agg["load_day"] += blended
         if discipline == load.STRENGTH_DISCIPLINE:
             agg["load_strength"] += blended
-        elif (anaero_te or 0.0) >= 1.0:
-            agg["load_anaerobic"] += blended
-        elif (aero_te or 0.0) < 2.5:
-            agg["load_low"] += blended
-        else:
-            agg["load_high"] += blended
+            continue
+        easy, hard, anaerobic = load.cardio_split(aero_te, anaero_te, tuple(zone_s))
+        agg["load_low"] += blended * easy
+        agg["load_high"] += blended * hard
+        agg["load_anaerobic"] += blended * anaerobic
     return days
 
 

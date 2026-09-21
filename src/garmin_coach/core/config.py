@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Width of the re-check window (ADR 0026): a run uploaded from the watch a day late was
+# the observed case; three days leaves margin for a weekend without the phone.
+DEFAULT_RECHECK_DAYS = 3
 
 
 class Settings(BaseSettings):
@@ -22,7 +27,7 @@ class Settings(BaseSettings):
 
     # Re-check window (ADR 0026): the trailing days, ending yesterday, that every
     # incremental sync pulls again. A day is recorded as final on the last of them.
-    sync_recheck_days: int = 3
+    sync_recheck_days: int = Field(default=DEFAULT_RECHECK_DAYS, ge=1)
 
     # Authored weekly plans of record (issue #21); gitignored personal data.
     plans_dir: str = "./plans"

@@ -69,7 +69,7 @@ where Garmin reads 32 / 47 / 20):
   the summer with the real pipeline, the alert fires on 6 of 77 days and its verdict
   matches Garmin's phrase on 72 of 77. `garmin_agrees` stays as the cross-check.
 - **A drift is watched, not assumed away.** After the marts are rebuilt the nightly run
-  logs `features: load split differs from Garmin's 28-day balance by N pp`.
+  logs `daily: load split differs from Garmin's 28-day balance by N pp`.
 
 ## Alternatives considered
 

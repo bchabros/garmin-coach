@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from ..core import db, models
+from ..core.config import DEFAULT_RECHECK_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,6 @@ class SyncStream:
         db.insert_raw(conn, self.endpoint, date, json.dumps(payload))
         db.upsert_daily(conn, self.table, self.normalize(date, payload))
 
-
-# Width of the re-check window (ADR 0026): a run uploaded from the watch a day late
-# was the observed case; three days leaves margin for a weekend without the phone.
-DEFAULT_RECHECK_DAYS = 3
 
 # Per-day streams definition
 _DAY_STREAMS = (
@@ -376,8 +373,9 @@ def _record_synced(ctx: SyncContext, stream: str, date: str) -> None:
     ctx.conn.commit()
 
 
-def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
+def _sync_activities(ctx: SyncContext, start: dt.date) -> None:
     """Advance the activities stream, using range fetch then per-day fallback."""
+    end = ctx.end
     ctx.result.attempted_streams.add("activities")
     start_s = start.isoformat()
     end_s = end.isoformat()
@@ -446,8 +444,9 @@ def _log_window_days_without_activity(ctx: SyncContext) -> None:
         )
 
 
-def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end: dt.date) -> None:
+def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date) -> None:
     """Advance one daily stream from its first missing date to the cutoff."""
+    end = ctx.end
     ctx.result.attempted_streams.add(stream.name)
     for d in _daterange(start, end):
         date = d.isoformat()
@@ -550,7 +549,7 @@ def sync_incremental(
 
     activity_start = _stream_start(ctx, "activities", "activities")
     if activity_start <= end:
-        _sync_activities(ctx, activity_start, end)
+        _sync_activities(ctx, activity_start)
     _log_window_days_without_activity(ctx)
 
     for stream in _DAY_STREAMS:
@@ -558,7 +557,7 @@ def sync_incremental(
         if start > end:
             continue
 
-        _sync_daily_stream(stream, ctx, start, end)
+        _sync_daily_stream(stream, ctx, start)
 
     # LTHR anchor: one best-effort fetch per run, isolated from stream status.
     _sync_lactate(ctx.client, conn)

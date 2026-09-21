@@ -76,8 +76,14 @@ ones sparingly:
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
-- Keep real Garmin transport and auth (`etl/client.py`, `cli.py`) outside unit tests --
+- Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --
   validated by a live run, not unit tests.
+- Test login (`etl/client.login_api`) offline with the library's `Garmin` class, the
+  terminal check and `time.sleep` replaced (`tests/etl/test_client.py`): the prompt gate,
+  the saved-login retries and their log lines. The stand-ins must mimic what the real
+  library does to errors and logging (it wraps the two-step prompt's exception and logs
+  its refresh failures on a child logger), or the test passes against behaviour that
+  never happens.
 - Test the coach skill as a document contract (`tests/test_coach_skill_routing.py`): the
   router's routing gates against the files in `skills/coach/references/`, and its
   frontmatter description against the trigger phrases that must keep working. Whether the

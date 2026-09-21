@@ -96,10 +96,11 @@ def cardio_split(
     """Share of one cardio session's load that is easy, hard and anaerobic work.
 
     Every session is split, never filed whole. The anaerobic share is the anaerobic
-    Training Effect at half weight against the aerobic one; the rest is divided between
-    easy (zones 1-2) and hard (zones 3-5) by intensity-weighted time in the watch's own
-    zones. A session with no zone time falls back to the old Training Effect rule for
-    the rest (aerobic TE below 2.5, or absent, is easy). Total over nulls.
+    Training Effect, weighted by ``ANAEROBIC_TE_WEIGHT``, against the aerobic one; the
+    rest is divided between easy (the first ``EASY_ZONES`` zones) and hard work by time
+    in the watch's own zones, weighted by ``ZONE_LOAD_WEIGHTS``. A session with no zone
+    time falls back to the old Training Effect rule for the rest (aerobic TE below
+    ``FALLBACK_EASY_AERO_TE``, or absent, is easy). Total over nulls.
 
     Args:
         aero_te: Garmin's aerobic Training Effect, 0-5, or None.

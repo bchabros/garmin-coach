@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 # up yet just after the machine wakes needs several seconds, not milliseconds.
 _RESUME_DELAYS_S = (5.0, 15.0)
 _LIBRARY_LOGGER = "garminconnect"
+_REASON_MAX_CHARS = 300
 
 
 class LoginUnavailableError(RuntimeError):
@@ -49,31 +50,41 @@ def _ask(prompt: Callable[[], str], what: str) -> str:
 
 
 class _FailureReasons(logging.Handler):
-    """Collect the failure lines garminconnect itself reports only at debug level."""
+    """Collect garminconnect's failure lines, which it mostly reports only at debug level.
 
-    def __init__(self) -> None:
+    While attached, the library's loggers stop propagating, so their debug detail (request
+    lines from the HTTP client) never reaches a handler above them, such as the MCP
+    server's root handler. Records at the level those handlers would have seen anyway
+    are passed on unchanged.
+    """
+
+    def __init__(self, library: logging.Logger, forward_from: int) -> None:
         super().__init__(level=logging.DEBUG)
+        self._library = library
+        self._forward_from = forward_from
         self.reasons: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Only the library's top-level logger, and only its failure lines: its HTTP
-        # client logs request detail under a child logger that must not reach our log.
         message = record.getMessage()
-        if record.name == _LIBRARY_LOGGER and "ailed" in message:
-            self.reasons.append(message)
+        if "failed" in message.lower():
+            self.reasons.append(message[:_REASON_MAX_CHARS])
+        if record.levelno >= self._forward_from and self._library.parent is not None:
+            self._library.parent.handle(record)
 
 
 @contextlib.contextmanager
 def _library_failure_reasons() -> Iterator[list[str]]:
-    """Listen to garminconnect's debug log for the duration of one login attempt."""
+    """Listen to garminconnect's loggers, children included, for one login attempt."""
     library = logging.getLogger(_LIBRARY_LOGGER)
-    handler = _FailureReasons()
-    level = library.level
+    handler = _FailureReasons(library, forward_from=library.getEffectiveLevel())
+    level, propagate = library.level, library.propagate
     library.addHandler(handler)
     library.setLevel(logging.DEBUG)
+    library.propagate = False
     try:
         yield handler.reasons
     finally:
+        library.propagate = propagate
         library.setLevel(level)
         library.removeHandler(handler)
 
@@ -140,8 +151,25 @@ def login_api(
     # Passing the tokenstore makes login() persist OAuth tokens itself, so later
     # runs resume from them (and never hit the rate-limited login endpoint).
     os.makedirs(os.path.expanduser(tokenstore), exist_ok=True)
-    api.login(tokenstore)
+    try:
+        api.login(tokenstore)
+    except Exception as exc:
+        # garminconnect wraps whatever the two-step prompt raised; surface our own error.
+        unanswerable = _unanswerable_cause(exc)
+        if unanswerable is not None:
+            raise unanswerable from None
+        raise
     return api
+
+
+def _unanswerable_cause(exc: BaseException) -> LoginUnavailableError | None:
+    """The :class:`LoginUnavailableError` somewhere in ``exc``'s cause chain, or None."""
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, LoginUnavailableError):
+            return seen
+        seen = seen.__cause__ or seen.__context__
+    return None
 
 
 def login(

@@ -239,6 +239,25 @@ def test_aerobic_low_shortage_fires_below_garmins_bound_and_cross_checks_garmin(
     assert _signal(d2, "AEROBIC_LOW_SHORTAGE")["garmin_agrees"] is False
 
 
+def test_aerobic_low_shortage_skips_a_newer_day_whose_balance_is_incomplete(conn):
+    """The bound comes from the newest window day that carries the whole balance."""
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _status(
+        conn,
+        date="2026-06-08",
+        ml_aero_low_min=700,
+        ml_aero_low=1000,
+        ml_aero_high=1500,
+        ml_anaerobic=500,
+    )
+    _status(conn, date="2026-06-09", ml_aero_low_min=900)  # a bound but no balance to share it
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-09")
+    s = _signal(d, "AEROBIC_LOW_SHORTAGE")
+    assert abs(s["facts"]["target_low_share"] - 700 / 3000) < 1e-9
+    assert s["facts"]["target_source"] == "garmin"
+
+
 def test_aerobic_low_shortage_is_silent_at_a_third_easy_when_garmin_asks_for_less(conn):
     """The 2026-09-20 shape: 33% easy against a 23% bound. The old 60/40 rule fired."""
     _mart(conn, date="2026-06-08", load_day=300, load_low=100, load_high=150, load_anaerobic=50)

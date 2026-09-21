@@ -105,18 +105,23 @@ def _latest_balance_phrase(conn: sqlite3.Connection, from_date: str, to_date: st
     return row[0] if row else None
 
 
-def _latest_garmin_balance(
-    conn: sqlite3.Connection, from_date: str, to_date: str
+_BALANCE_COLUMNS = ("ml_aero_low_min", *_signals.GARMIN_BALANCE_KEYS)
+
+
+def _garmin_balance(
+    conn: sqlite3.Connection,
+    from_date: str,
+    to_date: str,
+    columns: tuple[str, ...] = _BALANCE_COLUMNS,
 ) -> dict[str, float] | None:
-    """Garmin's load balance from the newest window day that carries a lower bound."""
-    keys = ("ml_aero_low_min", "ml_aero_low", "ml_aero_high", "ml_anaerobic")
+    """Garmin's balance ``columns`` from the newest day in the range that has all of them."""
+    complete = " AND ".join(f"{c} IS NOT NULL" for c in columns)
     row = conn.execute(
-        f"SELECT {', '.join(keys)} FROM training_status_daily "
-        "WHERE date >= ? AND date <= ? AND ml_aero_low_min IS NOT NULL "
-        "ORDER BY date DESC LIMIT 1",
+        f"SELECT {', '.join(columns)} FROM training_status_daily "
+        f"WHERE date >= ? AND date <= ? AND {complete} ORDER BY date DESC LIMIT 1",
         (from_date, to_date),
     ).fetchone()
-    return dict(zip(keys, row)) if row else None
+    return dict(zip(columns, row)) if row else None
 
 
 def load_balance_gap(conn: sqlite3.Connection, to_date: str | None = None) -> float | None:
@@ -133,11 +138,7 @@ def load_balance_gap(conn: sqlite3.Connection, to_date: str | None = None) -> fl
     from_date, to_date = _resolve_window(conn, None, to_date)
     if from_date is None or to_date is None:
         return None
-    keys = ("ml_aero_low", "ml_aero_high", "ml_anaerobic")
-    row = conn.execute(
-        f"SELECT {', '.join(keys)} FROM training_status_daily WHERE date = ?", (to_date,)
-    ).fetchone()
-    balance = dict(zip(keys, row)) if row else None
+    balance = _garmin_balance(conn, to_date, to_date, _signals.GARMIN_BALANCE_KEYS)
     return _signals.garmin_balance_gap(read_mart(conn, from_date, to_date), balance)
 
 
@@ -357,7 +358,7 @@ def build_digest(
             thr,
             balance_phrase,
             personal_z2_share,
-            garmin_balance=_latest_garmin_balance(conn, from_date, to_date),
+            garmin_balance=_garmin_balance(conn, from_date, to_date),
         ),
         _signals.acwr_out_of_range(rows, thr),
         _signals.hrv_low_morning(rows, thr),

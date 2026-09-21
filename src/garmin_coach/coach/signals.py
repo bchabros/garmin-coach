@@ -92,6 +92,10 @@ def load_shares(rows: list[dict]) -> tuple[float | None, float | None, float | N
     return low / total, high / total, total
 
 
+# Garmin's 28-day load balance as stored on each training_status_daily row.
+GARMIN_BALANCE_KEYS = ("ml_aero_low", "ml_aero_high", "ml_anaerobic")
+
+
 def garmin_low_bound(balance: dict | None) -> float | None:
     """Garmin's lower limit for low-aerobic load, as a share of its balance total.
 
@@ -105,7 +109,7 @@ def garmin_low_bound(balance: dict | None) -> float | None:
     """
     if not balance or balance.get("ml_aero_low_min") is None:
         return None
-    total = sum(balance.get(k) or 0 for k in ("ml_aero_low", "ml_aero_high", "ml_anaerobic"))
+    total = sum(balance.get(k) or 0 for k in GARMIN_BALANCE_KEYS)
     return balance["ml_aero_low_min"] / total if total > 0 else None
 
 
@@ -124,7 +128,7 @@ def garmin_balance_gap(rows: list[dict], balance: dict | None) -> float | None:
         None when either side has no load or Garmin's balance is incomplete.
     """
     low_share, high_share, total = load_shares(rows)
-    values = [(balance or {}).get(k) for k in ("ml_aero_low", "ml_aero_high", "ml_anaerobic")]
+    values = [(balance or {}).get(k) for k in GARMIN_BALANCE_KEYS]
     if low_share is None or high_share is None or not total or None in values:
         return None
     theirs = [float(v) for v in values if v is not None]

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .coach import digest, report
 from .core import plan
+from .core.config import DEFAULT_RECHECK_DAYS
 from .etl import sync
 from .marts import features
 
@@ -96,10 +97,10 @@ def _log_load_balance_gap(conn: sqlite3.Connection, to_date: str | None) -> None
     try:
         gap = digest.load_balance_gap(conn, to_date)
     except Exception:  # noqa: BLE001 - a diagnostic line must never fail the run
-        logger.exception("features: load balance gap could not be computed")
+        logger.exception("daily: load balance gap could not be computed")
         return
     if gap is not None:
-        logger.info("features: load split differs from Garmin's 28-day balance by %.1f pp", gap)
+        logger.info("daily: load split differs from Garmin's 28-day balance by %.1f pp", gap)
 
 
 def run_daily(
@@ -112,7 +113,7 @@ def run_daily(
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
     plans_dir: str | Path | None = None,
-    recheck_days: int = sync.DEFAULT_RECHECK_DAYS,
+    recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> DailyResult:
     """Run the nightly pipeline: plans -> sync -> features -> alert extraction.
 

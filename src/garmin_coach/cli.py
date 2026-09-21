@@ -719,13 +719,10 @@ def _cmd_daily(args: argparse.Namespace) -> int:
 
     try:
         transport = client.login(settings)
-    except client.LoginUnavailableError as exc:
-        daily.logger.error("daily: login failed: %s", exc)
-        conn.close()
-        print(f"daily failed: login error: {exc}")
-        return 2
     except Exception as exc:  # noqa: BLE001 - surface login failures as a failed run
-        daily.logger.exception("daily: login failed")
+        # An unanswerable login is a configuration message, not a crash: no traceback.
+        readable = isinstance(exc, client.LoginUnavailableError)
+        daily.logger.error("daily: login failed: %s", exc, exc_info=not readable)
         conn.close()
         print(f"daily failed: login error: {exc}")
         return 2

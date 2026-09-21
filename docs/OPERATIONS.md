@@ -177,7 +177,7 @@ Config keys (`config.py`, overridable via env / `.env`):
   Every cardio session's load is shared between easy, hard and anaerobic work by a rule
   tuned to reproduce Garmin's own 28-day load balance
   ([ADR 0027](adr/0027-load-split-tuned-to-garmin-balance.md)). After the marts are
-  rebuilt the nightly run logs `features: load split differs from Garmin's 28-day balance
+  rebuilt the nightly run logs `daily: load split differs from Garmin's 28-day balance
   by N pp` (mean difference of the three shares, in percentage points; 2.7 on average over
   summer 2026, never above 5.1). A sustained value above about 5 means the rule has
   stopped fitting this athlete's training and the comparison in the ADR should be re-run.

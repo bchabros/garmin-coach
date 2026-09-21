@@ -180,3 +180,72 @@ def test_a_first_ever_login_skips_the_resume_and_its_waits(tmp_path, monkeypatch
     assert api.email == "athlete@example.com"
     assert waits == []
     assert len(_ResumeFails.created) == 1  # the credential login only, no resume attempt
+
+
+# --- review fixes: behave like the real library, which wraps and logs on a child -----
+
+
+class _WrapsLikeTheLibrary:
+    """Stand-in for garminconnect's credential login, which wraps any error it catches.
+
+    ``Garmin.login`` catches every exception from the two-step prompt and re-raises it
+    as ``GarminConnectConnectionError("Login failed: ...") from e``.
+    """
+
+    def __init__(self, email=None, password=None, prompt_mfa=None) -> None:
+        self.email = email
+        self.prompt_mfa = prompt_mfa
+
+    def login(self, tokenstore=None):
+        if self.email is None:
+            raise RuntimeError("Username and password are required")
+        try:
+            self.prompt_mfa()
+        except Exception as exc:
+            raise ConnectionError(f"Login failed: {exc}") from exc
+        return None, None
+
+
+def test_a_two_step_code_needed_without_a_terminal_surfaces_as_the_typed_error(
+    tmp_path, monkeypatch, no_prompts
+):
+    monkeypatch.setattr(client, "Garmin", _WrapsLikeTheLibrary)
+    monkeypatch.setattr(client.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=False))
+    settings = _settings(tmp_path, garmin_email="athlete@example.com", garmin_password="s3cret")
+
+    with pytest.raises(client.LoginUnavailableError, match="two-step code"):
+        client.login_api(settings)
+
+
+class _RefreshFailsOnTheHttpClient:
+    """The library reports a failed token refresh on its HTTP client's child logger."""
+
+    def __init__(self, email=None, password=None, prompt_mfa=None) -> None:
+        self.email = email
+
+    def login(self, tokenstore=None):
+        if self.email is None:
+            http = logging.getLogger("garminconnect.client")
+            http.debug("GET https://connectapi.garmin.com/profile headers={...}")
+            http.debug("DI token refresh failed: read timed out")
+            logging.getLogger("garminconnect").warning("Cached tokens were rejected by the API")
+            raise RuntimeError("Username and password are required")
+        return None, None
+
+
+def test_the_refresh_reason_from_the_http_client_reaches_the_warning_and_nothing_else_leaks(
+    tmp_path, monkeypatch, caplog
+):
+    monkeypatch.setattr(client, "Garmin", _RefreshFailsOnTheHttpClient)
+    monkeypatch.setattr(client.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=False))
+
+    with pytest.raises(client.LoginUnavailableError):
+        client.login_api(_settings(tmp_path))
+
+    ours = [r.getMessage() for r in caplog.records if r.name == "garmin_coach.etl.client"]
+    assert len(ours) == 3 and all("DI token refresh failed: read timed out" in m for m in ours)
+    library = [r for r in caplog.records if r.name.startswith("garminconnect")]
+    assert all(r.levelno >= logging.WARNING for r in library)  # no debug detail leaks
+    assert any("Cached tokens were rejected" in r.getMessage() for r in library)

@@ -228,7 +228,7 @@ def test_daily_run_logs_the_distance_between_our_split_and_garmins_balance(
     with caplog.at_level("INFO", logger="garmin_coach"):
         daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
 
-    assert "features: load split differs from Garmin's 28-day balance by 33.3 pp" in caplog.text
+    assert "daily: load split differs from Garmin's 28-day balance by 33.3 pp" in caplog.text
 
 
 def test_daily_run_logs_no_distance_without_garmins_balance(conn, fake_client, caplog):

@@ -60,14 +60,16 @@ where Garmin reads 32 / 47 / 20):
   they define a mart column, and changing them requires a full `features` recompute.
 - **The alert follows Garmin's own lower bound.** With a Garmin-like split the easy share
   ranged 16-42% over the summer, so the 60% target was unreachable: the alert would have
-  fired on 74 of 74 days. It now fires when the easy share over the digest's recent
-  window is below Garmin's lower limit for low-aerobic load as a share of its balance
-  total (`ml_aero_low_min` over the three `ml_*` values, about 23% in September 2026),
-  read from the newest window day that has it. The fixed floor `aero_low_target_share`
-  (0.25) stands in when Garmin publishes none. The hard-share condition and
-  `aero_high_target_share` are gone; Garmin has no such condition either. Replayed over
-  the summer with the real pipeline, the alert fires on 6 of 77 days and its verdict
-  matches Garmin's phrase on 72 of 77. `garmin_agrees` stays as the cross-check.
+  fired on 74 of 74 days. It now fires when the easy share over **the 28 days ending on
+  the digest's last day** is below Garmin's lower limit for low-aerobic load as a share
+  of its balance total (`ml_aero_low_min` over the three `ml_*` values, about 23% in
+  September 2026), read from the newest day of those 28 that carries the whole balance.
+  Both sides of the comparison describe the same 28 days, whatever window the digest
+  covers. The fixed floor `aero_low_target_share` (0.25) stands in when Garmin publishes
+  none. The hard-share condition and `aero_high_target_share` are gone; Garmin has no
+  such condition either. Replayed over the summer with the real pipeline, the alert
+  fires on 5 of 77 days and its verdict matches Garmin's phrase on 73 of 77.
+  `garmin_agrees` stays as the cross-check.
 - **A drift is watched, not assumed away.** After the marts are rebuilt the nightly run
   logs `daily: load split differs from Garmin's 28-day balance by N pp`.
 
@@ -90,9 +92,12 @@ where Garmin reads 32 / 47 / 20):
   the optimum is a flat plateau rather than a sharp peak, but a winter without Hyrox may
   not fit. The nightly log line is the tripwire; a sustained gap above about 5 points is
   the cue to re-run the comparison.
-- The alert's recent window is the digest's 7-day highlight window while Garmin's bound
-  describes 28 days. Replayed both ways the alert fires equally rarely (6 of 77 days), so
-  the window is left alone.
+- The alert reads 28 days, not the digest's 7-day highlight window. The first version
+  compared the last 7 days with Garmin's 28-day bound. On 2026-09-20, after the
+  recompute, it fired on a hard peak-block week (19% easy) while the month was 33% easy
+  and Garmin called it balanced: a one-week share swings between 8% and 47% here, so a
+  single hard week crossed a bound that describes a month. The digest headline still
+  shows the last 7 days, so a hard week stays visible without the alert.
 - A recompute rewrites the whole history since `data_start`: past weeks change, and a
   report for a past date reads differently from what was written at the time.
 - The coach skill text ("add Zone 2") needs no change. The signal's facts gain

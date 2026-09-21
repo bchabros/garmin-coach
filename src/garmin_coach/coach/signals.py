@@ -146,12 +146,14 @@ def aerobic_low_shortage(
     personal_z2_minute_share: float | None = None,
     garmin_balance: dict | None = None,
 ) -> dict | None:
-    """Rule 1: too little easy work over the recent window.
+    """Rule 1: too little easy work over ``recent_rows``.
 
     Our own signal: the easy-load share is below Garmin's own lower bound for
     low-aerobic load (:func:`garmin_low_bound`), which moves with the athlete's
     fitness; the fixed ``aero_low_target_share`` floor stands in on a day Garmin
-    publishes none (ADR 0027). ``garmin_agrees`` records whether Garmin's own
+    publishes none (ADR 0027). The bound describes 28 days, so the digest passes the
+    same 28 days of rows; ``window_days`` in the facts says how many there were.
+    ``garmin_agrees`` records whether Garmin's own
     ``balance_phrase`` concurs - never a passthrough.
     ``personal_z2_minute_share`` rides alongside as a second, personal
     read: the share of running minutes at avg HR under the personal Z2 ceiling.
@@ -168,6 +170,7 @@ def aerobic_low_shortage(
         "high_share": high_share,
         "target_low_share": target,
         "target_source": "garmin" if bound is not None else "fallback",
+        "window_days": len(recent_rows),
     }
     if personal_z2_minute_share is not None:
         facts["personal_z2_minute_share"] = personal_z2_minute_share

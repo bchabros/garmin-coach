@@ -50,6 +50,9 @@ _WEEKLY_FACT_COLS = (
 
 LOAD_HIGHLIGHT_DAYS = 7
 WINDOW_DAYS = 28
+# Garmin's load balance and its lower bound describe the trailing 28 days, so our side
+# of every comparison with it reads the same span, whatever window the digest covers.
+GARMIN_BALANCE_DAYS = 28
 _SEVERITY_ORDER = {"alert": 0, "warn": 1, "info": 2}
 
 
@@ -135,11 +138,39 @@ def load_balance_gap(conn: sqlite3.Connection, to_date: str | None = None) -> fl
         :func:`signals.garmin_balance_gap` over the 28 days ending on ``to_date``, or
         None when the mart is empty or Garmin published no balance that day.
     """
-    from_date, to_date = _resolve_window(conn, None, to_date)
-    if from_date is None or to_date is None:
+    _, to_date = _resolve_window(conn, None, to_date)
+    if to_date is None:
         return None
     balance = _garmin_balance(conn, to_date, to_date, _signals.GARMIN_BALANCE_KEYS)
-    return _signals.garmin_balance_gap(read_mart(conn, from_date, to_date), balance)
+    return _signals.garmin_balance_gap(_balance_span_rows(conn, to_date), balance)
+
+
+def _balance_span_start(to_date: str) -> str:
+    """First day of the ``GARMIN_BALANCE_DAYS`` ending on ``to_date``."""
+    start = _dt.date.fromisoformat(to_date) - _dt.timedelta(days=GARMIN_BALANCE_DAYS - 1)
+    return start.isoformat()
+
+
+def _balance_span_rows(conn: sqlite3.Connection, to_date: str) -> list[dict]:
+    """Mart rows for the span Garmin's balance describes, ending on ``to_date``."""
+    return read_mart(conn, _balance_span_start(to_date), to_date)
+
+
+def _aerobic_low_shortage(
+    conn: sqlite3.Connection,
+    thr: dict[str, float],
+    to_date: str,
+    balance_phrase: str | None,
+    personal_z2_share: float | None,
+) -> dict | None:
+    """The easy-work alert over the same 28 days as Garmin's bound (issue #70)."""
+    return _signals.aerobic_low_shortage(
+        _balance_span_rows(conn, to_date),
+        thr,
+        balance_phrase,
+        personal_z2_share,
+        garmin_balance=_garmin_balance(conn, _balance_span_start(to_date), to_date),
+    )
 
 
 def enrich_hrv_band(rows: list[dict], thresholds: dict[str, float]) -> list[dict]:
@@ -353,13 +384,7 @@ def build_digest(
     z2_hi_bpm = zones_section["z2_hi_bpm"] if zones_section else None
     personal_z2_share = _personal_z2_minute_share(conn, from_date, to_date, z2_hi_bpm)
     candidates = (
-        _signals.aerobic_low_shortage(
-            recent,
-            thr,
-            balance_phrase,
-            personal_z2_share,
-            garmin_balance=_garmin_balance(conn, from_date, to_date),
-        ),
+        _aerobic_low_shortage(conn, thr, to_date, balance_phrase, personal_z2_share),
         _signals.acwr_out_of_range(rows, thr),
         _signals.hrv_low_morning(rows, thr),
         _signals.two_hard_days(rows, thr, to_date),

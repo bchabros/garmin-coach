@@ -108,7 +108,8 @@ code, docstrings, PRDs, and ADRs.
   `False` means a current standing is being shown beside as-of daily/weekly facts, so
   the narrative should hedge it; `None` when either date is unknown.
 - **AEROBIC_LOW_SHORTAGE** - too little easy work ("add Z2"): our easy-load share over
-  the recent window is below Garmin's own lower bound for low-aerobic load, expressed as
+  the last 28 days (the span Garmin's balance covers, not the 7-day headline window) is
+  below Garmin's own lower bound for low-aerobic load, expressed as
   a share of Garmin's balance total (`ml_aero_low_min` over the three `ml_*` sums; about
   23% in September 2026). On a day Garmin publishes no bound the fixed fallback share
   (`aero_low_target_share`, 0.25) stands in. Computed from our buckets; cross-checked

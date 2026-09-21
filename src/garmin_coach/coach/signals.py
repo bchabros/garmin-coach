@@ -109,6 +109,32 @@ def garmin_low_bound(balance: dict | None) -> float | None:
     return balance["ml_aero_low_min"] / total if total > 0 else None
 
 
+def garmin_balance_gap(rows: list[dict], balance: dict | None) -> float | None:
+    """How far our load split is from Garmin's own balance over the same days.
+
+    The split is tuned to reproduce Garmin's 28-day balance (ADR 0027); this is the
+    number that says whether it still does.
+
+    Args:
+        rows: Mart rows for the 28 days Garmin's balance covers.
+        balance: That day's ``ml_aero_low``, ``ml_aero_high`` and ``ml_anaerobic``.
+
+    Returns:
+        The mean absolute difference of the three shares in percentage points, or
+        None when either side has no load or Garmin's balance is incomplete.
+    """
+    low_share, high_share, total = load_shares(rows)
+    values = [(balance or {}).get(k) for k in ("ml_aero_low", "ml_aero_high", "ml_anaerobic")]
+    if low_share is None or high_share is None or not total or None in values:
+        return None
+    theirs = [float(v) for v in values if v is not None]
+    garmin_total = sum(theirs)
+    if garmin_total <= 0:
+        return None
+    ours = (low_share, high_share, 1 - low_share - high_share)
+    return 100 * sum(abs(o - t / garmin_total) for o, t in zip(ours, theirs)) / 3
+
+
 def aerobic_low_shortage(
     recent_rows: list[dict],
     thresholds: dict[str, float],

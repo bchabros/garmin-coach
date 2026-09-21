@@ -119,6 +119,28 @@ def _latest_garmin_balance(
     return dict(zip(keys, row)) if row else None
 
 
+def load_balance_gap(conn: sqlite3.Connection, to_date: str | None = None) -> float | None:
+    """Percentage points between our 28-day load split and Garmin's balance on ``to_date``.
+
+    Args:
+        conn: Open SQLite connection with the mart built.
+        to_date: The day whose balance is compared; defaults to the latest mart day.
+
+    Returns:
+        :func:`signals.garmin_balance_gap` over the 28 days ending on ``to_date``, or
+        None when the mart is empty or Garmin published no balance that day.
+    """
+    from_date, to_date = _resolve_window(conn, None, to_date)
+    if from_date is None or to_date is None:
+        return None
+    keys = ("ml_aero_low", "ml_aero_high", "ml_anaerobic")
+    row = conn.execute(
+        f"SELECT {', '.join(keys)} FROM training_status_daily WHERE date = ?", (to_date,)
+    ).fetchone()
+    balance = dict(zip(keys, row)) if row else None
+    return _signals.garmin_balance_gap(read_mart(conn, from_date, to_date), balance)
+
+
 def enrich_hrv_band(rows: list[dict], thresholds: dict[str, float]) -> list[dict]:
     """Fill a missing per-row HRV band from the ``coach_thresholds`` fallback.
 

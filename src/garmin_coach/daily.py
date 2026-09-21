@@ -91,6 +91,17 @@ def _run_plans_stage(
     logger.info("daily: plans stage done (imported=%d)", len(result.plans_imported))
 
 
+def _log_load_balance_gap(conn: sqlite3.Connection, to_date: str | None) -> None:
+    """Say how far our load split is from Garmin's balance, so a drift is seen (ADR 0027)."""
+    try:
+        gap = digest.load_balance_gap(conn, to_date)
+    except Exception:  # noqa: BLE001 - a diagnostic line must never fail the run
+        logger.exception("features: load balance gap could not be computed")
+        return
+    if gap is not None:
+        logger.info("features: load split differs from Garmin's 28-day balance by %.1f pp", gap)
+
+
 def run_daily(
     client: sync.GarminClient,
     conn: sqlite3.Connection,
@@ -167,6 +178,7 @@ def run_daily(
         result.fatal = True
         return result
     logger.info("daily: features stage done")
+    _log_load_balance_gap(conn, to_date)
 
     logger.info("daily: alert stage starting")
     try:

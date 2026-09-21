@@ -305,3 +305,24 @@ def test_shortage_uses_the_fixed_floor_when_garmin_publishes_no_bound():
 
 def test_shortage_is_silent_with_no_load_at_all():
     assert signals.aerobic_low_shortage([_load_day(0, 0, 0)], thresholds.DEFAULTS, None) is None
+
+
+# --- how far our load split is from Garmin's own balance (issue #70) ------------
+
+
+def test_balance_gap_is_the_mean_share_difference_in_percentage_points():
+    """Ours 33 / 49 / 18 against Garmin's 990 / 1460 / 626 of 3076 (32.2 / 47.5 / 20.4):
+    differences of 0.8, 1.5 and 2.4 points, mean 1.6."""
+    rows = [_load_day(low=33, high=49, anaerobic=18)]
+
+    gap = signals.garmin_balance_gap(rows, GARMIN_BALANCE)
+
+    assert round(gap, 1) == 1.6
+
+
+def test_balance_gap_is_none_when_either_side_is_empty():
+    rows = [_load_day(low=33, high=49, anaerobic=18)]
+
+    assert signals.garmin_balance_gap([_load_day(0, 0, 0)], GARMIN_BALANCE) is None
+    assert signals.garmin_balance_gap(rows, None) is None
+    assert signals.garmin_balance_gap(rows, dict(GARMIN_BALANCE, ml_aero_high=None)) is None

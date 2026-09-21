@@ -715,6 +715,11 @@ def _cmd_daily(args: argparse.Namespace) -> int:
 
     try:
         transport = client.login(settings)
+    except client.LoginUnavailableError as exc:
+        daily.logger.error("daily: login failed: %s", exc)
+        conn.close()
+        print(f"daily failed: login error: {exc}")
+        return 2
     except Exception as exc:  # noqa: BLE001 - surface login failures as a failed run
         daily.logger.exception("daily: login failed")
         conn.close()
@@ -1055,7 +1060,11 @@ def _cmd_prune_reports(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except client.LoginUnavailableError as exc:
+        print(f"login failed: {exc}")
+        return 2
 
 
 if __name__ == "__main__":

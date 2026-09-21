@@ -144,6 +144,20 @@ Config keys (`config.py`, overridable via env / `.env`):
 - **Login rate limits (429).** Garmin returns 429 (IP-level) on repeated login attempts.
   Once tokens are cached in `~/.garminconnect`, resume avoids the login endpoint -- don't
   hammer it, **wait it out**. A 429 typically surfaces as a `failed` run.
+- **A scheduled run never asks a question.** The nightly run stands on the saved login in
+  `~/.garminconnect` alone; no password is stored anywhere, by choice (a stored password
+  would turn every passing network failure at 06:00 into an unattended full login against
+  the rate-limited endpoint above, and an account with two-step verification would stop at
+  the code anyway). When the saved login does not resume, it is tried three times over
+  about twenty seconds, because the network often needs a moment after the machine wakes.
+  Each failed try logs `client: saved login did not resume: <why>`, including the reason
+  `garminconnect` reports only at debug level: that line tells a network hiccup from an
+  expired login. If it still fails and no terminal is attached, the run is `failed` (exit
+  `2`) with one line, `daily: login failed: ... no terminal is attached ...`, and no
+  traceback. **Fix:** run any Garmin command once from a terminal (`poetry run garmin-coach
+  sync`) to renew the saved login. The same message comes back from `refresh_today` and
+  the workout push over MCP, where no prompt can ever be answered. The re-check window
+  (below) makes up the lost night on its own.
 - **Backfill / sync exclude "today".** HRV and sleep only land after the night, so the
   pipeline only pulls through **yesterday**. A missing current-day row is expected, not a
   bug. To see *this morning's* HRV/readiness for a same-day call, opt in explicitly with

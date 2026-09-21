@@ -608,3 +608,64 @@ def test_cmd_log_sets_reports_a_failure_with_exit_code_2(tmp_path, monkeypatch, 
 
     assert cli._cmd_log_sets(args) == 2
     assert "log-sets failed" in capsys.readouterr().out
+
+
+# --- daily: a login nobody can answer is a failed run with a readable line (#71) --
+
+
+def _run_cli_daily(tmp_path, monkeypatch, login_error):
+    """Drive _cmd_daily with a login that raises, exercising the real wiring."""
+    log_path = tmp_path / "daily.log"
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            db_path=str(tmp_path / "t.db"),
+            log_path=str(log_path),
+            log_max_bytes=1_000_000,
+            log_backup_count=1,
+        ),
+    )
+
+    def _login(_settings):
+        raise login_error
+
+    monkeypatch.setattr(cli.client, "login", _login)
+    return cli._cmd_daily(argparse.Namespace(to_date=None)), log_path
+
+
+def test_daily_reports_an_unanswerable_login_as_a_failed_run_without_a_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    error = cli.client.LoginUnavailableError("no terminal is attached; run sync from a terminal")
+
+    exit_code, log_path = _run_cli_daily(tmp_path, monkeypatch, error)
+
+    assert exit_code == 2
+    assert "no terminal is attached; run sync from a terminal" in capsys.readouterr().out
+    logged = log_path.read_text()
+    assert "ERROR" in logged and "no terminal is attached" in logged
+    assert "Traceback" not in logged
+
+
+def test_daily_keeps_the_traceback_for_any_other_login_failure(tmp_path, monkeypatch):
+    exit_code, log_path = _run_cli_daily(tmp_path, monkeypatch, RuntimeError("garmin is down"))
+
+    assert exit_code == 2
+    assert "Traceback" in log_path.read_text()
+
+
+def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+    )
+
+    def _login(_settings):
+        raise cli.client.LoginUnavailableError("no terminal is attached")
+
+    monkeypatch.setattr(cli.client, "login", _login)
+
+    assert cli.main(["sync"]) == 2
+    assert "no terminal is attached" in capsys.readouterr().out

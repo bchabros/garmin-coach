@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     data_start_date: str = "2026-06-08"
     db_path: str = "./data/garmin.db"
 
+    # Re-check window (ADR 0026): the trailing days, ending yesterday, that every
+    # incremental sync pulls again. A day is recorded as final on the last of them.
+    sync_recheck_days: int = 3
+
     # Authored weekly plans of record (issue #21); gitignored personal data.
     plans_dir: str = "./plans"
 

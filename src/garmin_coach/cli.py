@@ -347,7 +347,11 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env()
 
     result = sync.sync_incremental(
-        transport, conn, data_start_date=settings.data_start_date, to_date=args.to_date
+        transport,
+        conn,
+        data_start_date=settings.data_start_date,
+        to_date=args.to_date,
+        recheck_days=settings.sync_recheck_days,
     )
     conn.close()
 
@@ -732,6 +736,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         data_start_date=settings.data_start_date,
         to_date=args.to_date,
         plans_dir=settings.plans_dir,
+        recheck_days=settings.sync_recheck_days,
     )
     conn.close()
     warnings = len(result.sync.warnings) if result.sync else 0

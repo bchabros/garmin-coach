@@ -100,6 +100,14 @@ class SyncContext:
     result: SyncResult
     max_attempts: int
     retry_base_seconds: float
+    end: dt.date
+    recheck_days: int
+    data_start: dt.date
+
+    @property
+    def window_start(self) -> dt.date:
+        """First day of the re-check window, the trailing days pulled again on every run."""
+        return self.end - dt.timedelta(days=self.recheck_days - 1)
 
 
 @dataclass(frozen=True)
@@ -123,6 +131,10 @@ class SyncStream:
         db.insert_raw(conn, self.endpoint, date, json.dumps(payload))
         db.upsert_daily(conn, self.table, self.normalize(date, payload))
 
+
+# Width of the re-check window (ADR 0026): a run uploaded from the watch a day late
+# was the observed case; three days leaves margin for a weekend without the phone.
+DEFAULT_RECHECK_DAYS = 3
 
 # Per-day streams definition
 _DAY_STREAMS = (
@@ -332,17 +344,34 @@ def backfill(
         conn.commit()
 
 
-def _stream_start(ctx: SyncContext, stream: str, core_table: str, data_start_date: str) -> dt.date:
-    """The first date ``stream`` still has to fetch: the day after its watermark."""
+def _stream_start(ctx: SyncContext, stream: str, core_table: str) -> dt.date:
+    """The first date ``stream`` has to fetch.
+
+    The day after its watermark, or the first day of the re-check window when that
+    is earlier: the window is pulled again on every run, and a long absence is
+    still caught up from the watermark in one pass.
+    """
     watermark = db.bootstrap_sync_watermark(
-        ctx.conn, stream=stream, core_table=core_table, data_start_date=data_start_date
+        ctx.conn,
+        stream=stream,
+        core_table=core_table,
+        data_start_date=ctx.data_start.isoformat(),
     )
-    return _next_date(watermark)
+    return max(min(_next_date(watermark), ctx.window_start), ctx.data_start)
 
 
 def _record_synced(ctx: SyncContext, stream: str, date: str) -> None:
-    """Record that ``stream`` fetched and stored ``date``: watermark, progress, commit."""
-    db.set_sync_watermark(ctx.conn, stream, date)
+    """Record that ``stream`` fetched and stored ``date``: watermark, progress, commit.
+
+    A day is pulled on every run while it is inside the re-check window and becomes
+    final on the last of those pulls, when it is the window's first day: the watermark
+    never passes that day. It never moves backwards either: a stored watermark ahead
+    of the cap stays put until the cap overtakes it.
+    """
+    final = min(date, ctx.window_start.isoformat())
+    current = db.get_sync_watermark(ctx.conn, stream)
+    if current is None or final > current:
+        db.set_sync_watermark(ctx.conn, stream, final)
     ctx.result.progressed_streams.add(stream)
     ctx.conn.commit()
 
@@ -386,6 +415,35 @@ def _sync_activities(ctx: SyncContext, start: dt.date, end: dt.date) -> None:
     else:
         _store_activities(ctx.conn, start_s, activities, ctx.client, ctx.result.enrichment_misses)
         _record_synced(ctx, "activities", end_s)
+
+
+def _log_window_days_without_activity(ctx: SyncContext) -> None:
+    """Name the re-check window days that still hold no activity, in one INFO line.
+
+    Information, not a warning: a rest day looks exactly like a run still sitting on
+    the watch, so the line only makes a suspected gap quick to confirm in the log.
+    Silent when the activities stream did not progress (nothing was learned).
+    """
+    if "activities" not in ctx.result.progressed_streams:
+        return
+    first = max(ctx.window_start, ctx.data_start)
+    with_activity = {
+        row[0]
+        for row in ctx.conn.execute(
+            "SELECT DISTINCT date(start_local) FROM activities WHERE date(start_local) BETWEEN ? AND ?",
+            (first.isoformat(), ctx.end.isoformat()),
+        )
+    }
+    empty = [
+        d.isoformat() for d in _daterange(first, ctx.end) if d.isoformat() not in with_activity
+    ]
+    if empty:
+        logger.info(
+            "sync: no activity yet for %s (re-check window %s..%s)",
+            ", ".join(empty),
+            first.isoformat(),
+            ctx.end.isoformat(),
+        )
 
 
 def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date, end: dt.date) -> None:
@@ -461,17 +519,42 @@ def sync_incremental(
     to_date: str | None = None,
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
+    recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> SyncResult:
-    """Pull only dates after each stream's watermark through `to_date`/yesterday."""
-    end = _default_end(to_date)
-    ctx = SyncContext(client, conn, SyncResult(), max_attempts, retry_base_seconds)
+    """Pull each stream from its watermark through `to_date`/yesterday, re-checking the window.
 
-    activity_start = _stream_start(ctx, "activities", "activities", data_start_date)
+    Args:
+        client: Transport client satisfying the ``GarminClient`` protocol.
+        conn: Open SQLite connection with the schema bootstrapped.
+        data_start_date: First date with real data; nothing earlier is fetched.
+        to_date: Inclusive end date; defaults to yesterday.
+        max_attempts: Attempts per fetch before a stream gives up.
+        retry_base_seconds: Base of the exponential backoff between attempts.
+        recheck_days: Width of the re-check window, the trailing days ending at the end
+            date that are pulled again on every run and never recorded as final.
+
+    Returns:
+        A :class:`SyncResult` with per-stream progress and warnings.
+    """
+    end = _default_end(to_date)
+    ctx = SyncContext(
+        client,
+        conn,
+        SyncResult(),
+        max_attempts,
+        retry_base_seconds,
+        end=end,
+        recheck_days=recheck_days,
+        data_start=dt.date.fromisoformat(data_start_date),
+    )
+
+    activity_start = _stream_start(ctx, "activities", "activities")
     if activity_start <= end:
         _sync_activities(ctx, activity_start, end)
+    _log_window_days_without_activity(ctx)
 
     for stream in _DAY_STREAMS:
-        start = _stream_start(ctx, stream.name, stream.table, data_start_date)
+        start = _stream_start(ctx, stream.name, stream.table)
         if start > end:
             continue
 

@@ -50,6 +50,9 @@ _WEEKLY_FACT_COLS = (
 
 LOAD_HIGHLIGHT_DAYS = 7
 WINDOW_DAYS = 28
+# Garmin's load balance and its lower bound describe the trailing 28 days, so our side
+# of every comparison with it reads the same span, whatever window the digest covers.
+GARMIN_BALANCE_DAYS = 28
 _SEVERITY_ORDER = {"alert": 0, "warn": 1, "info": 2}
 
 
@@ -103,6 +106,71 @@ def _latest_balance_phrase(conn: sqlite3.Connection, from_date: str, to_date: st
         (from_date, to_date),
     ).fetchone()
     return row[0] if row else None
+
+
+_BALANCE_COLUMNS = ("ml_aero_low_min", *_signals.GARMIN_BALANCE_KEYS)
+
+
+def _garmin_balance(
+    conn: sqlite3.Connection,
+    from_date: str,
+    to_date: str,
+    columns: tuple[str, ...] = _BALANCE_COLUMNS,
+) -> dict[str, float] | None:
+    """Garmin's balance ``columns`` from the newest day in the range that has all of them."""
+    complete = " AND ".join(f"{c} IS NOT NULL" for c in columns)
+    row = conn.execute(
+        f"SELECT {', '.join(columns)} FROM training_status_daily "
+        f"WHERE date >= ? AND date <= ? AND {complete} ORDER BY date DESC LIMIT 1",
+        (from_date, to_date),
+    ).fetchone()
+    return dict(zip(columns, row)) if row else None
+
+
+def load_balance_gap(conn: sqlite3.Connection, to_date: str | None = None) -> float | None:
+    """Percentage points between our 28-day load split and Garmin's balance on ``to_date``.
+
+    Args:
+        conn: Open SQLite connection with the mart built.
+        to_date: The day whose balance is compared; defaults to the latest mart day.
+
+    Returns:
+        :func:`signals.garmin_balance_gap` over the 28 days ending on ``to_date``, or
+        None when the mart is empty or Garmin published no balance that day.
+    """
+    _, to_date = _resolve_window(conn, None, to_date)
+    if to_date is None:
+        return None
+    balance = _garmin_balance(conn, to_date, to_date, _signals.GARMIN_BALANCE_KEYS)
+    return _signals.garmin_balance_gap(_balance_span_rows(conn, to_date), balance)
+
+
+def _balance_span_start(to_date: str) -> str:
+    """First day of the ``GARMIN_BALANCE_DAYS`` ending on ``to_date``."""
+    start = _dt.date.fromisoformat(to_date) - _dt.timedelta(days=GARMIN_BALANCE_DAYS - 1)
+    return start.isoformat()
+
+
+def _balance_span_rows(conn: sqlite3.Connection, to_date: str) -> list[dict]:
+    """Mart rows for the span Garmin's balance describes, ending on ``to_date``."""
+    return read_mart(conn, _balance_span_start(to_date), to_date)
+
+
+def _aerobic_low_shortage(
+    conn: sqlite3.Connection,
+    thr: dict[str, float],
+    to_date: str,
+    balance_phrase: str | None,
+    personal_z2_share: float | None,
+) -> dict | None:
+    """The easy-work alert over the same 28 days as Garmin's bound (issue #70)."""
+    return _signals.aerobic_low_shortage(
+        _balance_span_rows(conn, to_date),
+        thr,
+        balance_phrase,
+        personal_z2_share,
+        garmin_balance=_garmin_balance(conn, _balance_span_start(to_date), to_date),
+    )
 
 
 def enrich_hrv_band(rows: list[dict], thresholds: dict[str, float]) -> list[dict]:
@@ -316,7 +384,7 @@ def build_digest(
     z2_hi_bpm = zones_section["z2_hi_bpm"] if zones_section else None
     personal_z2_share = _personal_z2_minute_share(conn, from_date, to_date, z2_hi_bpm)
     candidates = (
-        _signals.aerobic_low_shortage(recent, thr, balance_phrase, personal_z2_share),
+        _aerobic_low_shortage(conn, thr, to_date, balance_phrase, personal_z2_share),
         _signals.acwr_out_of_range(rows, thr),
         _signals.hrv_low_morning(rows, thr),
         _signals.two_hard_days(rows, thr, to_date),

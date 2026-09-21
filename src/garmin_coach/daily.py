@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .coach import digest, report
 from .core import plan
+from .core.config import DEFAULT_RECHECK_DAYS
 from .etl import sync
 from .marts import features
 
@@ -91,6 +92,17 @@ def _run_plans_stage(
     logger.info("daily: plans stage done (imported=%d)", len(result.plans_imported))
 
 
+def _log_load_balance_gap(conn: sqlite3.Connection, to_date: str | None) -> None:
+    """Say how far our load split is from Garmin's balance, so a drift is seen (ADR 0027)."""
+    try:
+        gap = digest.load_balance_gap(conn, to_date)
+    except Exception:  # noqa: BLE001 - a diagnostic line must never fail the run
+        logger.exception("daily: load balance gap could not be computed")
+        return
+    if gap is not None:
+        logger.info("daily: load split differs from Garmin's 28-day balance by %.1f pp", gap)
+
+
 def run_daily(
     client: sync.GarminClient,
     conn: sqlite3.Connection,
@@ -101,6 +113,7 @@ def run_daily(
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
     plans_dir: str | Path | None = None,
+    recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> DailyResult:
     """Run the nightly pipeline: plans -> sync -> features -> alert extraction.
 
@@ -121,6 +134,7 @@ def run_daily(
         plans_dir: Directory of authored ``<monday>_week.md`` plans; skipped when
             omitted. A parse error degrades the run rather than falling back
             silently to the template (issue #21).
+        recheck_days: Width of the sync stage's re-check window (issue #69).
 
     Returns:
         A :class:`DailyResult` with the sync outcome, alerts, and derived status.
@@ -137,6 +151,7 @@ def run_daily(
             to_date=to_date,
             max_attempts=max_attempts,
             retry_base_seconds=retry_base_seconds,
+            recheck_days=recheck_days,
         )
     except Exception as exc:  # noqa: BLE001 - orchestrator records, never re-raises
         logger.exception("daily: sync stage crashed")
@@ -164,6 +179,7 @@ def run_daily(
         result.fatal = True
         return result
     logger.info("daily: features stage done")
+    _log_load_balance_gap(conn, to_date)
 
     logger.info("daily: alert stage starting")
     try:

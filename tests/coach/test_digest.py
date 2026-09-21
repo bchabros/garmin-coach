@@ -208,18 +208,29 @@ def test_digest_zones_block_is_none_without_a_row(conn):
     assert build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")["zones"] is None
 
 
-def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(conn):
-    """Too much grey zone: easy share below target AND hard share above target.
-    garmin_agrees mirrors the latest training_status_daily.balance_phrase."""
-    _mart(conn, date="2026-06-08", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
-    _mart(conn, date="2026-06-09", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
-    _status(conn, date="2026-06-09", balance_phrase="AEROBIC_LOW_SHORTAGE")
+def test_aerobic_low_shortage_fires_below_garmins_bound_and_cross_checks_garmin(conn):
+    """Too little easy work: the easy share is below Garmin's own lower bound, read from
+    the newest window day that has it. garmin_agrees mirrors its balance_phrase."""
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _mart(conn, date="2026-06-09", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _status(
+        conn,
+        date="2026-06-08",
+        balance_phrase="AEROBIC_LOW_SHORTAGE",
+        ml_aero_low_min=700,
+        ml_aero_low=1000,
+        ml_aero_high=1500,
+        ml_anaerobic=500,
+    )
+    _status(conn, date="2026-06-09", balance_phrase="AEROBIC_LOW_SHORTAGE")  # no bound that day
 
     d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-09")
     s = _signal(d, "AEROBIC_LOW_SHORTAGE")
     assert s["severity"] == "warn"
-    assert abs(s["facts"]["low_share"] - 100 / 400) < 1e-9  # 0.25
-    assert abs(s["facts"]["high_share"] - 300 / 400) < 1e-9  # 0.75
+    assert abs(s["facts"]["low_share"] - 80 / 400) < 1e-9  # 0.20
+    assert abs(s["facts"]["high_share"] - 320 / 400) < 1e-9  # 0.80
+    assert abs(s["facts"]["target_low_share"] - 700 / 3000) < 1e-9  # 0.2333
+    assert s["facts"]["target_source"] == "garmin"
     assert s["garmin_agrees"] is True
 
     # Garmin disagrees -> flag stays but garmin_agrees is False
@@ -228,10 +239,86 @@ def test_aerobic_low_shortage_fires_on_polarized_load_and_cross_checks_garmin(co
     assert _signal(d2, "AEROBIC_LOW_SHORTAGE")["garmin_agrees"] is False
 
 
+def test_aerobic_low_shortage_skips_a_newer_day_whose_balance_is_incomplete(conn):
+    """The bound comes from the newest window day that carries the whole balance."""
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
+    _status(
+        conn,
+        date="2026-06-08",
+        ml_aero_low_min=700,
+        ml_aero_low=1000,
+        ml_aero_high=1500,
+        ml_anaerobic=500,
+    )
+    _status(conn, date="2026-06-09", ml_aero_low_min=900)  # a bound but no balance to share it
+
+    d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-09")
+    s = _signal(d, "AEROBIC_LOW_SHORTAGE")
+    assert abs(s["facts"]["target_low_share"] - 700 / 3000) < 1e-9
+    assert s["facts"]["target_source"] == "garmin"
+
+
+def _hard_week_in_an_easy_month(conn):
+    """Three easy weeks, then a hard one: the 2026-09-20 shape (19% easy, month 33%)."""
+    for i in range(28):
+        day = (_dt.date(2026, 6, 1) + _dt.timedelta(days=i)).isoformat()
+        low, high = (10, 90) if i >= 21 else (50, 50)
+        _mart(conn, date=day, load_day=100, load_low=low, load_high=high, load_anaerobic=0)
+    _status(
+        conn,
+        date="2026-06-28",
+        balance_phrase="BALANCED",
+        ml_aero_low_min=690,
+        ml_aero_low=1000,
+        ml_aero_high=1500,
+        ml_anaerobic=500,
+    )  # bound 23%
+
+
+def test_aerobic_low_shortage_reads_the_28_days_garmins_bound_describes(conn):
+    """One hard week does not trip it when the month is easy enough (issue #70, Q9)."""
+    _hard_week_in_an_easy_month(conn)
+
+    d = build_digest(conn, from_date="2026-06-22", to_date="2026-06-28")
+
+    assert d["headline"]["load_low_share"] < 0.23  # the week itself is hard
+    assert "AEROBIC_LOW_SHORTAGE" not in _codes(d)
+
+
+def test_aerobic_low_shortage_facts_name_the_28_day_window(conn):
+    for i in range(28):
+        day = (_dt.date(2026, 6, 1) + _dt.timedelta(days=i)).isoformat()
+        _mart(conn, date=day, load_day=100, load_low=10, load_high=90, load_anaerobic=0)
+
+    d = build_digest(conn, from_date="2026-06-28", to_date="2026-06-28")
+
+    facts = _signal(d, "AEROBIC_LOW_SHORTAGE")["facts"]
+    assert facts["window_days"] == 28
+    assert abs(facts["low_share"] - 0.10) < 1e-9
+
+
+def test_aerobic_low_shortage_is_silent_at_a_third_easy_when_garmin_asks_for_less(conn):
+    """The 2026-09-20 shape: 33% easy against a 23% bound. The old 60/40 rule fired."""
+    _mart(conn, date="2026-06-08", load_day=300, load_low=100, load_high=150, load_anaerobic=50)
+    _status(
+        conn,
+        date="2026-06-08",
+        balance_phrase="BALANCED",
+        ml_aero_low_min=698,
+        ml_aero_low=990,
+        ml_aero_high=1460,
+        ml_anaerobic=626,
+    )
+
+    assert "AEROBIC_LOW_SHORTAGE" not in _codes(
+        build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")
+    )
+
+
 def test_aerobic_low_shortage_carries_personal_z2_minute_share(conn):
     """When a Z2 ceiling exists, the grey-zone signal reports the personal read
     alongside the load-bucket read: share of run minutes at avg HR <= ceiling."""
-    _mart(conn, date="2026-06-08", load_day=200, load_low=50, load_high=150, load_anaerobic=0)
+    _mart(conn, date="2026-06-08", load_day=200, load_low=40, load_high=160, load_anaerobic=0)
     db.upsert_zones(
         conn, {"id": 1, "lthr_bpm": 175, "z2_hi_bpm": 156, "stale": 0, "source": "regression"}
     )
@@ -503,11 +590,13 @@ def test_golden_regression_over_real_mart_slice(conn):
     assert h["hrv_latest"] is None  # 2026-07-03 has no HRV night
 
     codes = _codes(d)
-    # Recent 7d (06-27..07-03) is all hard/anaerobic, zero easy -> shortage fires,
-    # and Garmin's own balance_phrase agrees on 2026-07-03.
+    # The 28 days ending 07-03 (26 mart days from data_start) hold 55.317 easy load of
+    # 2306.76 -> 2.4%, below any bound -> shortage fires, and Garmin's own
+    # balance_phrase agrees on 2026-07-03.
     assert "AEROBIC_LOW_SHORTAGE" in codes
     als = _signal(d, "AEROBIC_LOW_SHORTAGE")
-    assert als["facts"]["low_share"] == 0.0
+    assert abs(als["facts"]["low_share"] - 55.317 / 2306.76) < 1e-4
+    assert als["facts"]["window_days"] == 26
     assert als["garmin_agrees"] is True
 
     # Only consecutive hard pair in the window is 2026-06-19 / 2026-06-20.

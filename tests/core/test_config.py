@@ -21,3 +21,12 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("DATA_START_DATE", "2026-01-01")
     s = Settings(_env_file=None)
     assert s.data_start_date == "2026-01-01"
+
+
+def test_the_re_check_window_is_at_least_one_day():
+    import pydantic
+    import pytest
+
+    assert Settings(_env_file=None).sync_recheck_days == 3
+    with pytest.raises(pydantic.ValidationError):
+        Settings(_env_file=None, sync_recheck_days=0)

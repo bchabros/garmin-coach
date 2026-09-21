@@ -9,7 +9,8 @@ def test_read_merges_code_defaults_with_db_seed_rows(conn):
     """Effective thresholds include code defaults and DB seed overrides."""
     values = thresholds.read(conn)
 
-    assert values["aero_low_target_share"] == 0.60
+    assert values["aero_low_target_share"] == 0.25
+    assert "aero_high_target_share" not in values
     assert values["hard_te_load"] == 150
 
     conn.execute(

@@ -8,7 +8,11 @@ name with a usable description. No stdio transport, no network.
 from __future__ import annotations
 
 import asyncio
+import types
 
+import pytest
+
+from garmin_coach.etl import client
 from garmin_coach.mcp import server
 
 EXPECTED_TOOLS = {
@@ -71,3 +75,20 @@ def test_log_sets_accepts_bare_names_and_detailed_stations():
     assert details["type"] == "object"
     assert details["required"] == ["subcategory"]
     assert details["additionalProperties"] is False
+
+
+def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_path, monkeypatch):
+    """The protocol pipe is never a terminal: the typed login error becomes tool error text (#71)."""
+    monkeypatch.setattr(
+        server,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08"),
+    )
+
+    def _login(_settings):
+        raise client.LoginUnavailableError("no terminal is attached; run sync from a terminal")
+
+    monkeypatch.setattr(server.client, "login", _login)
+
+    with pytest.raises(Exception, match="no terminal is attached; run sync from a terminal"):
+        asyncio.run(server.server.call_tool("refresh_today", {}))

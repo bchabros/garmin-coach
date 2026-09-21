@@ -347,7 +347,11 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env()
 
     result = sync.sync_incremental(
-        transport, conn, data_start_date=settings.data_start_date, to_date=args.to_date
+        transport,
+        conn,
+        data_start_date=settings.data_start_date,
+        to_date=args.to_date,
+        recheck_days=settings.sync_recheck_days,
     )
     conn.close()
 
@@ -716,7 +720,9 @@ def _cmd_daily(args: argparse.Namespace) -> int:
     try:
         transport = client.login(settings)
     except Exception as exc:  # noqa: BLE001 - surface login failures as a failed run
-        daily.logger.exception("daily: login failed")
+        # An unanswerable login is a configuration message, not a crash: no traceback.
+        readable = isinstance(exc, client.LoginUnavailableError)
+        daily.logger.error("daily: login failed: %s", exc, exc_info=not readable)
         conn.close()
         print(f"daily failed: login error: {exc}")
         return 2
@@ -727,6 +733,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         data_start_date=settings.data_start_date,
         to_date=args.to_date,
         plans_dir=settings.plans_dir,
+        recheck_days=settings.sync_recheck_days,
     )
     conn.close()
     warnings = len(result.sync.warnings) if result.sync else 0
@@ -1055,7 +1062,11 @@ def _cmd_prune_reports(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except client.LoginUnavailableError as exc:
+        print(f"login failed: {exc}")
+        return 2
 
 
 if __name__ == "__main__":

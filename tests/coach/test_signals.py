@@ -234,3 +234,95 @@ def test_plan_missing_is_silent_once_the_week_is_authored():
 
 def test_plan_missing_needs_a_week():
     assert signals.plan_missing(has_plan=False, week_start=None) is None
+
+
+# --- AEROBIC_LOW_SHORTAGE follows Garmin's own lower bound (issue #70) ----------
+
+# Garmin's balance on 2026-09-20: lower limit for low-aerobic load 698 of a 3076 total.
+GARMIN_BALANCE = {
+    "ml_aero_low_min": 698.0,
+    "ml_aero_low": 990.0,
+    "ml_aero_high": 1460.0,
+    "ml_anaerobic": 626.0,
+}
+LOW_BOUND = 698.0 / 3076.0  # 0.2269...
+
+
+def _load_day(low, high, anaerobic):
+    return {"load_low": low, "load_high": high, "load_anaerobic": anaerobic}
+
+
+def test_shortage_fires_when_the_easy_share_is_below_garmins_lower_bound():
+    rows = [_load_day(low=20, high=50, anaerobic=30)]
+
+    signal = signals.aerobic_low_shortage(
+        rows, thresholds.DEFAULTS, "AEROBIC_LOW_SHORTAGE", garmin_balance=GARMIN_BALANCE
+    )
+
+    assert signal["code"] == "AEROBIC_LOW_SHORTAGE"
+    assert signal["facts"]["low_share"] == 0.2
+    assert abs(signal["facts"]["target_low_share"] - LOW_BOUND) < 1e-9
+    assert signal["facts"]["target_source"] == "garmin"
+    assert signal["garmin_agrees"] is True
+
+
+def test_shortage_is_silent_above_garmins_bound_whatever_the_hard_share():
+    rows = [_load_day(low=30, high=60, anaerobic=10)]  # the old 60/40 rule fired here
+
+    assert (
+        signals.aerobic_low_shortage(rows, thresholds.DEFAULTS, None, garmin_balance=GARMIN_BALANCE)
+        is None
+    )
+
+
+def test_shortage_fires_on_a_low_easy_share_even_when_hard_work_is_low_too():
+    rows = [_load_day(low=20, high=10, anaerobic=70)]  # the old rule needed hard > 40%
+
+    signal = signals.aerobic_low_shortage(
+        rows, thresholds.DEFAULTS, None, garmin_balance=GARMIN_BALANCE
+    )
+
+    assert signal is not None and signal["facts"]["high_share"] == 0.1
+
+
+def test_shortage_uses_the_fixed_floor_when_garmin_publishes_no_bound():
+    short = [_load_day(low=20, high=50, anaerobic=30)]
+    enough = [_load_day(low=30, high=50, anaerobic=20)]
+
+    signal = signals.aerobic_low_shortage(short, thresholds.DEFAULTS, None)
+
+    assert signal["facts"]["target_low_share"] == 0.25
+    assert signal["facts"]["target_source"] == "fallback"
+    assert signals.aerobic_low_shortage(enough, thresholds.DEFAULTS, None) is None
+    no_total = dict(GARMIN_BALANCE, ml_aero_low=None, ml_aero_high=None, ml_anaerobic=None)
+    assert (
+        signals.aerobic_low_shortage(short, thresholds.DEFAULTS, None, garmin_balance=no_total)[
+            "facts"
+        ]["target_source"]
+        == "fallback"
+    )
+
+
+def test_shortage_is_silent_with_no_load_at_all():
+    assert signals.aerobic_low_shortage([_load_day(0, 0, 0)], thresholds.DEFAULTS, None) is None
+
+
+# --- how far our load split is from Garmin's own balance (issue #70) ------------
+
+
+def test_balance_gap_is_the_mean_share_difference_in_percentage_points():
+    """Ours 33 / 49 / 18 against Garmin's 990 / 1460 / 626 of 3076 (32.2 / 47.5 / 20.4):
+    differences of 0.8, 1.5 and 2.4 points, mean 1.6."""
+    rows = [_load_day(low=33, high=49, anaerobic=18)]
+
+    gap = signals.garmin_balance_gap(rows, GARMIN_BALANCE)
+
+    assert round(gap, 1) == 1.6
+
+
+def test_balance_gap_is_none_when_either_side_is_empty():
+    rows = [_load_day(low=33, high=49, anaerobic=18)]
+
+    assert signals.garmin_balance_gap([_load_day(0, 0, 0)], GARMIN_BALANCE) is None
+    assert signals.garmin_balance_gap(rows, None) is None
+    assert signals.garmin_balance_gap(rows, dict(GARMIN_BALANCE, ml_aero_high=None)) is None

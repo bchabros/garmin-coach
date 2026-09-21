@@ -12,6 +12,14 @@
   morning captures the previous night's HRV/sleep. StandardOut/Error here are a
   coarse launchd capture; the rotated app log lives at logs/daily.log (LOG_PATH).
 
+  Credentials: none are needed here. The run resumes the saved login in
+  ~/.garminconnect, so log in once from a terminal first (any Garmin command,
+  e.g. `poetry run garmin-coach sync`). Without a terminal the run never prompts:
+  if the saved login stops resuming it fails with one readable line in
+  logs/daily.log saying so. Do not put GARMIN_PASSWORD in EnvironmentVariables
+  below unless you accept unattended full logins (see "Gotchas" in
+  docs/OPERATIONS.md).
+
   launchd gives child processes a minimal PATH, so `poetry` (and any other
   tool installed outside /usr/bin:/bin:/usr/sbin:/sbin) will not resolve
   unless its directory is added below. Adjust /Users/YOUR_USER/.local/bin

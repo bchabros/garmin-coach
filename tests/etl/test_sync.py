@@ -240,18 +240,22 @@ def test_incremental_sync_falls_back_to_daily_activity_ranges(conn, fixture):
         client,
         conn,
         data_start_date="2026-06-08",
-        to_date="2026-06-09",
+        to_date="2026-06-12",
         max_attempts=1,
         retry_base_seconds=0,
     )
 
     activity_calls = [call for call in client.calls if call[0] == "activities"]
     assert activity_calls == [
-        ("activities", "2026-06-08..2026-06-09"),
+        ("activities", "2026-06-08..2026-06-12"),
         ("activities", "2026-06-08..2026-06-08"),
         ("activities", "2026-06-09..2026-06-09"),
+        ("activities", "2026-06-10..2026-06-10"),
+        ("activities", "2026-06-11..2026-06-11"),
+        ("activities", "2026-06-12..2026-06-12"),
     ]
-    assert db.get_sync_watermark(conn, "activities") == "2026-06-09"
+    # Final through the first day of the re-check window (2026-06-10..12), no further.
+    assert db.get_sync_watermark(conn, "activities") == "2026-06-10"
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
     assert "activities" in result.progressed_streams
 
@@ -271,7 +275,7 @@ def test_incremental_sync_isolates_failed_stream_and_keeps_other_watermarks(
         client,
         conn,
         data_start_date="2026-06-08",
-        to_date="2026-06-09",
+        to_date="2026-06-12",
         max_attempts=2,
         retry_base_seconds=0,
     )
@@ -281,7 +285,7 @@ def test_incremental_sync_isolates_failed_stream_and_keeps_other_watermarks(
         ("sleep", "2026-06-09"),
     ]
     assert db.get_sync_watermark(conn, "sleep") == "2026-06-08"
-    assert db.get_sync_watermark(conn, "hrv") == "2026-06-09"
+    assert db.get_sync_watermark(conn, "hrv") == "2026-06-10"
     assert any("sleep" in warning and "2026-06-09" in warning for warning in result.warnings)
 
 
@@ -291,11 +295,11 @@ def test_incremental_sync_bootstraps_from_core_and_fetches_only_missing_dates(
     db.upsert_daily(conn, "sleep", models.normalize_sleep("2026-06-10", fixture("sleep_day")))
     client = fake_client(by_day={"sleep": {"2026-06-11": fixture("sleep_day")}})
 
-    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-11")
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-15")
 
     sleep_calls = [date for endpoint, date in client.calls if endpoint == "sleep"]
-    assert sleep_calls == ["2026-06-11"]
-    assert db.get_sync_watermark(conn, "sleep") == "2026-06-11"
+    assert sleep_calls == [f"2026-06-{day}" for day in (11, 12, 13, 14, 15)]
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-13"
     assert conn.execute("SELECT COUNT(*) FROM sleep").fetchone()[0] == 2
 
 
@@ -373,3 +377,140 @@ def test_a_failed_enrichment_is_recorded_and_never_aborts_the_run(conn, fake_cli
     assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1  # run continued
     assert any("weather" in m and "1" in m for m in result.enrichment_misses)
     assert not result.degraded  # an enrichment gap is not a stream failure
+
+
+# --- the re-check window: a day Garmin answered for is not yet final (#69) -------
+
+
+def _late_run(fixture, day="2026-06-12"):
+    run = dict(fixture("activities_range")[0])
+    run["activityId"] = 99001
+    run["startTimeLocal"] = f"{day} 09:14:07"
+    return run
+
+
+def test_a_run_uploaded_a_day_late_lands_on_the_next_nightly_run(conn, fake_client, fixture):
+    night_one = fake_client(activities=[])
+    sync.sync_incremental(night_one, conn, data_start_date="2026-06-08", to_date="2026-06-12")
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 0
+
+    night_two = fake_client(activities=[_late_run(fixture)])
+    sync.sync_incremental(night_two, conn, data_start_date="2026-06-08", to_date="2026-06-13")
+
+    asked = [span for endpoint, span in night_two.calls if endpoint == "activities"]
+    assert asked == ["2026-06-11..2026-06-13"]
+    stored = conn.execute("SELECT activity_id FROM activities").fetchall()
+    assert stored == [(99001,)]
+
+
+def test_the_first_run_after_deployment_re_pulls_the_window_without_moving_back(
+    conn, fake_client, fixture
+):
+    # Before the window existed every watermark sat at yesterday.
+    for stream in ("activities", "sleep", "hrv", "wellness", "readiness", "status"):
+        db.set_sync_watermark(conn, stream, "2026-06-12")
+    client = fake_client(activities=[_late_run(fixture)])
+
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-13")
+
+    assert ("activities", "2026-06-11..2026-06-13") in client.calls
+    sleep_calls = [date for endpoint, date in client.calls if endpoint == "sleep"]
+    assert sleep_calls == ["2026-06-11", "2026-06-12", "2026-06-13"]
+    assert conn.execute("SELECT COUNT(*) FROM activities").fetchone()[0] == 1
+    assert db.get_sync_watermark(conn, "activities") == "2026-06-12"
+    assert db.get_sync_watermark(conn, "sleep") == "2026-06-12"
+
+
+def test_no_watermark_ever_passes_the_first_day_of_the_window(conn, fake_client, fixture):
+    client = _client_with_day(fake_client, fixture, date="2026-06-20")
+
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-20")
+
+    watermarks = dict(conn.execute("SELECT stream, last_synced_date FROM sync_state"))
+    assert set(watermarks) == {"activities", "sleep", "hrv", "wellness", "readiness", "status"}
+    assert set(watermarks.values()) == {"2026-06-18"}
+
+
+def test_a_week_away_is_caught_up_in_one_pass(conn, fake_client, fixture):
+    db.set_sync_watermark(conn, "activities", "2026-06-10")
+    db.set_sync_watermark(conn, "sleep", "2026-06-10")
+    client = fake_client(activities=[_late_run(fixture, day="2026-06-13")])
+
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-19")
+
+    assert ("activities", "2026-06-11..2026-06-19") in client.calls
+    sleep_calls = [date for endpoint, date in client.calls if endpoint == "sleep"]
+    assert sleep_calls[0] == "2026-06-11" and sleep_calls[-1] == "2026-06-19"
+    assert len(sleep_calls) == 9
+    assert db.get_sync_watermark(conn, "activities") == "2026-06-17"
+
+
+def test_a_second_night_changes_no_core_row_count_while_the_raw_log_grows(
+    conn, fake_client, fixture
+):
+    client = _client_with_day(fake_client, fixture, date="2026-06-12")
+    sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-12")
+    core_before = {t: _count(conn, t) for t in ("activities", "sleep", "hrv_nightly")}
+    raw_before = _count(conn, "raw_payloads")
+
+    again = _client_with_day(fake_client, fixture, date="2026-06-12")
+    sync.sync_incremental(again, conn, data_start_date="2026-06-08", to_date="2026-06-13")
+
+    assert {t: _count(conn, t) for t in core_before} == core_before
+    assert _count(conn, "raw_payloads") > raw_before
+    assert ("sleep", "2026-06-12") in again.calls
+
+
+def _count(conn, table):
+    return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def test_hand_logged_sets_survive_the_nightly_re_pull(conn, fake_client, fixture):
+    run = _late_run(fixture)
+    sync.sync_incremental(
+        fake_client(activities=[run]), conn, data_start_date="2026-06-08", to_date="2026-06-12"
+    )
+    db.replace_manual_activity_sets(
+        conn, 99001, [{"activity_id": 99001, "set_idx": 0, "subcategory": "SLED_PULL"}]
+    )
+    conn.commit()
+
+    sync.sync_incremental(
+        fake_client(activities=[run]), conn, data_start_date="2026-06-08", to_date="2026-06-13"
+    )
+
+    assert _count(conn, "manual_activity_sets") == 1
+
+
+def test_one_line_names_the_window_days_with_no_activity_and_is_not_a_warning(
+    conn, fake_client, fixture, caplog
+):
+    client = fake_client(activities=[_late_run(fixture, day="2026-06-12")])
+
+    with caplog.at_level("INFO", logger="garmin_coach.etl.sync"):
+        result = sync.sync_incremental(
+            client, conn, data_start_date="2026-06-08", to_date="2026-06-13"
+        )
+
+    lines = [r for r in caplog.records if "no activity" in r.getMessage()]
+    assert len(lines) == 1
+    assert lines[0].levelname == "INFO"
+    assert lines[0].getMessage() == (
+        "sync: no activity yet for 2026-06-11, 2026-06-13 (re-check window 2026-06-11..2026-06-13)"
+    )
+    assert result.warnings == []
+
+
+def test_a_window_with_an_activity_on_every_day_logs_no_such_line(
+    conn, fake_client, fixture, caplog
+):
+    runs = [
+        dict(_late_run(fixture, day=f"2026-06-{d}"), activityId=99000 + d) for d in (11, 12, 13)
+    ]
+
+    with caplog.at_level("INFO", logger="garmin_coach.etl.sync"):
+        sync.sync_incremental(
+            fake_client(activities=runs), conn, data_start_date="2026-06-08", to_date="2026-06-13"
+        )
+
+    assert not [r for r in caplog.records if "no activity" in r.getMessage()]

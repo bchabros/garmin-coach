@@ -44,7 +44,8 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
 
 - **First time / gaps:** `backfill --from 2026-06-08`. Idempotent (see below), so safe to
   re-run over an already-filled range.
-- **Routine catch-up:** `sync` advances each stream from its watermark; then `features`
+- **Routine catch-up:** `sync` pulls each stream from its watermark and always pulls the
+  re-check window again (the last 3 days ending yesterday, see Gotchas); then `features`
   rebuilds the marts.
 - **After editing a plan:** `plan import` caches `plans/*.md` immediately (idempotent;
   re-importing a mid-week revision just overwrites). The nightly run does the same scan,
@@ -144,6 +145,45 @@ Config keys (`config.py`, overridable via env / `.env`):
 - **Login rate limits (429).** Garmin returns 429 (IP-level) on repeated login attempts.
   Once tokens are cached in `~/.garminconnect`, resume avoids the login endpoint -- don't
   hammer it, **wait it out**. A 429 typically surfaces as a `failed` run.
+- **A scheduled run never asks a question.** The nightly run stands on the saved login in
+  `~/.garminconnect` alone; no password is stored anywhere, by choice (a stored password
+  would turn every passing network failure at 06:00 into an unattended full login against
+  the rate-limited endpoint above, and an account with two-step verification would stop at
+  the code anyway). When the saved login does not resume, it is tried three times over
+  about twenty seconds, because the network often needs a moment after the machine wakes.
+  Each failed try logs `client: saved login did not resume: <why>`, including the reason
+  `garminconnect` reports only at debug level: that line tells a network hiccup from an
+  expired login. If it still fails and no terminal is attached, the run is `failed` (exit
+  `2`) with one line, `daily: login failed: ... no terminal is attached ...`, and no
+  traceback. **Fix:** run any Garmin command once from a terminal (`poetry run garmin-coach
+  sync`) to renew the saved login. The same message comes back from `refresh_today` and
+  the workout push over MCP, where no prompt can ever be answered. The re-check window
+  (below) makes up the lost night on its own.
+- **The re-check window: the last 3 days are never taken on Garmin's first word.** A run
+  can still be sitting on the watch when the nightly run asks, and Garmin itself fills in
+  HRV and revises readiness after the fact, so every `sync` pulls the 3 days ending
+  yesterday again, for every stream ([ADR 0026](adr/0026-recheck-window.md)). A day is
+  pulled on the three nightly runs after it and becomes final on the third; the watermark
+  never passes the first day of the window. A run that reaches Garmin Connect up to three
+  days late therefore lands on its own, and so does a night that failed or never ran.
+  Cost: about 23 Garmin calls a night instead of about 9, a few seconds longer, and
+  `raw_payloads` grows by the window each night (core row counts never change). One
+  INFO line per run, `sync: no activity yet for <dates> (re-check window ...)`, names the
+  window days that hold no activity: on a rest day it is routine, and when a run is
+  missing it confirms the gap. It never changes the run's status. Width is
+  `SYNC_RECHECK_DAYS` (default `3`; `1` is the old behaviour). **`backfill` is still
+  needed** for a run uploaded more than three days late.
+- **The load split is tuned to Garmin's balance, and the log says how well it fits.**
+  Every cardio session's load is shared between easy, hard and anaerobic work by a rule
+  tuned to reproduce Garmin's own 28-day load balance
+  ([ADR 0027](adr/0027-load-split-tuned-to-garmin-balance.md)). After the marts are
+  rebuilt the nightly run logs `daily: load split differs from Garmin's 28-day balance
+  by N pp` (mean difference of the three shares, in percentage points; 2.7 on average over
+  summer 2026, never above 5.1). A sustained value above about 5 means the rule has
+  stopped fitting this athlete's training and the comparison in the ADR should be re-run.
+  **Changing the rule's constants requires a full recompute**, `poetry run garmin-coach
+  features`: it never contacts Garmin, rewrites `daily_metrics` and `weekly_metrics` since
+  `data_start`, and so changes past weeks too.
 - **Backfill / sync exclude "today".** HRV and sleep only land after the night, so the
   pipeline only pulls through **yesterday**. A missing current-day row is expected, not a
   bug. To see *this morning's* HRV/readiness for a same-day call, opt in explicitly with

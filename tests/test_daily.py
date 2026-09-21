@@ -193,3 +193,48 @@ def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client):
     )
     assert result.plans_imported == []
     assert result.status == "ok"
+
+
+# --- the nightly log says how far our load split is from Garmin's (issue #70) ---
+
+
+def _easy_run(conn, date):
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": 70001,
+            "start_local": f"{date} 09:00:00",
+            "date": date,
+            "gtype": "running",
+            "aero_te": 3.0,
+            "anaero_te": 0.0,
+            "training_load": 100,
+            "hr_z2_s": 3000,
+        },
+    )
+
+
+def test_daily_run_logs_the_distance_between_our_split_and_garmins_balance(
+    conn, fake_client, caplog
+):
+    """Ours is 100% easy; Garmin says 50 / 30 / 20: differences 50, 30, 20 -> 33.3 points."""
+    _easy_run(conn, "2026-06-10")
+    db.upsert_daily(
+        conn,
+        "training_status_daily",
+        {"date": "2026-06-10", "ml_aero_low": 500, "ml_aero_high": 300, "ml_anaerobic": 200},
+    )
+
+    with caplog.at_level("INFO", logger="garmin_coach"):
+        daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+
+    assert "daily: load split differs from Garmin's 28-day balance by 33.3 pp" in caplog.text
+
+
+def test_daily_run_logs_no_distance_without_garmins_balance(conn, fake_client, caplog):
+    _easy_run(conn, "2026-06-10")
+
+    with caplog.at_level("INFO", logger="garmin_coach"):
+        daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+
+    assert "load split differs" not in caplog.text

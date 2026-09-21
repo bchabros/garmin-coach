@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
+import secrets
 
 import pytest
 
 from garmin_coach.core.config import Settings
 from garmin_coach.etl import client
+
+
+# Generated per run, never a literal: no credential-shaped string lives in this file.
+_FAKE_PASSWORD = secrets.token_urlsafe(12)
+_TYPED_PASSWORD = secrets.token_urlsafe(12)
 
 
 class _Stdin:
@@ -76,29 +82,33 @@ def test_without_a_terminal_a_failed_resume_raises_instead_of_prompting(
 def test_at_a_terminal_the_prompts_still_work(tmp_path, monkeypatch, garmin):
     monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=True))
     monkeypatch.setattr("builtins.input", lambda _prompt: " athlete@example.com ")
-    monkeypatch.setattr(client.getpass, "getpass", lambda _prompt: "typed-secret")
+    monkeypatch.setattr(client.getpass, "getpass", lambda _prompt: _TYPED_PASSWORD)
 
     api = client.login_api(_settings(tmp_path))
 
-    assert (api.email, api.password) == ("athlete@example.com", "typed-secret")
+    assert (api.email, api.password) == ("athlete@example.com", _TYPED_PASSWORD)
 
 
 def test_credentials_in_the_environment_log_in_without_a_terminal(
     tmp_path, monkeypatch, garmin, no_prompts
 ):
     monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=False))
-    settings = _settings(tmp_path, garmin_email="athlete@example.com", garmin_password="s3cret")
+    settings = _settings(
+        tmp_path, garmin_email="athlete@example.com", garmin_password=_FAKE_PASSWORD
+    )
 
     api = client.login_api(settings)
 
-    assert (api.email, api.password) == ("athlete@example.com", "s3cret")
+    assert (api.email, api.password) == ("athlete@example.com", _FAKE_PASSWORD)
 
 
 def test_a_two_step_code_is_never_asked_for_without_a_terminal(
     tmp_path, monkeypatch, garmin, no_prompts
 ):
     monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=False))
-    settings = _settings(tmp_path, garmin_email="athlete@example.com", garmin_password="s3cret")
+    settings = _settings(
+        tmp_path, garmin_email="athlete@example.com", garmin_password=_FAKE_PASSWORD
+    )
 
     api = client.login_api(settings)
 
@@ -172,7 +182,7 @@ def test_a_first_ever_login_skips_the_resume_and_its_waits(tmp_path, monkeypatch
     monkeypatch.setattr(client.time, "sleep", waits.append)
     monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=True))
     monkeypatch.setattr("builtins.input", lambda _prompt: "athlete@example.com")
-    monkeypatch.setattr(client.getpass, "getpass", lambda _prompt: "typed-secret")
+    monkeypatch.setattr(client.getpass, "getpass", lambda _prompt: _TYPED_PASSWORD)
     settings = Settings(_env_file=None, garmintokens=str(tmp_path / "never-logged-in"))
 
     api = client.login_api(settings)
@@ -212,7 +222,9 @@ def test_a_two_step_code_needed_without_a_terminal_surfaces_as_the_typed_error(
     monkeypatch.setattr(client, "Garmin", _WrapsLikeTheLibrary)
     monkeypatch.setattr(client.time, "sleep", lambda _s: None)
     monkeypatch.setattr(client.sys, "stdin", _Stdin(tty=False))
-    settings = _settings(tmp_path, garmin_email="athlete@example.com", garmin_password="s3cret")
+    settings = _settings(
+        tmp_path, garmin_email="athlete@example.com", garmin_password=_FAKE_PASSWORD
+    )
 
     with pytest.raises(client.LoginUnavailableError, match="two-step code"):
         client.login_api(settings)

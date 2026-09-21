@@ -3,7 +3,7 @@
 ## Status
 
 Accepted. Supersedes the "Load buckets are total over nulls" clause of
-[ADR 0002](0002-phase-2-features-mart.md) and the `AEROBIC_LOW_SHORTAGE` targets of
+[ADR 0002](0002-phase-2-metrics-semantics.md) and the `AEROBIC_LOW_SHORTAGE` targets of
 [ADR 0003](0003-phase-3-coach-signals.md).
 
 ## Context

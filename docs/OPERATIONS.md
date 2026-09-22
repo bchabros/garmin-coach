@@ -408,6 +408,16 @@ quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push repor
 `noop` with no duplicate, and all four response mappings (`get_workouts`,
 `upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
 
+**Exercise-sport edges and name limits (issues #65, #58, run once).** Settled on
+2026-09-22 by `scratch/issue65_58_edges_and_names_probe.py --confirm`, which authors
+through the production path, uploads, reads back, and deletes. The account **accepted**
+warm-up (step type 1) and cool-down (2) in both `strength_training` (5) and `hiit` (9);
+every step type round-tripped, a heart-rate target on the warm-up came back as
+`heart.rate.zone` 110-140, and a lap-ended cool-down round-tripped. Workout names came
+back verbatim at 25, 43, 80, 120 and **200** characters, Polish diacritics included, so
+Garmin's own ceiling is above anything this system writes and the caps (30 for a label,
+80 for a whole name) are readability choices, not limits.
+
 **Strength/HIIT acceptance (issue #16, run once per sport).** The same four steps with
 an exercise request instead of `--from-recommendation`: one `sport: strength` push and
 one `sport: hiit` push (an `--request` JSON with `structure.exercises`), each confirmed

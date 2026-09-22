@@ -48,8 +48,9 @@ from garmin_coach.workouts import exercises, hardness as _hardness_of
 # own workouts and the athlete can tell them apart in Garmin Connect.
 GC_PREFIX = "GC"
 
-# What a name may carry. The watch shows a name in a narrow list, and Garmin's own
-# ceiling is unverified offline, so both are deliberately short (issue #58).
+# What a name may carry. The account itself keeps at least 200 characters verbatim,
+# Polish diacritics included (live probe, 2026-09-22), so these caps are ours: a name
+# has to be readable in the watch's narrow list, not merely acceptable (issue #58).
 _LABEL_MAX_CHARS = 30
 _NAME_MAX_CHARS = 80
 

@@ -12,8 +12,7 @@ import json
 
 import pytest
 
-from garmin_coach import cli
-from garmin_coach.core import db
+from garmin_coach.core import db, events
 from garmin_coach.core import plan as plan_mod
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
@@ -173,7 +172,7 @@ def test_get_recommendation_returns_the_block_for_tomorrow(conn):
 
 
 def test_get_events_annotates_goal_events(conn):
-    cli.add_goal_event(
+    events.add_goal_event(
         conn,
         date="2026-10-17",
         type="hyrox",
@@ -1144,7 +1143,13 @@ def test_plan_preview_rejects_a_non_monday(conn, tmp_path):
 def test_plan_confirm_writes_the_file_and_imports_it(conn, tmp_path):
     tools.plan_preview(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
 
-    out = tools.plan_confirm(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+    out = tools.plan_confirm(
+        conn,
+        week_start=WEEK,
+        days=PROPOSAL,
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )
 
     assert out["data"]["error"] is None
     assert out["data"]["written"] is True
@@ -1160,7 +1165,13 @@ def test_plan_confirm_refuses_to_clobber_an_existing_plan(conn, tmp_path):
     _plan_file(tmp_path)
     before = (tmp_path / f"{WEEK}_week.md").read_text(encoding="utf-8")
 
-    out = tools.plan_confirm(conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(tmp_path))
+    out = tools.plan_confirm(
+        conn,
+        week_start=WEEK,
+        days=PROPOSAL,
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )
 
     assert out["data"]["written"] is False
     assert "exists" in out["data"]["error"]
@@ -1171,7 +1182,13 @@ def test_plan_confirm_rejects_an_invalid_proposal_without_writing(conn, tmp_path
     days = [dict(d) for d in PROPOSAL]
     days[0]["intent"] = "sprint"
 
-    out = tools.plan_confirm(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+    out = tools.plan_confirm(
+        conn,
+        week_start=WEEK,
+        days=days,
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )
 
     assert out["data"]["written"] is False
     assert "sprint" in out["data"]["error"]
@@ -1204,7 +1221,13 @@ def test_plan_confirm_with_a_pipe_reports_an_error_and_strands_nothing(conn, tmp
     days = [dict(d) for d in PROPOSAL]
     days[3]["planned"] = "8x1 km @ 4:00 | HR <165"
 
-    out = tools.plan_confirm(conn, week_start=WEEK, days=days, plans_dir=str(tmp_path))
+    out = tools.plan_confirm(
+        conn,
+        week_start=WEEK,
+        days=days,
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )
 
     assert out["data"]["written"] is False
     assert out["data"]["error"] is not None
@@ -1427,7 +1450,12 @@ def test_plan_confirm_reports_a_pushed_workout_the_new_plan_invalidates(conn, tm
     _seed_pushed(reports, session_type="tempo")
 
     out = tools.plan_confirm(
-        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+        conn,
+        week_start=WEEK,
+        days=PROPOSAL,
+        plans_dir=str(plans),
+        reports_dir=str(reports),
+        data_start_date=DATA_START,
     )
 
     assert out["data"]["written"] is True
@@ -1448,7 +1476,198 @@ def test_plan_confirm_reports_nothing_when_the_new_plan_still_allows_the_push(co
     _seed_pushed(reports, session_type="easy")
 
     out = tools.plan_confirm(
-        conn, week_start=WEEK, days=PROPOSAL, plans_dir=str(plans), reports_dir=str(reports)
+        conn,
+        week_start=WEEK,
+        days=PROPOSAL,
+        plans_dir=str(plans),
+        reports_dir=str(reports),
+        data_start_date=DATA_START,
     )
 
     assert out["data"]["invalidated_pushes"] == []
+
+
+# --- goal events and plan import from chat (issue #72) ----------------------
+
+RACE = (dt.date.today() + dt.timedelta(days=21)).isoformat()
+
+
+def _seed_core_day(conn, date: str = "2026-07-13", activity_id: int = 900) -> None:
+    """One stored run, so the mart rebuild the writers trigger has something to build."""
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": activity_id,
+            "start_local": f"{date} 12:00:00",
+            "date": date,
+            "gtype": "running",
+            "dur_s": 2400,
+            "aero_te": 2.4,
+            "anaero_te": 0.2,
+            "training_load": 90.0,
+        },
+    )
+    conn.commit()
+
+
+def _add_race(conn, date: str = RACE, **over):
+    fields = {
+        "date": date,
+        "type": "hyrox",
+        "priority": "A",
+        "status": "confirmed",
+        "date_precision": "approx",
+        "data_start_date": DATA_START,
+    }
+    fields.update(over)
+    return tools.event_add(conn, **fields)
+
+
+def test_event_add_records_the_race_and_dates_the_periodization(conn):
+    """The race lands and the block calendar is rebuilt in the same call (#72)."""
+    _seed_core_day(conn)
+
+    out = _add_race(conn, target="1:00:00")["data"]
+
+    assert out["error"] is None
+    assert out["event"]["date"] == RACE
+    assert out["event"]["target_s"] == 3600
+    assert out["event"]["is_anchor"] is True
+    assert conn.execute("SELECT count(*) FROM plan_block").fetchone()[0] > 0
+
+
+def test_event_add_reports_the_block_before_and_after(conn):
+    """The athlete sees the periodization move, not just that a row was written (#72)."""
+    _seed_core_day(conn)
+
+    out = _add_race(conn)["data"]
+
+    assert out["block_before"] is None
+    assert out["block_after"]["block"] in ("base", "build", "peak", "taper", "race")
+    assert out["block_after"]["weeks_to_event"] == 3
+
+
+def test_event_add_refuses_a_malformed_date_as_tool_text(conn):
+    out = _add_race(conn, date="17/10/2026")["data"]
+
+    assert "date" in out["error"]
+    assert out["event"] is None
+    assert db.list_goal_events(conn) == []
+
+
+def test_event_add_refuses_a_race_already_recorded(conn):
+    _seed_core_day(conn)
+    _add_race(conn)
+
+    out = _add_race(conn, priority="B")["data"]
+
+    assert "already recorded" in out["error"]
+    assert len(db.list_goal_events(conn)) == 1
+
+
+def test_event_update_pins_the_date_and_moves_the_block(conn):
+    """Pinning a race one week earlier moves every week's countdown at once (#72)."""
+    _seed_core_day(conn)
+    _add_race(conn)
+    event_id = db.list_goal_events(conn)[0]["id"]
+    pinned = (dt.date.today() + dt.timedelta(days=14)).isoformat()
+
+    out = tools.event_update(
+        conn,
+        event_id=event_id,
+        date=pinned,
+        date_precision="exact",
+        data_start_date=DATA_START,
+    )["data"]
+
+    assert out["error"] is None
+    assert out["event"]["date"] == pinned
+    assert out["event"]["date_precision"] == "exact"
+    assert out["block_after"]["weeks_to_event"] == out["block_before"]["weeks_to_event"] - 1
+
+
+def test_event_update_refuses_an_unknown_event(conn):
+    out = tools.event_update(conn, event_id=999, status="confirmed", data_start_date=DATA_START)
+
+    assert "999" in out["data"]["error"]
+
+
+def test_event_update_refuses_an_empty_change(conn):
+    _seed_core_day(conn)
+    _add_race(conn)
+    event_id = db.list_goal_events(conn)[0]["id"]
+
+    out = tools.event_update(conn, event_id=event_id, data_start_date=DATA_START)
+
+    assert "nothing to update" in out["data"]["error"]
+
+
+def test_event_tools_carry_the_freshness_envelope(conn):
+    _seed_core_day(conn)
+
+    assert "freshness" in _add_race(conn)
+
+
+def test_plan_import_reads_the_week_and_rebuilds_plan_versus_actual(conn, tmp_path):
+    """A hand-edited plan file becomes the plan of record from chat (#72)."""
+    for i in range(7):
+        _seed_core_day(
+            conn,
+            (dt.date.fromisoformat(WEEK) + dt.timedelta(days=i)).isoformat(),
+            activity_id=900 + i,
+        )
+    _plan_file(tmp_path)
+
+    out = tools.plan_import(conn, plans_dir=str(tmp_path), data_start_date=DATA_START)["data"]
+
+    assert out["error"] is None
+    assert out["weeks"] == [WEEK]
+    assert plan_mod.resolve_day(conn, "2026-07-16")["source"] == "plan_week"
+    rows = conn.execute(
+        "SELECT count(*) FROM weekly_plan_actual WHERE week_start = ?", (WEEK,)
+    ).fetchone()[0]
+    assert rows == 7
+
+
+def test_plan_import_reports_a_push_the_edited_plan_invalidates(conn, tmp_path):
+    reports, plans = tmp_path / "reports", tmp_path / "plans"
+    reports.mkdir()
+    plans.mkdir()
+    _seed_pushed(reports, session_type="tempo")
+    _plan_file(plans)
+
+    out = tools.plan_import(
+        conn, plans_dir=str(plans), reports_dir=str(reports), data_start_date=DATA_START
+    )["data"]
+
+    assert [c["date"] for c in out["invalidated_pushes"]] == [PUSH_DATE]
+
+
+def test_plan_import_without_a_plan_file_says_so(conn, tmp_path):
+    out = tools.plan_import(conn, plans_dir=str(tmp_path), data_start_date=DATA_START)["data"]
+
+    assert out["weeks"] == []
+    assert "no plan file" in out["error"]
+
+
+def test_plan_confirm_rebuilds_plan_versus_actual(conn, tmp_path):
+    """A week agreed in chat is compared against actuals without waiting a night (#72)."""
+    for i in range(7):
+        _seed_core_day(
+            conn,
+            (dt.date.fromisoformat(WEEK) + dt.timedelta(days=i)).isoformat(),
+            activity_id=900 + i,
+        )
+
+    tools.plan_confirm(
+        conn,
+        week_start=WEEK,
+        days=PROPOSAL,
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )
+
+    rows = conn.execute(
+        "SELECT count(*) FROM weekly_plan_actual WHERE week_start = ?", (WEEK,)
+    ).fetchone()[0]
+    assert rows == 7

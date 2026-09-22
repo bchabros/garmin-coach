@@ -24,7 +24,7 @@ from typing import Any
 
 from .. import cli, daily
 from ..coach import digest, report
-from ..core import db, manual_sets, plan
+from ..core import db, events, manual_sets, plan
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -423,6 +423,145 @@ def author_workout(
     return _wrap(conn, {"spec": spec, "error": None, "path": str(path)})
 
 
+# --- goal events and plan import: the writers that keep the plan correct (#72)
+
+
+def _current_block(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The block calendar's row for the week that holds today, or None without an anchor."""
+    return periodize.current_plan(conn, dt.date.today().isoformat())
+
+
+def _event_row(conn: sqlite3.Connection, match: Callable[[dict[str, Any]], bool]):
+    """The recorded race the write touched, annotated as ``event list`` shows it."""
+    rows = periodize.annotate(db.list_goal_events(conn), dt.date.today().isoformat())
+    return next((row for row in rows if match(row)), None)
+
+
+def event_add(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    type: str,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str,
+    status: str,
+    date_precision: str,
+    target: str | None = None,
+    note: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Record a goal race from chat and re-date the periodization.
+
+    Reports the block calendar's row for the current week before and after the
+    write, so the athlete sees what the race did to the plan rather than being
+    told a row was inserted.
+    """
+    before = _current_block(conn)
+    try:
+        events.add_goal_event(
+            conn,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+        )
+    except ValueError as exc:
+        return _wrap(conn, _event_error(str(exc)))
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    row = _event_row(conn, lambda e: e["date"] == date and e["type"] == type)
+    return _wrap(conn, _event_result(row, before, _current_block(conn)))
+
+
+def event_update(
+    conn: sqlite3.Connection,
+    *,
+    event_id: int,
+    date: str | None = None,
+    type: str | None = None,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str | None = None,
+    status: str | None = None,
+    date_precision: str | None = None,
+    target: str | None = None,
+    note: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Change a recorded race from chat (pin a date, commit a start) and re-date the plan.
+
+    Fields left unset keep their value. Reports the block calendar's row for the
+    current week before and after the write.
+    """
+    before = _current_block(conn)
+    try:
+        events.update_goal_event(
+            conn,
+            event_id,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+        )
+    except ValueError as exc:
+        return _wrap(conn, _event_error(str(exc)))
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    row = _event_row(conn, lambda e: e["id"] == event_id)
+    return _wrap(conn, _event_result(row, before, _current_block(conn)))
+
+
+def _event_error(message: str) -> dict[str, Any]:
+    """A refused race write: nothing was written, so no block moved."""
+    return {"event": None, "block_before": None, "block_after": None, "error": message}
+
+
+def _event_result(
+    row: dict[str, Any] | None, before: dict[str, Any] | None, after: dict[str, Any] | None
+) -> dict[str, Any]:
+    return {"event": row, "block_before": before, "block_after": after, "error": None}
+
+
+def plan_import(
+    conn: sqlite3.Connection,
+    *,
+    plans_dir: str = "plans",
+    reports_dir: str = "reports",
+    week: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Re-read the authored plan files from chat, then rebuild the marts.
+
+    The counterpart of a hand edit to ``plans/<monday>_week.md``: the file stays the
+    plan of record (ADR 0015) and this refreshes the cache and everything derived
+    from it. ``invalidated_pushes`` names the days whose already-pushed workout the
+    edited plan no longer allows (issue #22).
+    """
+    try:
+        imported = plan.import_dir(conn, plans_dir, week=week)
+    except plan.PlanParseError as exc:
+        return _wrap(conn, _import_error(str(exc)))
+    if not imported:
+        return _wrap(
+            conn, _import_error(f"no plan file for {week or 'any week'} in {plans_dir}")
+        )
+
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    conflicts = [
+        conflict
+        for imported_week in imported
+        for conflict in publish.invalidated_pushes(
+            reports_dir, plan.planned_by_date(conn, imported_week)
+        )
+    ]
+    return _wrap(conn, {"weeks": imported, "invalidated_pushes": conflicts, "error": None})
+
+
+def _import_error(message: str) -> dict[str, Any]:
+    return {"weeks": [], "invalidated_pushes": [], "error": message}
+
+
 def plan_preview(
     conn: sqlite3.Connection,
     *,
@@ -450,8 +589,9 @@ def plan_confirm(
     days: list[dict[str, Any]],
     plans_dir: str = "plans",
     reports_dir: str = "reports",
+    data_start_date: str,
 ) -> dict[str, Any]:
-    """Write a previewed week to ``plans/<monday>_week.md`` and cache it.
+    """Write a previewed week to ``plans/<monday>_week.md``, cache it, rebuild the marts.
 
     Refuses when a plan of record for the week already exists - the file carries
     prose the intent vocabulary cannot hold (paces, HR caps, the revision log), so
@@ -474,6 +614,7 @@ def plan_confirm(
         # A tool reports; it never raises out of the MCP call. Validation already
         # ran, so reaching here means the plans/ directory changed under us.
         return _wrap(conn, {"week_start": week_start, "written": False, "error": str(exc)})
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
     data = {
         "week_start": week_start,
         "written": True,

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from . import daily, retention
 from .coach import digest, report
-from .core import db, manual_sets, plan as _plan
+from .core import db, events as _events, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -40,6 +40,21 @@ def _check_range(name: str, value: int | None, lo: int, hi: int) -> None:
     """Raise ValueError when an optional integer input falls outside [lo, hi]."""
     if value is not None and not (lo <= value <= hi):
         raise ValueError(f"{name} must be between {lo} and {hi} (got {value})")
+
+
+def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
+    """Recompute every mart after a transport-free write.
+
+    A race date or a revised plan changes derived rows far from the one it touched -
+    the block calendar, plan-vs-actual - so the write is only half done until the
+    marts agree with it, and waiting for the nightly run would mean a day of stale
+    reads (issue #72).
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        data_start_date: First real-data date, passed to the recompute.
+    """
+    features.features(conn, data_start_date=data_start_date)
 
 
 def log_session_rpe(
@@ -191,146 +206,6 @@ def log_activity_sets(
         "n_sets": len(rows),
         "unmapped": _unmapped_stations(conn, [r["subcategory"] for r in rows]),
     }
-
-
-EVENT_TYPES = ("hyrox", "run_race")
-EVENT_PRIORITIES = ("A", "B", "C")
-EVENT_STATUSES = ("confirmed", "tentative")
-EVENT_DATE_PRECISIONS = ("exact", "approx")
-
-# The single source of truth for the goal-event enums: argparse `choices=` and the
-# add/update validators both read it, so the CLI and the writers cannot drift apart.
-EVENT_CHOICES: dict[str, tuple[str, ...]] = {
-    "type": EVENT_TYPES,
-    "priority": EVENT_PRIORITIES,
-    "status": EVENT_STATUSES,
-    "date_precision": EVENT_DATE_PRECISIONS,
-}
-
-
-def parse_target_s(target: str) -> int:
-    """Parse a goal time into seconds.
-
-    Accepts ``H:MM:SS``, ``MM:SS``, or bare seconds, so the athlete can type a race
-    goal the way they say it ("1:00:00") and the DB still stores a number a later
-    race plan can split across segments.
-
-    Args:
-        target: The goal time as ``H:MM:SS``, ``MM:SS``, or plain seconds.
-
-    Returns:
-        The goal time in whole seconds.
-
-    Raises:
-        ValueError: If the text is not a colon-separated time or a plain integer, or
-            if a minutes/seconds field is out of range (a mistyped goal must not be
-            silently accepted as a plausible number).
-    """
-    parts = target.split(":")
-    if len(parts) > 3 or not all(part.isdigit() for part in parts):
-        raise ValueError(f"target must be H:MM:SS, MM:SS or seconds (got {target!r})")
-    if any(int(part) >= 60 for part in parts[1:]):
-        raise ValueError(f"target has a minutes/seconds field above 59 (got {target!r})")
-    seconds = 0
-    for part in parts:
-        seconds = seconds * 60 + int(part)
-    return seconds
-
-
-def _check_date(value: str) -> str:
-    """Return an ISO date, refusing anything a later read could not parse."""
-    try:
-        return _dt.date.fromisoformat(value).isoformat()
-    except ValueError:
-        raise ValueError(f"date must be YYYY-MM-DD (got {value!r})") from None
-
-
-def _check_choices(fields: dict[str, Any]) -> None:
-    for name, allowed in EVENT_CHOICES.items():
-        value = fields.get(name)
-        if value is not None and value not in allowed:
-            raise ValueError(f"{name} must be one of {'|'.join(allowed)} (got {value!r})")
-
-
-def add_goal_event(
-    conn: sqlite3.Connection,
-    *,
-    date: str,
-    type: str,  # noqa: A002 - mirrors the goal_event column and the --type flag
-    priority: str,
-    status: str,
-    date_precision: str,
-    target: str | None = None,
-    note: str | None = None,
-) -> None:
-    """Record a goal race in core (transport-free).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        date: Race day YYYY-MM-DD (the best known estimate).
-        type: Race type (``hyrox`` or ``run_race``).
-        priority: Race priority (``A``, ``B``, or ``C``).
-        status: Whether the athlete will start (``confirmed`` or ``tentative``).
-        date_precision: Whether the exact day is known (``exact`` or ``approx``).
-        target: Optional goal time as ``H:MM:SS``, ``MM:SS``, or seconds.
-        note: Optional free-text note.
-
-    Raises:
-        ValueError: If the date is malformed, an enum value is unknown, the target time
-            is unparseable, or the race is already recorded (correct it with `update`
-            rather than re-adding it, which would erase the fields left unset here).
-    """
-    fields = {
-        "type": type,
-        "priority": priority,
-        "status": status,
-        "date_precision": date_precision,
-    }
-    _check_choices(fields)
-    row = {
-        "date": _check_date(date),
-        **fields,
-        "target_s": parse_target_s(target) if target else None,
-        "note": note,
-    }
-    try:
-        db.insert_goal_event(conn, row)
-    except sqlite3.IntegrityError:
-        existing = next(
-            e
-            for e in db.list_goal_events(conn)
-            if e["date"] == row["date"] and e["type"] == row["type"]
-        )
-        raise ValueError(
-            f"{type} on {row['date']} is already recorded (id {existing['id']}); "
-            f"use `garmin-coach event update {existing['id']}` to change it"
-        ) from None
-    conn.commit()
-
-
-def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: str | None) -> None:
-    """Update a recorded goal event (pin an approx date, commit a tentative start).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        event_id: The event's `id`, as shown by `event list`.
-        **fields: Any of `date`, `type`, `priority`, `status`, `date_precision`,
-            `target` (parsed to seconds), or `note`. Fields left None keep their value.
-
-    Raises:
-        ValueError: If no field is given, the event does not exist, the date is
-            malformed, an enum value is unknown, or the target time is unparseable.
-    """
-    changes: dict[str, Any] = {k: v for k, v in fields.items() if v is not None}
-    if not changes:
-        raise ValueError(f"nothing to update on event {event_id}; pass at least one field")
-    _check_choices(changes)
-    if "date" in changes:
-        changes["date"] = _check_date(str(changes["date"]))
-    if "target" in changes:
-        changes["target_s"] = parse_target_s(str(changes.pop("target")))
-    db.update_goal_event(conn, event_id, **changes)
-    conn.commit()
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
@@ -548,6 +423,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         conn.close()
         print(f"plan import failed: {exc}")
         return 1
+    if imported:
+        rebuild_marts(conn, data_start_date=settings.data_start_date)
     conflicts = [
         conflict
         for week in imported
@@ -670,7 +547,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
 
     try:
         if args.event_command == "add":
-            add_goal_event(
+            _events.add_goal_event(
                 conn,
                 date=args.date,
                 type=args.type,
@@ -680,9 +557,10 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
+            rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event add complete: {args.type} on {args.date} ({args.status})"
         elif args.event_command == "update":
-            update_goal_event(
+            _events.update_goal_event(
                 conn,
                 args.event_id,
                 date=args.date,
@@ -693,6 +571,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
+            rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event update complete: id={args.event_id}"
         else:
             exit_code = _list_events(conn)
@@ -960,24 +839,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     ev_add = ev_sub.add_parser("add", help="Record a goal race.")
     ev_add.add_argument("--date", required=True, help="Race day YYYY-MM-DD (best estimate).")
-    ev_add.add_argument("--type", required=True, choices=EVENT_TYPES, help="Race type.")
+    ev_add.add_argument("--type", required=True, choices=_events.EVENT_TYPES, help="Race type.")
     ev_add.add_argument(
         "--priority",
         required=True,
-        choices=EVENT_PRIORITIES,
+        choices=_events.EVENT_PRIORITIES,
         help="A anchors the plan; B/C never do.",
     )
     ev_add.add_argument(
         "--status",
         required=True,
-        choices=EVENT_STATUSES,
+        choices=_events.EVENT_STATUSES,
         help="Will you start? Only 'confirmed' anchors the plan or fires the taper.",
     )
     ev_add.add_argument(
         "--date-precision",
         dest="date_precision",
         required=True,
-        choices=EVENT_DATE_PRECISIONS,
+        choices=_events.EVENT_DATE_PRECISIONS,
         help="Is the exact day known? 'approx' still drives every block.",
     )
     ev_add.add_argument("--target", default=None, help="Goal time H:MM:SS, MM:SS, or seconds.")
@@ -990,16 +869,16 @@ def build_parser() -> argparse.ArgumentParser:
     ev_up = ev_sub.add_parser("update", help="Pin a date, or commit to a tentative race.")
     ev_up.add_argument("event_id", type=int, help="Event id (from `event list`).")
     ev_up.add_argument("--date", default=None, help="New race day YYYY-MM-DD.")
-    ev_up.add_argument("--type", default=None, choices=EVENT_TYPES, help="New race type.")
+    ev_up.add_argument("--type", default=None, choices=_events.EVENT_TYPES, help="New race type.")
     ev_up.add_argument(
-        "--priority", default=None, choices=EVENT_PRIORITIES, help="New race priority."
+        "--priority", default=None, choices=_events.EVENT_PRIORITIES, help="New race priority."
     )
-    ev_up.add_argument("--status", default=None, choices=EVENT_STATUSES, help="New start status.")
+    ev_up.add_argument("--status", default=None, choices=_events.EVENT_STATUSES, help="New start status.")
     ev_up.add_argument(
         "--date-precision",
         dest="date_precision",
         default=None,
-        choices=EVENT_DATE_PRECISIONS,
+        choices=_events.EVENT_DATE_PRECISIONS,
         help="New date precision.",
     )
     ev_up.add_argument("--target", default=None, help="New goal time H:MM:SS, MM:SS, or seconds.")

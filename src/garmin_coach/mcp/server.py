@@ -137,6 +137,103 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
             days=days,
             plans_dir=_PLANS_DIR,
             reports_dir=_REPORTS_DIR,
+            data_start_date=get_settings().data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+
+@server.tool()
+def plan_import(week: str | None = None) -> dict[str, Any]:
+    """Re-read the authored plan files into the plan of record, then rebuild the marts.
+
+    Use after the athlete edits ``plans/<monday>_week.md`` by hand: the file is the
+    plan of record, this refreshes the cache and everything derived from it.
+    Without ``week`` every plan file is read. ``invalidated_pushes`` lists days
+    whose already-pushed workout the edited plan no longer allows.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.plan_import(
+            conn,
+            plans_dir=_PLANS_DIR,
+            reports_dir=_REPORTS_DIR,
+            week=week,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def event_add(
+    date: str,
+    type: str,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str,
+    status: str,
+    date_precision: str,
+    target: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Record a goal race and re-date the periodization from it.
+
+    ``type`` is hyrox|run_race, ``priority`` A|B|C (only a confirmed A anchors the
+    plan), ``status`` confirmed|tentative, ``date_precision`` exact|approx (approx
+    still drives every block). ``target`` is a goal time as H:MM:SS, MM:SS or
+    seconds. The response carries the block calendar's row for this week before and
+    after the write - report that move to the athlete.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.event_add(
+            conn,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def event_update(
+    event_id: int,
+    date: str | None = None,
+    type: str | None = None,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str | None = None,
+    status: str | None = None,
+    date_precision: str | None = None,
+    target: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Change a recorded race (pin an approx date, commit a tentative start).
+
+    ``event_id`` comes from ``get_events``. Fields left unset keep their value; the
+    same vocabulary as ``event_add`` applies. The response carries the block
+    calendar's row for this week before and after the write.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.event_update(
+            conn,
+            event_id=event_id,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+            data_start_date=settings.data_start_date,
         )
     finally:
         conn.close()
@@ -231,7 +328,7 @@ def log_niggle(
     date: str | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """Log a niggle (a sub-injury complaint) with severity 1-3."""
+    """Log a niggle (a sub-injury complaint) with severity 1-5."""
     conn = _open()
     try:
         return tools.log_niggle(conn, body_part=body_part, severity=severity, date=date, note=note)

@@ -33,6 +33,10 @@ EXPECTED_TOOLS = {
     # plan of record (preview -> confirm writes plans/<monday>_week.md)
     "plan_preview",
     "plan_confirm",
+    "plan_import",
+    # goal events (the race calendar the periodization is dated from)
+    "event_add",
+    "event_update",
     # transport (Garmin read)
     "refresh_today",
     # workout push (hash handshake)
@@ -92,3 +96,11 @@ def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_
 
     with pytest.raises(Exception, match="no terminal is attached; run sync from a terminal"):
         asyncio.run(server.server.call_tool("refresh_today", {}))
+
+
+def test_log_niggle_names_the_severity_scale_the_writer_accepts():
+    """The docstring said 1-3 while the writer took 1-5, so a valid 4 read as refused."""
+    tools = asyncio.run(server.server.list_tools())
+
+    niggle = next(t for t in tools if t.name == "log_niggle")
+    assert "1-5" in niggle.description

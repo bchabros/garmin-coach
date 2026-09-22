@@ -157,7 +157,6 @@ def has_daily_row(conn: sqlite3.Connection, table: str, date: str) -> bool:
     return row is not None
 
 
-
 def get_sync_watermark(conn: sqlite3.Connection, stream: str) -> str | None:
     """Return the last synced date for a stream, if it has been initialized."""
     row = conn.execute(

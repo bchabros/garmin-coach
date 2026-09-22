@@ -247,7 +247,6 @@ def unconfirmed_days(
     return days
 
 
-
 def resolve_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
     """Resolve all seven days of the week starting on ``week_start`` (a Monday)."""
     monday = _dt.date.fromisoformat(week_start)

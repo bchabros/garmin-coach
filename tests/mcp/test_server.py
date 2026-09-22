@@ -21,6 +21,7 @@ def _past(days: int) -> str:
 
     return (dt.date.today() - dt.timedelta(days=days)).isoformat()
 
+
 EXPECTED_TOOLS = {
     # read (local DB)
     "get_snapshot",

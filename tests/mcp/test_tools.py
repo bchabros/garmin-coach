@@ -2084,9 +2084,7 @@ def test_get_pushed_workouts_without_any_receipts_is_empty(conn, tmp_path):
 
 def test_the_digest_and_the_envelope_share_one_recheck_window(conn, monkeypatch):
     """Two windows in one response would contradict each other (ADR 0026)."""
-    monkeypatch.setattr(
-        tools, "get_settings", lambda: types.SimpleNamespace(sync_recheck_days=5)
-    )
+    monkeypatch.setattr(tools, "get_settings", lambda: types.SimpleNamespace(sync_recheck_days=5))
     today = dt.date.today()
     for back in range(1, 6):
         day = today - dt.timedelta(days=back)

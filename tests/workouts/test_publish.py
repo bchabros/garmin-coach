@@ -48,6 +48,8 @@ def test_a_renamed_workout_with_a_changed_spec_resolves_against_the_receipt_id()
 
 
 def test_a_renamed_workout_with_a_changed_spec_replaces_in_place_when_asked():
+    """Renamed in Connect, the old copy may sit on days no receipt knows, so it stays
+    in the library and only leaves this date (issue #58)."""
     pub = FakePublisher()
     workout_id = _pushed(pub)
     pub.workouts[workout_id]["workoutName"] = "Hyrox Tempo"
@@ -57,7 +59,9 @@ def test_a_renamed_workout_with_a_changed_spec_replaces_in_place_when_asked():
     )
 
     assert result.action == "replace"
-    assert len(pub.workouts) == 1
+    assert result.workout_id != workout_id
+    assert workout_id in pub.workouts
+    assert [e["workoutId"] for e in pub.list_scheduled("2026-07-17")] == [result.workout_id]
 
 
 def test_a_candidate_id_the_account_forgot_falls_through_to_the_hash():
@@ -413,3 +417,84 @@ def test_the_measured_hardness_stays_out_of_both_hashes():
     measured = plain | {"hardness": "easy"}
     assert spec_hash(measured) == spec_hash(plain)
     assert confirm_token(measured, "easy") == confirm_token(plain, "easy")
+
+
+# --- reuse: a name without the day's date is a workout for many days (#58) ---
+
+
+def _reusable(date="2026-07-17", name="GC FBB A", work_s=1200):
+    """A spec whose name carries no date, so the same steps are one workout."""
+    return _spec(date=date, name=name, work_s=work_s)
+
+
+def test_the_same_reusable_workout_on_a_new_date_is_only_scheduled():
+    """One "GC FBB A" on the watch with two dates, not two copies (#58)."""
+    pub = FakePublisher()
+    first = publish(_reusable(), pub, confirm=True)
+    pub.calls.clear()
+
+    second = publish(_reusable(date="2026-07-24"), pub, confirm=True)
+
+    assert second.action == "schedule"
+    assert second.workout_id == first.workout_id
+    assert pub.calls == ["schedule"]
+    assert len(pub.workouts) == 1
+
+
+def test_replacing_a_reusable_workout_leaves_the_other_days_alone():
+    """Changing Friday's version must not empty the 19th (#58)."""
+    pub = FakePublisher()
+    first = publish(_reusable(), pub, confirm=True)
+    publish(_reusable(date="2026-07-24"), pub, confirm=True)
+    pub.calls.clear()
+
+    result = publish(_reusable(date="2026-07-24", work_s=1800), pub, confirm=True, replace=True)
+
+    assert result.action == "replace"
+    assert pub.calls == ["unschedule", "upload", "schedule"]
+    assert first.workout_id in pub.workouts  # the old version survives for the 17th
+    assert result.workout_id in pub.workouts
+
+
+def test_replacing_a_workout_named_with_its_date_still_deletes_it():
+    """A one-day workout has nowhere else to be, so the library stays clean."""
+    pub = FakePublisher()
+    publish(_spec(), pub, confirm=True)
+    old_id = next(iter(pub.workouts))
+    pub.calls.clear()
+
+    result = publish(_spec(work_s=1800), pub, confirm=True, replace=True)
+
+    assert pub.calls == ["unschedule", "delete", "upload", "schedule"]
+    assert old_id not in pub.workouts
+    assert result.workout_id in pub.workouts
+
+
+def test_the_preview_says_the_old_version_will_be_kept():
+    pub = FakePublisher()
+    publish(_reusable(), pub, confirm=True)
+
+    result = publish(_reusable(work_s=1800), pub, confirm=False, replace=True)
+
+    assert "other days" in result.message
+    assert any("same name" in w for w in result.warnings)
+
+
+def test_the_preview_says_a_dated_workout_will_be_replaced():
+    pub = FakePublisher()
+    publish(_spec(), pub, confirm=True)
+
+    result = publish(_spec(work_s=1800), pub, confirm=False, replace=True)
+
+    assert "other days" not in result.message
+    assert not any("same name" in w for w in result.warnings)
+
+
+def test_a_renamed_version_carries_no_same_name_warning():
+    pub = FakePublisher()
+    publish(_reusable(), pub, confirm=True)
+
+    result = publish(_reusable(name="GC FBB A v2", work_s=1800), pub, confirm=False, replace=True)
+
+    assert result.action == "create"
+    assert not any("same name" in w for w in result.warnings)

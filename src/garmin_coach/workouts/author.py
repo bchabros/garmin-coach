@@ -493,6 +493,42 @@ def _clean_name(value: Any, key: str, limit: int) -> str | None:
     return cleaned
 
 
+def copy_to_date(
+    spec: dict[str, Any], *, date: str, planned_intent: str | None, today: str
+) -> dict[str, Any]:
+    """Copy an authored spec onto another day, re-running that day's guards.
+
+    How a session is repeated (issue #58): the steps and the name are the athlete's
+    from the first authoring, but every judgement about *when* it runs belongs to the
+    new day - a past date is refused, a target date of today warns, and a session
+    harder than the new day's plan of record is refused naming both intents. The
+    warnings of the day it came from are dropped rather than carried over.
+
+    Args:
+        spec: The authored spec to repeat.
+        date: The day it should run on.
+        planned_intent: The plan of record's intent for that day.
+        today: The as-of date the date guard reads.
+
+    Returns:
+        The copied spec, dated to the new day.
+
+    Raises:
+        ValueError: If the target date is in the past, or the session is harder than
+            the plan of record for it.
+    """
+    warnings = _date_guard(date, today)
+    hardness = spec.get("hardness")
+    if hardness is None:
+        _refuse_if_harder(_plan.guard_error(date, spec.get("session_type"), planned_intent))
+    elif _plan.is_harder(hardness, planned_intent):
+        # The frozen measurement is the evidence, as it is at push time: re-deriving it
+        # would judge the session against zones that have moved since (ADR 0024).
+        raise ValueError(_plan.spec_guard_error(date, hardness, planned_intent, "this session"))
+    return {**spec, "date": date, "warnings": warnings}
+
+
+
 def _validate_request(request: dict[str, Any]) -> None:
     """Check a request carries the required, well-formed fields.
 

@@ -7,14 +7,19 @@ tickets add tempo/quality structure, athlete requests, and hybrid validation.
 
 from __future__ import annotations
 
+import datetime as _dt
+
 import pytest
 
 from garmin_coach.workouts.author import (
     HyroxSplitRequired,
     author,
+    copy_to_date,
     request_from_recommendation,
     to_garmin,
 )
+
+_TODAY = _dt.date.today().isoformat()
 
 
 def _zones(source="regression+lthr", z2_ceiling=330, thr=270, z1_hi=140, z2_hi=155):
@@ -1838,3 +1843,64 @@ def test_a_run_session_takes_a_label_too():
     spec = author({**_targets(), "label": "próg 3x10"}, _context())
 
     assert spec["name"] == "GC 2026-07-17 próg 3x10"
+
+
+# --- repeating a session on another day (issue #58) --------------------------
+
+
+def _future(days: int = 2) -> str:
+    return (_dt.date.today() + _dt.timedelta(days=days)).isoformat()
+
+
+def _named_spec(name="GC FBB A", date=None, hardness=None):
+    spec = {
+        "sport": "strength",
+        "origin": "athlete",
+        "date": date or _future(1),
+        "session_type": "strength",
+        "name": name,
+        "steps": [{"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}],
+        "warnings": ["an old warning from the first authoring"],
+    }
+    if hardness is not None:
+        spec["hardness"] = hardness
+    return spec
+
+
+def test_copying_a_spec_moves_it_to_the_new_day():
+    """"Repeat FBB A from the 19th on Friday" keeps the steps and the name (#58)."""
+    target = _future(3)
+
+    copy = copy_to_date(_named_spec(), date=target, planned_intent="strength", today=_TODAY)
+
+    assert copy["date"] == target
+    assert copy["name"] == "GC FBB A"
+    assert copy["steps"] == _named_spec()["steps"]
+
+
+def test_a_copy_carries_only_the_warnings_of_its_own_day():
+    """The first authoring's warnings were about that day, not this one."""
+    copy = copy_to_date(_named_spec(), date=_TODAY, planned_intent="strength", today=_TODAY)
+
+    assert copy["warnings"] == ["target date is today; the watch may not sync before the session"]
+
+
+def test_a_copy_onto_a_past_day_is_refused():
+    with pytest.raises(ValueError, match="past date"):
+        copy_to_date(_named_spec(), date="2026-01-05", planned_intent="strength", today=_TODAY)
+
+
+def test_a_copy_harder_than_the_new_days_plan_is_refused():
+    """The plan guard runs for the day it lands on, not the day it came from (#58)."""
+    with pytest.raises(ValueError, match="easy"):
+        copy_to_date(_named_spec(), date=_future(3), planned_intent="easy", today=_TODAY)
+
+
+def test_a_copy_of_a_measured_spec_is_judged_on_what_it_measured():
+    with pytest.raises(ValueError, match="easy"):
+        copy_to_date(
+            _named_spec(hardness="quality"),
+            date=_future(3),
+            planned_intent="easy",
+            today=_TODAY,
+        )

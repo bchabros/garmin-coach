@@ -26,6 +26,7 @@ EXPECTED_TOOLS = {
     "get_recommendation",
     "get_events",
     "get_workout_status",
+    "get_pushed_workouts",
     # local writes
     "log_rpe",
     "log_niggle",

@@ -432,6 +432,7 @@ def author_workout(
     date: str,
     request: dict[str, Any] | None = None,
     sport: str | None = None,
+    reuse_from: str | None = None,
 ) -> dict[str, Any]:
     """Author a structured workout spec for a date and write workout.json.
 
@@ -446,6 +447,10 @@ def author_workout(
     session's date is a reusable workout: the same steps pushed on another date are
     scheduled again rather than uploaded twice.
 
+    ``reuse_from`` repeats a day's session on this date ("the FBB A from the 19th"):
+    the steps and the name are copied and re-guarded against this day's plan of
+    record. Find the day with ``get_pushed_workouts``.
+
     A session harder than the plan of record for that date is refused, naming both
     intents: the plan is the coaching decision, so change the plan first (a manual
     edit of ``plans/<monday>_week.md`` plus ``plan import``, or ``plan_confirm`` for
@@ -456,6 +461,21 @@ def author_workout(
         return tools.author_workout(
             conn, date=date, request=request, sport=sport, reports_dir=_REPORTS_DIR
         )
+    finally:
+        conn.close()
+
+
+
+@server.tool()
+def get_pushed_workouts(since: str | None = None) -> dict[str, Any]:
+    """The workouts already pushed, newest first (date, name, id, last known state).
+
+    Transport-free - it reads the push receipts on disk. Use it to find the session
+    the athlete means before repeating it with ``author_workout(reuse_from=...)``.
+    """
+    conn = _open()
+    try:
+        return tools.get_pushed_workouts(conn, since=since, reports_dir=_REPORTS_DIR)
     finally:
         conn.close()
 

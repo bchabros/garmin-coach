@@ -1941,3 +1941,138 @@ def test_author_workout_reports_a_malformed_label_as_tool_text(conn, tmp_path):
 
     assert out["data"]["spec"] is None
     assert "30" in out["data"]["error"]
+
+
+# --- repeating a pushed session on another day (issue #58) -------------------
+
+
+def _push_receipt(reports, date, **over):
+    day = reports / date
+    day.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "action": "create",
+        "applied": True,
+        "workout_id": 1000,
+        "spec_hash": "abc123",
+        "name": "GC FBB A",
+        "session_type": "strength",
+        "planned_intent": "strength",
+        "pushed_at": f"{date}T18:00:00",
+    }
+    receipt.update(over)
+    (day / "push.json").write_text(json.dumps(receipt))
+    return receipt
+
+
+def test_author_workout_repeats_a_spec_from_another_day(conn, tmp_path):
+    """"Repeat FBB A from the 19th on Friday" needs no retyping of the steps (#58)."""
+    _seed_mart(conn, YESTERDAY, hrv=60)
+    source, target = _authorable_day(conn), (dt.date.today() + dt.timedelta(days=3)).isoformat()
+    day = tmp_path / source
+    day.mkdir(parents=True)
+    spec = {
+        "sport": "strength",
+        "origin": "athlete",
+        "date": source,
+        "session_type": "strength",
+        "name": "GC FBB A",
+        "steps": [{"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}],
+        "warnings": [],
+    }
+    (day / "workout.json").write_text(json.dumps(spec))
+
+    out = tools.author_workout(conn, target, reuse_from=source, reports_dir=str(tmp_path))["data"]
+
+    assert out["error"] is None
+    assert out["spec"]["date"] == target
+    assert out["spec"]["name"] == "GC FBB A"
+    assert out["spec"]["steps"] == spec["steps"]
+    assert json.loads((tmp_path / target / "workout.json").read_text())["name"] == "GC FBB A"
+
+
+def test_repeating_a_session_the_new_days_plan_forbids_is_refused(conn, tmp_path):
+    _seed_mart(conn, YESTERDAY, hrv=60)
+    source = _authorable_day(conn)
+    target = (dt.date.today() + dt.timedelta(days=3)).isoformat()
+    monday = dt.date.fromisoformat(target)
+    plan_mod.upsert_week(
+        conn,
+        [
+            {
+                "week_start": (monday - dt.timedelta(days=monday.weekday())).isoformat(),
+                "dow": dow,
+                "planned": "rest",
+                "intent": "rest",
+            }
+            for dow in range(7)
+        ],
+    )
+    day = tmp_path / source
+    day.mkdir(parents=True)
+    (day / "workout.json").write_text(
+        json.dumps(
+            {
+                "sport": "strength",
+                "origin": "athlete",
+                "date": source,
+                "session_type": "strength",
+                "name": "GC FBB A",
+                "steps": [],
+                "warnings": [],
+            }
+        )
+    )
+
+    out = tools.author_workout(conn, target, reuse_from=source, reports_dir=str(tmp_path))["data"]
+
+    assert out["spec"] is None
+    assert "rest" in out["error"]
+
+
+def test_repeating_a_day_with_no_spec_says_so(conn, tmp_path):
+    _seed_mart(conn, YESTERDAY, hrv=60)
+    target = _authorable_day(conn)
+
+    out = tools.author_workout(
+        conn, target, reuse_from="2026-07-01", reports_dir=str(tmp_path)
+    )["data"]
+
+    assert out["spec"] is None
+    assert "2026-07-01" in out["error"]
+
+
+def test_get_pushed_workouts_lists_the_receipts_newest_first(conn, tmp_path):
+    """So the coach can find "FBB A" without asking the athlete for the date (#58)."""
+    _push_receipt(tmp_path, "2026-09-19", name="GC FBB A")
+    _push_receipt(tmp_path, "2026-09-12", name="GC 2026-09-12 tempo", session_type="tempo")
+
+    out = tools.get_pushed_workouts(conn, reports_dir=str(tmp_path))["data"]
+
+    assert [w["date"] for w in out["workouts"]] == ["2026-09-19", "2026-09-12"]
+    assert out["workouts"][0]["name"] == "GC FBB A"
+    assert out["workouts"][0]["workout_id"] == 1000
+    assert out["workouts"][0]["session_type"] == "strength"
+    assert out["workouts"][0]["applied"] is True
+
+
+def test_get_pushed_workouts_carries_the_last_known_account_state(conn, tmp_path):
+    _push_receipt(tmp_path, "2026-09-19", reconciled={"state": "live", "checked_at": "2026-09-20"})
+
+    out = tools.get_pushed_workouts(conn, reports_dir=str(tmp_path))["data"]
+
+    assert out["workouts"][0]["last_state"] == "live"
+
+
+def test_get_pushed_workouts_can_start_at_a_date(conn, tmp_path):
+    _push_receipt(tmp_path, "2026-09-19")
+    _push_receipt(tmp_path, "2026-08-01")
+
+    out = tools.get_pushed_workouts(conn, since="2026-09-01", reports_dir=str(tmp_path))["data"]
+
+    assert [w["date"] for w in out["workouts"]] == ["2026-09-19"]
+
+
+def test_get_pushed_workouts_without_any_receipts_is_empty(conn, tmp_path):
+    out = tools.get_pushed_workouts(conn, reports_dir=str(tmp_path))["data"]
+
+    assert out["workouts"] == []

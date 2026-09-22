@@ -555,6 +555,7 @@ def author_workout(
     date: str,
     request: dict[str, Any] | None = None,
     sport: str | None = None,
+    reuse_from: str | None = None,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Author a workout spec for a date and write ``workout.json``.
@@ -562,8 +563,13 @@ def author_workout(
     Mirrors the CLI author path: without ``request`` the spec comes from the
     recommendation targeting ``date`` (its intent picking the sport unless an
     explicit ``sport`` overrides it); with one, the request dict (athlete or
-    hybrid, including a custom ``structure``) is authored as-is.
+    hybrid, including a custom ``structure``) is authored as-is. With
+    ``reuse_from``, that day's spec is repeated on this one, guarded by this day's
+    plan of record (issue #58).
     """
+    if reuse_from is not None:
+        return _wrap(conn, _repeat_spec(conn, date, reuse_from, reports_dir))
+
     dg = _digest_for(conn, _day_before(date))
     recommendation = dg.get("recommendation")
 
@@ -592,10 +598,7 @@ def author_workout(
     if spec is None:
         return _wrap(conn, {"spec": None, "error": None, "note": "rest - nothing to author"})
 
-    out_dir = _day_dir(reports_dir, date)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "workout.json"
-    path.write_text(json.dumps(spec, indent=2))
+    path = _write_spec(spec, date, reports_dir)
     return _wrap(conn, {"spec": spec, "error": None, "path": str(path)})
 
 
@@ -828,6 +831,73 @@ def _validate_proposal(
         for i, d in enumerate(days)
     ]
     return resolved, None
+
+
+def _repeat_spec(
+    conn: sqlite3.Connection, date: str, reuse_from: str, reports_dir: str
+) -> dict[str, Any]:
+    """Copy the spec authored for one day onto another, then write it there."""
+    source, error = _load_spec(reuse_from, reports_dir)
+    if source is None:
+        return {"spec": None, "error": error}
+    try:
+        spec = author.copy_to_date(
+            source,
+            date=date,
+            planned_intent=plan.planned_intent(conn, date),
+            today=dt.date.today().isoformat(),
+        )
+    except ValueError as exc:
+        return {"spec": None, "error": str(exc)}
+    return {"spec": spec, "error": None, "path": str(_write_spec(spec, date, reports_dir))}
+
+
+def _write_spec(spec: dict[str, Any], date: str, reports_dir: str) -> pathlib.Path:
+    """Write a spec into its day's report directory."""
+    out_dir = _day_dir(reports_dir, date)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "workout.json"
+    path.write_text(json.dumps(spec, indent=2))
+    return path
+
+
+def get_pushed_workouts(
+    conn: sqlite3.Connection, since: str | None = None, reports_dir: str = "reports"
+) -> dict[str, Any]:
+    """The workouts already pushed, newest first, from the receipts on disk.
+
+    Transport-free: the receipts are the listing, so finding the session the athlete
+    means ("the FBB A from the 19th") costs nothing and works offline. ``last_state``
+    is what the last status read found on the account, when one ran.
+    """
+    root = pathlib.Path(reports_dir)
+    workouts = [
+        summary
+        for day in sorted((p for p in root.glob("*/push.json")), reverse=True)
+        if (summary := _pushed_summary(day)) is not None
+        and (since is None or summary["date"] >= since)
+    ]
+    return _wrap(conn, {"workouts": workouts, "error": None})
+
+
+def _pushed_summary(receipt_path: pathlib.Path) -> dict[str, Any] | None:
+    """One receipt as a listing row, or None when it cannot be read."""
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    reconciled = receipt.get("reconciled") or {}
+    return {
+        "date": receipt_path.parent.name,
+        "name": receipt.get("name"),
+        "workout_id": receipt.get("workout_id"),
+        "action": receipt.get("action"),
+        "applied": receipt.get("applied"),
+        "session_type": receipt.get("session_type"),
+        "pushed_at": receipt.get("pushed_at"),
+        "last_state": reconciled.get("state"),
+    }
+
 
 
 def push_preview(

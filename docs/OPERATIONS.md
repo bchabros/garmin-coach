@@ -278,10 +278,11 @@ never run from the nightly automation, and it bends the golden rule deliberately
    garmin-coach push --date 2026-07-17 --confirm --replace   # overwrite a changed same-name workout
    ```
 
-   Idempotency uses the **account** as the source of truth (workouts are named `GC {date}
-   {type}` and carry a `gc-hash` of the spec): an identical re-push is a no-op, a changed one
-   needs `--replace`, and a push that half-fails (uploaded, not scheduled) is completed by
-   running `push` again -- it skips the upload. Exit codes: `0` success/dry-run/no-op, `1`
+   Idempotency uses the **account** as the source of truth (every pushed workout carries a
+   `gc-hash` of the spec in its description, which is also how a coach-owned workout is
+   recognised): an identical re-push is a no-op, a changed one needs `--replace`, and a push
+   that half-fails (uploaded, not scheduled) is completed by running `push` again -- it skips
+   the upload. Exit codes: `0` success/dry-run/no-op, `1`
    refused (needs `--replace`) or missing spec, `2` a partial push (see the `error` in
    `push.json`).
 
@@ -289,6 +290,25 @@ never run from the nightly automation, and it bends the golden rule deliberately
    authored before the plan was revised is refused (exit `1`), and `--replace` does not
    override it -- that flag overwrites a different workout, it is not a licence to outrank
    the plan. Re-author the date instead.
+
+**Naming the workout (issue #58, ADR 0029).** Any request may name the session it pushes:
+`label` (at most 30 characters) becomes `GC {date} {label}`, `name` (at most 80) is used
+whole, and with neither the name is `GC {date} {session_type}` as before. Give the label
+the words the athlete used ("4x2 km próg", "FBB A"), in their language or the watch's when
+they ask for it; empty, multi-line, over-long, and `GC `-prefixed labels are refused.
+
+A name **without the session's own date** makes the workout reusable: the same steps on
+another date are scheduled again rather than uploaded twice, so the watch holds one "GC FBB
+A" with several dates. Repeat one with `author_workout(reuse_from=<date>)` over MCP -- the
+copy is re-guarded against the new day's plan of record -- and find the day it came from
+with `get_pushed_workouts`. Renaming a pushed workout is a change like any other: the
+preview reports `replace` and the athlete confirms it (Garmin has no rename).
+
+`--replace` deletes the account's old workout **only** when its name carries the requested
+date. A date-free name may be on days no receipt knows about (the athlete can schedule it
+by hand in Connect), so there the old version is taken off this date, kept, and the new one
+uploaded beside it; the preview says which will happen and warns when the library will then
+hold two workouts of the same name.
 
 **Custom run structure (Phase 11a).** An `athlete`/hybrid request may carry a `structure`
 block that shapes the run template (`warmup + reps x (work + recovery) + cooldown`, one
@@ -466,6 +486,10 @@ Which clients pick it up and how is covered in "Registering the server" below �
   Both `author_workout` and the push pair **refuse a session harder than the plan of
   record** (issue #22, ADR 0021), and `replace` does not override that; change the plan
   for the date first.
+- **`get_pushed_workouts(since?)`** — the push receipts on disk, newest first: date,
+  name, workout id, action, whether it applied, session type, and `last_state` (what the
+  last status read found on the account). Transport-free; it is how the coach resolves
+  "the FBB A from the 19th" to a date before repeating it.
 - **`get_workout_status(date)`** — the authored spec, the push receipt, and
   `reconciled`: that receipt checked against the Garmin account (issue #41). Read
   `reconciled.state`, not `push.applied` — the receipt records what the push did,

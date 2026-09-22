@@ -433,6 +433,24 @@ code, docstrings, PRDs, and ADRs.
 - **rest default (exercise sports)** - the between-sets rest applied when an
   exercise entry gives none: 90 s for `strength`, 60 s for `hiit`; overridable
   per entry (`{"min"/"s"}` or `"lap"`). The session's trailing rest is dropped.
+- **workout name (workout request)** - what the pushed workout is called on the
+  account and the watch. The athlete's to set (issue #58, ADR 0029): `label` names
+  the session after the prefix and the date (`GC 2026-09-25 4x2 km próg`), `name`
+  replaces the whole thing, and with neither the session type answers as it always
+  did. Trimmed; empty, multi-line, over-long (30 for a label, 80 for a name) and
+  `GC `-prefixed labels are refused. The name is inside `spec_hash`, so renaming a
+  pushed workout is a changed workout, not a cosmetic edit.
+- **reusable workout** - a pushed workout whose name does **not** carry the session's
+  date, so the same steps are one workout the athlete can have on several days. No
+  separate mechanism: the fingerprint already schedules an existing workout instead of
+  uploading a second copy when it reappears on a new date. Repeated from chat by
+  copying a day's spec onto another date (`reuse_from`), which re-runs that day's date
+  and plan guards.
+- **replace rule** - what `--replace` does to the account's old workout: a workout
+  named for the requested date is deleted (it has nowhere else to be), a date-free one
+  is taken off that date and kept, because it may be on days no receipt knows about -
+  including days scheduled by hand in Connect. The preview says which, and warns when
+  the library will then hold two workouts of the same name (ADR 0029).
 - **plan guard** - the refusal of any session harder than the plan of record for its
   date, measured by the spec's *hardness* where it has one and by its session type
   where it does not (issue #22, ADR 0021; issue #62, ADR 0024). It runs twice:
@@ -545,8 +563,11 @@ code, docstrings, PRDs, and ADRs.
   prerogative and must not read as a fault.
 - **confirm_token vs spec_hash** - two hashes with two jobs (ADR 0019). `spec_hash`
   (name + steps) is the account-side idempotency marker written into the Garmin
-  workout description; it ignores the date on purpose, so rescheduling a workout is
-  not a different workout. `confirm_token` (name + steps + date + planned intent)
+  workout description, and the tag that identifies a coach-authored workout. It takes
+  no date of its own, so whether a workout is one-day or reusable is decided by its
+  *name*: the default `GC <date> <type>` carries the date and cannot recur, while a
+  date-free name makes the same steps the same workout on every date (ADR 0029).
+  `confirm_token` (name + steps + date + planned intent)
   gates preview -> confirm, because the date decides what gets scheduled and which
   day's activity collision was checked, and the planned intent decides whether the
   push is allowed at all (ADR 0021).

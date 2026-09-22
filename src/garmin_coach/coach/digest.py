@@ -389,9 +389,7 @@ def build_digest(
         "days": _date_range_days(from_date, to_date),
         # What the trailing days are worth: a planned day with no activity yet may be
         # a session still uploading, not a session skipped (issue #72).
-        "unconfirmed_days": _plan.unconfirmed_days(
-            conn, window_days=recheck_days, through=to_date
-        ),
+        "unconfirmed_days": _plan.unconfirmed_days(conn, window_days=recheck_days, through=to_date),
     }
     rows = enrich_hrv_band(read_mart(conn, from_date, to_date), thr)
     recent = _recent_rows(rows, to_date)

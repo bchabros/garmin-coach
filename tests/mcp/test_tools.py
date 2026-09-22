@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import types
 
 import pytest
 
@@ -1545,6 +1546,7 @@ def test_event_add_reports_the_block_before_and_after(conn):
     assert out["block_before"] is None
     assert out["block_after"]["block"] in ("base", "build", "peak", "taper", "race")
     assert out["block_after"]["weeks_to_event"] == 3
+    assert out["block_after"]["anchor_event_id"] == out["event"]["id"]
 
 
 def test_event_add_refuses_a_malformed_date_as_tool_text(conn):
@@ -1965,7 +1967,7 @@ def _push_receipt(reports, date, **over):
 
 
 def test_author_workout_repeats_a_spec_from_another_day(conn, tmp_path):
-    """"Repeat FBB A from the 19th on Friday" needs no retyping of the steps (#58)."""
+    """ "Repeat FBB A from the 19th on Friday" needs no retyping of the steps (#58)."""
     _seed_mart(conn, YESTERDAY, hrv=60)
     source, target = _authorable_day(conn), (dt.date.today() + dt.timedelta(days=3)).isoformat()
     day = tmp_path / source
@@ -1976,7 +1978,9 @@ def test_author_workout_repeats_a_spec_from_another_day(conn, tmp_path):
         "date": source,
         "session_type": "strength",
         "name": "GC FBB A",
-        "steps": [{"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}],
+        "steps": [
+            {"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}
+        ],
         "warnings": [],
     }
     (day / "workout.json").write_text(json.dumps(spec))
@@ -2033,9 +2037,9 @@ def test_repeating_a_day_with_no_spec_says_so(conn, tmp_path):
     _seed_mart(conn, YESTERDAY, hrv=60)
     target = _authorable_day(conn)
 
-    out = tools.author_workout(
-        conn, target, reuse_from="2026-07-01", reports_dir=str(tmp_path)
-    )["data"]
+    out = tools.author_workout(conn, target, reuse_from="2026-07-01", reports_dir=str(tmp_path))[
+        "data"
+    ]
 
     assert out["spec"] is None
     assert "2026-07-01" in out["error"]
@@ -2076,3 +2080,47 @@ def test_get_pushed_workouts_without_any_receipts_is_empty(conn, tmp_path):
     out = tools.get_pushed_workouts(conn, reports_dir=str(tmp_path))["data"]
 
     assert out["workouts"] == []
+
+
+def test_the_digest_and_the_envelope_share_one_recheck_window(conn, monkeypatch):
+    """Two windows in one response would contradict each other (ADR 0026)."""
+    monkeypatch.setattr(
+        tools, "get_settings", lambda: types.SimpleNamespace(sync_recheck_days=5)
+    )
+    today = dt.date.today()
+    for back in range(1, 6):
+        day = today - dt.timedelta(days=back)
+        monday = (day - dt.timedelta(days=day.weekday())).isoformat()
+        plan_mod.upsert_week(
+            conn,
+            [
+                {"week_start": monday, "dow": dow, "planned": "tempo", "intent": "tempo"}
+                for dow in range(7)
+            ],
+        )
+    _seed_mart(conn, YESTERDAY, hrv=60, load_day=10)
+
+    out = tools.get_digest(conn)
+
+    assert len(out["freshness"]["unconfirmed_days"]) == 5
+    assert out["data"]["window"]["unconfirmed_days"] == out["freshness"]["unconfirmed_days"]
+
+
+def test_event_add_reports_the_row_it_stored_whatever_shape_the_date_came_in(conn):
+    """The writer normalises the date, so matching on what was typed would miss it."""
+    _seed_core_day(conn)
+    compact = (dt.date.today() + dt.timedelta(days=21)).strftime("%Y%m%d")
+
+    out = tools.event_add(
+        conn,
+        date=compact,
+        type="run_race",
+        priority="B",
+        status="tentative",
+        date_precision="exact",
+        data_start_date=DATA_START,
+    )["data"]
+
+    assert out["error"] is None
+    assert out["event"] is not None
+    assert out["event"]["date"] == RACE

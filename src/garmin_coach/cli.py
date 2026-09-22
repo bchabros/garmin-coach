@@ -43,12 +43,12 @@ def _check_range(name: str, value: int | None, lo: int, hi: int) -> None:
 
 
 def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
-    """Recompute every mart after a transport-free write.
+    """Recompute every mart after a write that changed what they are built from.
 
-    A race date or a revised plan changes derived rows far from the one it touched -
-    the block calendar, plan-vs-actual - so the write is only half done until the
-    marts agree with it, and waiting for the nightly run would mean a day of stale
-    reads (issue #72).
+    A race date, a revised plan or a repaired day changes derived rows far from the
+    one it touched - the block calendar, plan-vs-actual - so the write is only half
+    done until the marts agree with it, and waiting for the nightly run would mean a
+    day of stale reads (issue #72).
 
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
@@ -267,7 +267,12 @@ def _cmd_report(args: argparse.Namespace) -> int:
     conn = db.connect(settings.db_path)
     db.bootstrap(conn)
 
-    out = report.generate_report(conn, from_date=args.from_date, to_date=args.to_date)
+    out = report.generate_report(
+        conn,
+        from_date=args.from_date,
+        to_date=args.to_date,
+        recheck_days=settings.sync_recheck_days,
+    )
     conn.close()
     print(f"report complete: {out} (digest.json + charts; run the coach skill for report.md)")
     return 0
@@ -281,7 +286,9 @@ def _cmd_author(args: argparse.Namespace) -> int:
 
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
     thresholds = report.read_thresholds(conn)
-    dg = digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    dg = digest.build_digest(
+        conn, to_date=to_date, thresholds=thresholds, recheck_days=settings.sync_recheck_days
+    )
     planned = _plan.planned_intent(conn, args.date)
     conn.close()
 
@@ -412,6 +419,26 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def invalidated_by_import(
+    conn: sqlite3.Connection, weeks: list[str], reports_dir: str
+) -> list[dict[str, Any]]:
+    """The days of the imported weeks whose pushed workout the new plan no longer allows.
+
+    Args:
+        conn: Open SQLite connection with the imported weeks cached.
+        weeks: The week starts that were just imported.
+        reports_dir: Root of the dated report folders holding the push receipts.
+
+    Returns:
+        One conflict per offending day (issue #22), oldest week first.
+    """
+    return [
+        conflict
+        for week in weeks
+        for conflict in publish.invalidated_pushes(reports_dir, _plan.planned_by_date(conn, week))
+    ]
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = _bootstrap_db(settings)
@@ -425,13 +452,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         return 1
     if imported:
         rebuild_marts(conn, data_start_date=settings.data_start_date)
-    conflicts = [
-        conflict
-        for week in imported
-        for conflict in publish.invalidated_pushes(
-            args.reports_dir, _plan.planned_by_date(conn, week)
-        )
-    ]
+    conflicts = invalidated_by_import(conn, imported, args.reports_dir)
     conn.close()
 
     if not imported:
@@ -873,7 +894,9 @@ def build_parser() -> argparse.ArgumentParser:
     ev_up.add_argument(
         "--priority", default=None, choices=_events.EVENT_PRIORITIES, help="New race priority."
     )
-    ev_up.add_argument("--status", default=None, choices=_events.EVENT_STATUSES, help="New start status.")
+    ev_up.add_argument(
+        "--status", default=None, choices=_events.EVENT_STATUSES, help="New start status."
+    )
     ev_up.add_argument(
         "--date-precision",
         dest="date_precision",

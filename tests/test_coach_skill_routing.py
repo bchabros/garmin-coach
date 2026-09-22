@@ -78,9 +78,7 @@ def test_every_registered_coach_tool_is_named_in_the_skill():
 
     from garmin_coach.mcp import server
 
-    text = "\n".join(
-        path.read_text() for path in sorted((SKILL_DIR).rglob("*.md"))
-    )
+    text = "\n".join(path.read_text() for path in sorted((SKILL_DIR).rglob("*.md")))
     registered = {t.name for t in asyncio.run(server.server.list_tools())}
 
     missing = sorted(name for name in registered if name not in text)

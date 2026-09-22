@@ -236,10 +236,11 @@ def publish(
 
     existing, conflict = _find_target(publisher, spec["name"], marker, known_workout_id)
     action = "refuse" if conflict else _resolve_action(existing, marker, publisher, date, replace)
-    message = conflict or _message(action)
     if action == "replace":
         message, notes = _replace_notes(existing, spec)
         warnings.extend(notes)
+    else:
+        message = conflict or _message(action)
     result = PublishResult(
         action=action,
         applied=False,

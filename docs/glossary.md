@@ -476,7 +476,7 @@ code, docstrings, PRDs, and ADRs.
 ## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 
 - **coach MCP** - the local `coach` stdio server (`mcp__coach__*`, registered in the
-  repo's `.mcp.json`): 23 tools in four groups (read / local write / transport /
+  repo's `.mcp.json`): 24 tools in four groups (read / local write / transport /
   workout push), each a thin wrapper over a seam the CLI already uses. Distinct from
   the exploratory `mcp__garmin__*` server. See ADR 0014, and ADR 0028 for the second
   transport tool.

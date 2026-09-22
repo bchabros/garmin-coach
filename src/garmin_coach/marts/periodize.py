@@ -195,6 +195,14 @@ _CURRENT_PLAN_COLUMNS = (
 )
 
 
+def anchor_event_id(conn: sqlite3.Connection, week_start: str) -> int | None:
+    """The goal event a planned week is dated from, or None when the week has no plan."""
+    row = conn.execute(
+        "SELECT anchor_event_id FROM plan_block WHERE week_start = ?", (week_start,)
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def current_plan(conn: sqlite3.Connection, day: str) -> dict[str, Any] | None:
     """Return the plan row for the week ``day`` falls in, joined to its anchor race.
 

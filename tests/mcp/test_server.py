@@ -15,6 +15,12 @@ import pytest
 from garmin_coach.etl import client
 from garmin_coach.mcp import server
 
+
+def _past(days: int) -> str:
+    import datetime as dt
+
+    return (dt.date.today() - dt.timedelta(days=days)).isoformat()
+
 EXPECTED_TOOLS = {
     # read (local DB)
     "get_snapshot",
@@ -109,13 +115,49 @@ def test_log_niggle_names_the_severity_scale_the_writer_accepts():
     assert "1-5" in niggle.description
 
 
-def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(monkeypatch):
-    """Unattended, a stale saved login is a message to read, not a traceback (#71)."""
+def _settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08", sync_recheck_days=3
+        ),
+    )
 
-    def _login(settings):
+
+def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(tmp_path, monkeypatch):
+    """Unattended, a stale saved login is a message to read, not a traceback (#71)."""
+    _settings(tmp_path, monkeypatch)
+
+    def _login(_settings_arg):
         raise client.LoginUnavailableError("saved login expired; run a command in a terminal")
 
     monkeypatch.setattr(server.client, "login", _login)
+    preview = server.repair_preview(from_date=_past(3), to_date=_past(1))["data"]
 
-    with pytest.raises(client.LoginUnavailableError, match="terminal"):
-        server.repair_confirm(from_date="2026-09-10", to_date="2026-09-12", confirm_token="x")
+    with pytest.raises(Exception, match="saved login expired"):
+        asyncio.run(
+            server.server.call_tool(
+                "repair_confirm",
+                {
+                    "from_date": _past(3),
+                    "to_date": _past(1),
+                    "confirm_token": preview["confirm_token"],
+                },
+            )
+        )
+
+
+def test_repair_confirm_refuses_a_stale_token_without_logging_in(tmp_path, monkeypatch):
+    """A refusal must not cost a Garmin login (ADR 0028)."""
+    _settings(tmp_path, monkeypatch)
+    logins = []
+    monkeypatch.setattr(server.client, "login", lambda s: logins.append(s))
+
+    out = server.repair_confirm(
+        from_date=_past(3), to_date=_past(1), confirm_token="0000000000000000"
+    )
+
+    assert "preview" in out["data"]["error"]
+    assert out["data"]["applied"] is False
+    assert logins == []

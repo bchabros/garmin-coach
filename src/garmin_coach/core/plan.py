@@ -15,6 +15,8 @@ import pathlib
 import re
 import sqlite3
 
+from . import db
+
 INTENTS = ("rest", "easy", "tempo", "strength", "hyrox", "crossfit", "quality")
 
 # How hard each intent is, as the plan vocabulary orders it. It lives beside
@@ -232,7 +234,7 @@ def unconfirmed_days(
         planned = resolve_day(conn, date)
         if planned is None or planned["intent"] == "rest":
             continue
-        if _has_activity(conn, date):
+        if db.count_activities(conn, date):
             continue
         days.append(
             {
@@ -243,14 +245,6 @@ def unconfirmed_days(
             }
         )
     return days
-
-
-def _has_activity(conn: sqlite3.Connection, date: str) -> bool:
-    """Whether any activity is stored for a calendar date."""
-    row = conn.execute(
-        "SELECT 1 FROM activities WHERE date(start_local) = ? LIMIT 1", (date,)
-    ).fetchone()
-    return row is not None
 
 
 

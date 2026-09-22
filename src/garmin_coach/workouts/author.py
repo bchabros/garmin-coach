@@ -528,7 +528,6 @@ def copy_to_date(
     return {**spec, "date": date, "warnings": warnings}
 
 
-
 def _validate_request(request: dict[str, Any]) -> None:
     """Check a request carries the required, well-formed fields.
 
@@ -1044,9 +1043,7 @@ def _expand_hyrox(
     return steps
 
 
-def _edge_step(
-    structure: dict[str, Any], role: _Role, targets: _Targets
-) -> dict[str, Any] | None:
+def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any] | None:
     """A warmup or cooldown step when the structure asks for one, else None.
 
     Any of the role's keys asks for it - an end, a length, or a target alone (a
@@ -1520,15 +1517,25 @@ def _exercise_garmin_step(step: dict[str, Any], order: int) -> dict[str, Any]:
 
 
 def _exercise_target(target: dict[str, Any]) -> dict[str, Any]:
-    """The targetType (and bounds) for an exercise-sport step; no target carries none."""
-    payload: dict[str, Any] = {"targetType": _garmin_target_type(target)}
+    """The targetType and bounds for an exercise-sport step that has a target.
+
+    A step with no target contributes nothing: the shape the live probes accepted
+    carries no ``targetType`` at all, and every set authored before issue #65 must
+    still go up byte for byte as it did.
+    """
     if target["type"] == "hr_band":
-        payload["targetValueOne"] = target["low_bpm"]
-        payload["targetValueTwo"] = target["high_bpm"]
-    elif target["type"] == "pace_band":
-        payload["targetValueOne"] = 1000 / target["slow_s_per_km"]
-        payload["targetValueTwo"] = 1000 / target["fast_s_per_km"]
-    return payload
+        return {
+            "targetType": _garmin_target_type(target),
+            "targetValueOne": target["low_bpm"],
+            "targetValueTwo": target["high_bpm"],
+        }
+    if target["type"] == "pace_band":
+        return {
+            "targetType": _garmin_target_type(target),
+            "targetValueOne": 1000 / target["slow_s_per_km"],
+            "targetValueTwo": 1000 / target["fast_s_per_km"],
+        }
+    return {}
 
 
 def _exercise_end_condition(end: dict[str, Any]) -> dict[str, Any]:

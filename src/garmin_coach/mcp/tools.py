@@ -87,14 +87,17 @@ def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
         "data_through": data_through,
         "today_included": today_included,
         "partial_fields": list(PARTIAL_INTRADAY_FIELDS) if today_included else [],
-        "unconfirmed_days": plan.unconfirmed_days(
-            conn, window_days=get_settings().sync_recheck_days
-        ),
+        "unconfirmed_days": plan.unconfirmed_days(conn, window_days=_recheck_days()),
     }
 
 
 def _wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
     return {"data": data, "freshness": _freshness(conn)}
+
+
+def wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
+    """Put a tool payload in the freshness envelope, for a server-side early return."""
+    return _wrap(conn, data)
 
 
 def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -105,7 +108,14 @@ def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
 def _digest_for(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
     """Build the cited digest for a horizon with the stored thresholds."""
     thresholds = report.read_thresholds(conn)
-    return digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    return digest.build_digest(
+        conn, to_date=to_date, thresholds=thresholds, recheck_days=_recheck_days()
+    )
+
+
+def _recheck_days() -> int:
+    """The re-check window the nightly sync uses - one source for every response."""
+    return get_settings().sync_recheck_days
 
 
 def _day_before(date: str) -> str:
@@ -391,13 +401,8 @@ def refresh_today(
 # watch uploaded late, narrow enough that it can never become a second backfill.
 REPAIR_MAX_DAYS = 14
 
-# The daily streams a preview reports on, by the core table that holds them.
-_REPAIR_STREAMS = {
-    "sleep": "sleep",
-    "hrv": "hrv_nightly",
-    "wellness": "daily_wellness",
-    "readiness": "training_readiness",
-}
+# The daily streams a preview reports on; their tables are core's to name.
+_REPAIR_STREAMS = ("sleep", "hrv", "wellness", "readiness")
 
 
 def repair_preview(
@@ -438,19 +443,15 @@ def _repair_dates(from_date: str, to_date: str) -> list[str]:
 
 def _repair_day(conn: sqlite3.Connection, date: str) -> dict[str, Any]:
     """What one day holds: stored activities, which daily streams answered, what was planned."""
-    activities = conn.execute(
-        "SELECT count(*) FROM activities WHERE date(start_local) = ?", (date,)
-    ).fetchone()[0]
     planned = plan.resolve_day(conn, date)
     day: dict[str, Any] = {
         "date": date,
-        "activities": activities,
+        "activities": db.count_activities(conn, date),
         "planned": planned["intent"] if planned else None,
         "plan_source": planned["source"] if planned else None,
     }
-    for stream, table in _REPAIR_STREAMS.items():
-        row = conn.execute(f"SELECT 1 FROM {table} WHERE date = ? LIMIT 1", (date,)).fetchone()
-        day[stream] = row is not None
+    for stream in _REPAIR_STREAMS:
+        day[stream] = db.has_daily_row(conn, db.DAILY_STREAM_TABLES[stream], date)
     return day
 
 
@@ -483,6 +484,30 @@ def repair_token(from_date: str, to_date: str, days: list[dict[str, Any]]) -> st
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def repair_refusal(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str,
+    to_date: str,
+    confirm_token: str,
+    data_start_date: str,
+) -> str | None:
+    """Why this repair may not run, or None when it may.
+
+    Transport-free and checked before the caller logs in, so a bad range or a token
+    from a picture that has moved costs no Garmin call at all (ADR 0028).
+    """
+    error = _repair_range_error(from_date, to_date, data_start_date)
+    if error is not None:
+        return error
+    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
+    if confirm_token != repair_token(from_date, to_date, days):
+        return (
+            "stale confirm_token: the range, or what the DB holds for it, changed "
+            "since the preview; run repair_preview again"
+        )
+    return None
+
 
 def repair_confirm(
     conn: sqlite3.Connection,
@@ -503,21 +528,17 @@ def repair_confirm(
     A mismatched token is refused without touching the account: the range, or what
     the DB held for it, changed since the preview (or no preview happened).
     """
-    error = _repair_range_error(from_date, to_date, data_start_date)
+    error = repair_refusal(
+        conn,
+        from_date=from_date,
+        to_date=to_date,
+        confirm_token=confirm_token,
+        data_start_date=data_start_date,
+    )
     if error is not None:
         return _wrap(conn, {"applied": False, "error": error})
 
-    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
-    if confirm_token != repair_token(from_date, to_date, days):
-        return _wrap(
-            conn,
-            {
-                "applied": False,
-                "error": "stale confirm_token: the range, or what the DB holds for it, "
-                "changed since the preview; run repair_preview again",
-            },
-        )
-
+    days = _repair_dates(from_date, to_date)
     before = _stored_activities(conn, from_date, to_date)
     try:
         sync.backfill(client, conn, from_date, to_date)
@@ -542,12 +563,7 @@ def repair_confirm(
 
 
 def _stored_activities(conn: sqlite3.Connection, from_date: str, to_date: str) -> int:
-    row = conn.execute(
-        "SELECT count(*) FROM activities WHERE date(start_local) BETWEEN ? AND ?",
-        (from_date, to_date),
-    ).fetchone()
-    return int(row[0])
-
+    return db.count_activities(conn, from_date, to_date)
 
 
 def author_workout(
@@ -606,14 +622,26 @@ def author_workout(
 
 
 def _current_block(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The block calendar's row for the week that holds today, or None without an anchor."""
-    return periodize.current_plan(conn, dt.date.today().isoformat())
+    """The block calendar's row for the week that holds today, or None without an anchor.
+
+    Carries the anchor race's id beside the block, so a report of the move names the
+    race the periodization is now dated from.
+    """
+    row = periodize.current_plan(conn, dt.date.today().isoformat())
+    if row is None:
+        return None
+    return {**row, "anchor_event_id": periodize.anchor_event_id(conn, row["week_start"])}
 
 
-def _event_row(conn: sqlite3.Connection, match: Callable[[dict[str, Any]], bool]):
-    """The recorded race the write touched, annotated as ``event list`` shows it."""
+def _event_row(conn: sqlite3.Connection, event_id: int) -> dict[str, Any] | None:
+    """The recorded race the write touched, annotated as ``event list`` shows it.
+
+    Looked up by the id the write returned rather than by the fields the caller
+    passed: the writer normalises what it stores, so a date the athlete typed in
+    another shape would never match itself.
+    """
     rows = periodize.annotate(db.list_goal_events(conn), dt.date.today().isoformat())
-    return next((row for row in rows if match(row)), None)
+    return next((row for row in rows if row["id"] == event_id), None)
 
 
 def event_add(
@@ -636,7 +664,7 @@ def event_add(
     """
     before = _current_block(conn)
     try:
-        events.add_goal_event(
+        event_id = events.add_goal_event(
             conn,
             date=date,
             type=type,
@@ -649,8 +677,7 @@ def event_add(
     except ValueError as exc:
         return _wrap(conn, _event_error(str(exc)))
     cli.rebuild_marts(conn, data_start_date=data_start_date)
-    row = _event_row(conn, lambda e: e["date"] == date and e["type"] == type)
-    return _wrap(conn, _event_result(row, before, _current_block(conn)))
+    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
 
 
 def event_update(
@@ -687,8 +714,7 @@ def event_update(
     except ValueError as exc:
         return _wrap(conn, _event_error(str(exc)))
     cli.rebuild_marts(conn, data_start_date=data_start_date)
-    row = _event_row(conn, lambda e: e["id"] == event_id)
-    return _wrap(conn, _event_result(row, before, _current_block(conn)))
+    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
 
 
 def _event_error(message: str) -> dict[str, Any]:
@@ -722,18 +748,10 @@ def plan_import(
     except plan.PlanParseError as exc:
         return _wrap(conn, _import_error(str(exc)))
     if not imported:
-        return _wrap(
-            conn, _import_error(f"no plan file for {week or 'any week'} in {plans_dir}")
-        )
+        return _wrap(conn, _import_error(f"no plan file for {week or 'any week'} in {plans_dir}"))
 
     cli.rebuild_marts(conn, data_start_date=data_start_date)
-    conflicts = [
-        conflict
-        for imported_week in imported
-        for conflict in publish.invalidated_pushes(
-            reports_dir, plan.planned_by_date(conn, imported_week)
-        )
-    ]
+    conflicts = cli.invalidated_by_import(conn, imported, reports_dir)
     return _wrap(conn, {"weeks": imported, "invalidated_pushes": conflicts, "error": None})
 
 
@@ -897,7 +915,6 @@ def _pushed_summary(receipt_path: pathlib.Path) -> dict[str, Any] | None:
         "pushed_at": receipt.get("pushed_at"),
         "last_state": reconciled.get("state"),
     }
-
 
 
 def push_preview(

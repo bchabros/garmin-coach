@@ -1721,7 +1721,7 @@ def test_an_exercise_warmup_carries_the_heart_rate_ceiling_it_was_given():
 
 
 def test_a_target_alone_summons_the_warmup_at_the_shared_default_length():
-    """"warm up under 140" needs no minutes: the run roles' default answers (#65)."""
+    """ "warm up under 140" needs no minutes: the run roles' default answers (#65)."""
     spec = author(_exercise_edges(warmup_target={"hr_band": [120, 140]}), _context())
 
     assert spec["steps"][0]["end"] == {"type": "time", "seconds": 600}
@@ -1732,6 +1732,16 @@ def test_an_exercise_session_without_the_keys_authors_exactly_as_before():
     spec = author(_strength_request(), _context())
 
     assert _kinds(spec["steps"]) == ["work", "rest", "work"]
+
+
+def test_an_untargeted_exercise_step_carries_no_target_in_the_payload():
+    """The shape the live probes accepted has no targetType; adding one is untested risk."""
+    spec = author(_exercise_edges(warmup_target={"hr_band": [120, 145]}), _context())
+
+    steps = to_garmin(spec)["workoutSegments"][0]["workoutSteps"]
+
+    assert "targetType" in steps[0]  # the warm-up was given a ceiling
+    assert all("targetType" not in step for step in steps[1:])
 
 
 def test_an_unknown_exercise_structure_key_is_still_refused():
@@ -1859,7 +1869,9 @@ def _named_spec(name="GC FBB A", date=None, hardness=None):
         "date": date or _future(1),
         "session_type": "strength",
         "name": name,
-        "steps": [{"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}],
+        "steps": [
+            {"kind": "work", "end": {"type": "reps", "count": 5}, "target": {"type": "none"}}
+        ],
         "warnings": ["an old warning from the first authoring"],
     }
     if hardness is not None:
@@ -1868,7 +1880,7 @@ def _named_spec(name="GC FBB A", date=None, hardness=None):
 
 
 def test_copying_a_spec_moves_it_to_the_new_day():
-    """"Repeat FBB A from the 19th on Friday" keeps the steps and the name (#58)."""
+    """ "Repeat FBB A from the 19th on Friday" keeps the steps and the name (#58)."""
     target = _future(3)
 
     copy = copy_to_date(_named_spec(), date=target, planned_intent="strength", today=_TODAY)

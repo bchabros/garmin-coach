@@ -360,8 +360,9 @@ def test_cmd_event_update_rebuilds_the_block_calendar(tmp_path, monkeypatch):
 
 def test_cmd_plan_import_rebuilds_plan_versus_actual(tmp_path, monkeypatch, capsys):
     """An imported week is compared against what was actually done straight away (#72)."""
-    week = [(_dt.date.fromisoformat("2026-07-13") + _dt.timedelta(days=i)).isoformat()
-            for i in range(7)]
+    week = [
+        (_dt.date.fromisoformat("2026-07-13") + _dt.timedelta(days=i)).isoformat() for i in range(7)
+    ]
     path = _seeded_db(tmp_path, dates=tuple(week))
     plans_dir = tmp_path / "plans"
     plans_dir.mkdir()

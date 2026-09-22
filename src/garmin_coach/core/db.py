@@ -46,6 +46,15 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
 
 _LEGACY_RAW_TABLE = "raw_payloads_pre_sha"
 
+# The core tables the daily streams write, keyed by the stream name the sync uses.
+DAILY_STREAM_TABLES = {
+    "sleep": "sleep",
+    "hrv": "hrv_nightly",
+    "wellness": "daily_wellness",
+    "readiness": "training_readiness",
+    "status": "training_status_daily",
+}
+
 
 def bootstrap(conn: sqlite3.Connection) -> None:
     """Create all tables/views idempotently, then run the schema migrations."""
@@ -115,6 +124,38 @@ def insert_raw(
         "VALUES (?,?,?,?,?)",
         (fetched_at, endpoint, ref_date, payload, _payload_sha(payload)),
     )
+
+
+def count_activities(conn: sqlite3.Connection, from_date: str, to_date: str | None = None) -> int:
+    """How many activities are stored for a date, or for an inclusive range."""
+    return int(
+        conn.execute(
+            "SELECT count(*) FROM activities WHERE date(start_local) BETWEEN ? AND ?",
+            (from_date, to_date or from_date),
+        ).fetchone()[0]
+    )
+
+
+def has_daily_row(conn: sqlite3.Connection, table: str, date: str) -> bool:
+    """Whether a daily stream's core table holds a row for a date.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        table: A daily stream's core table (``sleep``, ``hrv_nightly``, ...).
+        date: The calendar date to look for.
+
+    Returns:
+        True when the table has that date.
+
+    Raises:
+        ValueError: If the table is not one the daily streams write, which would
+            otherwise interpolate a caller's text straight into SQL.
+    """
+    if table not in DAILY_STREAM_TABLES.values():
+        raise ValueError(f"unknown daily stream table: {table!r}")
+    row = conn.execute(f"SELECT 1 FROM {table} WHERE date = ? LIMIT 1", (date,)).fetchone()
+    return row is not None
+
 
 
 def get_sync_watermark(conn: sqlite3.Connection, stream: str) -> str | None:
@@ -245,18 +286,21 @@ _GOAL_EVENT_COLUMNS = (
 _GOAL_EVENT_UPDATABLE = frozenset(_GOAL_EVENT_COLUMNS) - {"id"}
 
 
-def insert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
-    """Insert a `goal_event` row.
+def insert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> int:
+    """Insert a `goal_event` row and return its id.
 
     Deliberately not an upsert: adding a race that already exists must fail rather
     than overwrite it, because `add` omits the flags the athlete did not retype and
     would otherwise silently erase the stored `target_s` / `note`. Corrections go
     through `update_goal_event`, which touches only the fields it is given.
 
+    Returns:
+        The new event's `id`, as `event list` shows it.
+
     Raises:
         sqlite3.IntegrityError: If a race with the same (date, type) is recorded.
     """
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO goal_event(date, type, priority, status, date_precision, target_s, note) "
         "VALUES (?,?,?,?,?,?,?)",
         (
@@ -269,6 +313,7 @@ def insert_goal_event(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
             row.get("note"),
         ),
     )
+    return int(cur.lastrowid or 0)
 
 
 def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: Any) -> None:

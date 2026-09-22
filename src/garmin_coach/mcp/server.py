@@ -143,7 +143,6 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
         conn.close()
 
 
-
 @server.tool()
 def plan_import(week: str | None = None) -> dict[str, Any]:
     """Re-read the authored plan files into the plan of record, then rebuild the marts.
@@ -379,7 +378,6 @@ def refresh_today() -> dict[str, Any]:
         conn.close()
 
 
-
 @server.tool()
 def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
     """Show what the DB holds for each day of a range; nothing is fetched.
@@ -414,6 +412,16 @@ def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str
     settings = get_settings()
     conn = _open()
     try:
+        # The refusals are transport-free on purpose: a stale token must not cost a login.
+        refusal = tools.repair_refusal(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            confirm_token=confirm_token,
+            data_start_date=settings.data_start_date,
+        )
+        if refusal is not None:
+            return tools.wrap(conn, {"applied": False, "error": refusal})
         transport = client.login(settings)
         return tools.repair_confirm(
             conn,
@@ -463,7 +471,6 @@ def author_workout(
         )
     finally:
         conn.close()
-
 
 
 @server.tool()

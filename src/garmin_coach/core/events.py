@@ -81,7 +81,7 @@ def add_goal_event(
     date_precision: str,
     target: str | None = None,
     note: str | None = None,
-) -> None:
+) -> int:
     """Record a goal race in core (transport-free).
 
     Args:
@@ -93,6 +93,9 @@ def add_goal_event(
         date_precision: Whether the exact day is known (``exact`` or ``approx``).
         target: Optional goal time as ``H:MM:SS``, ``MM:SS``, or seconds.
         note: Optional free-text note.
+
+    Returns:
+        The new event's `id`, as `event list` shows it.
 
     Raises:
         ValueError: If the date is malformed, an enum value is unknown, the target time
@@ -113,7 +116,7 @@ def add_goal_event(
         "note": note,
     }
     try:
-        db.insert_goal_event(conn, row)
+        event_id = db.insert_goal_event(conn, row)
     except sqlite3.IntegrityError:
         existing = next(
             e
@@ -125,6 +128,7 @@ def add_goal_event(
             f"use `garmin-coach event update {existing['id']}` to change it"
         ) from None
     conn.commit()
+    return event_id
 
 
 def update_goal_event(conn: sqlite3.Connection, event_id: int, **fields: str | None) -> None:

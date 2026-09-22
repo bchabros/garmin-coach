@@ -33,3 +33,18 @@ and caches it. Confirm refuses a week that already has a file - revisions are th
 athlete's own edit plus `garmin-coach plan import`, so their prose and revision log are
 never overwritten by a tool that cannot read them. Without the MCP tools, write the file
 in the same table format by hand and run `plan import`.
+
+## Re-importing a week the athlete edited by hand
+
+`plans/<monday>_week.md` is the plan of record, and the DB holds a cache of its intent
+column. When the athlete edits the file themselves, `plan_import()` re-reads it and
+rebuilds the marts, so adherence and the block calendar stop scoring against a stale week.
+It is transport-free and idempotent. It answers with the weeks it read and with
+`invalidated_pushes`: days of those weeks whose already-pushed workout the new plan no
+longer allows. Name those days to the athlete and offer to re-author them - nothing on the
+account changes by itself.
+
+Use it whenever the athlete says they changed the plan, and before a report if the file
+looks newer than the last nightly run. It never overwrites the athlete's file; writing a
+week is still `plan_preview` -> `plan_confirm`, and confirm refuses a week that already
+has a file.

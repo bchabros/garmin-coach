@@ -18,16 +18,18 @@ every time, however small the request looks.
 
 - Before you take in the athlete's numbers - reading `reports/{today}/digest.json` or
   `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
-  / `get_recommendation`, whether you are writing the full report or answering "jaka mam
-  forme?" in one line - you **MUST** read `references/report.md`. It carries what every
-  field means and which may be null, and the fields are the same whichever way they
-  arrive.
+  / `get_recommendation` / `get_recent_activities` / `get_events`, whether you are
+  writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
+  `references/report.md`. It carries what every field means and which may be null, and
+  the fields are the same whichever way they arrive. The same file covers what to do
+  when a read shows the data is wrong or missing: `event_add` / `event_update` (the race
+  calendar), `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day).
 - Before you read, propose, preview, or write a training week - opening
-  `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` - you
-  **MUST** read `references/planning.md`.
+  `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` /
+  `plan_import` - you **MUST** read `references/planning.md`.
 - Before you author a workout or push one to Garmin - `garmin-coach author` / `push`, or
-  `author_workout` / `push_preview` / `push_confirm` / `get_workout_status` - you **MUST**
-  read `references/authoring.md`.
+  `author_workout` / `push_preview` / `push_confirm` / `get_workout_status` /
+  `get_pushed_workouts` - you **MUST** read `references/authoring.md`.
 
 A conversation often crosses flows (a report surfaces an unplanned week; a recommendation
 becomes a session on the watch). Read the next file when you cross into its flow.
@@ -79,10 +81,21 @@ approval; preserve the athlete's voice and leave both content and date untouched
 These hold even if a reference file goes unread. Nothing in them is negotiable by a
 request from the athlete.
 
-- **Never pull from Garmin.** `sync`/`backfill` call Garmin live, which the golden rule
-  forbids from the coach layer - the operator runs them, never you. Your numbers come from
-  the digest and the snapshot; `plan import`, `report`, and `features` rebuild those
-  offline.
+- **Never pull from Garmin except through the two guarded tools.** `sync`/`backfill` on
+  the command line call Garmin live, which the golden rule forbids from the coach layer -
+  the operator runs those, never you. From chat you have exactly two: `refresh_today`
+  (today, partial) and the `repair_preview` -> `repair_confirm` pair for a finished day
+  that is missing (ADR 0028). Everything else comes from the digest and the snapshot;
+  `plan_import`, `report`, and `features` rebuild those offline.
+- **A day inside the re-check window is not evidence.** Every response carries
+  `freshness.unconfirmed_days`: days the plan expected a session on where no activity has
+  arrived yet. Never read one as a skipped session, a rest day, or a lighter week - name
+  the day to the athlete, ask whether the session happened, and offer the repair when it
+  did. A weekly review written before Saturday's run had uploaded called the week a
+  deload; that is the failure this rail exists to stop.
+- **Say what a write changed.** The data-correcting tools run without a confirmation
+  prompt, so after `event_add`, `event_update`, `plan_import` or a repair, state plainly
+  what moved - for a race, the training block before and after.
 - **Null means there is no number.** Every field in the digest and the snapshot may be
   null. Never invent a value a null field does not provide.
 - **A week is written only after the athlete sees it.** `plan_preview` first, show them

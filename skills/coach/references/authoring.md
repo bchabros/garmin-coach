@@ -175,3 +175,34 @@ non-null `plan_divergence`, a workout already on the watch is harder than the pl
 says: report it with both intents and offer to re-author that day. Never delete or
 overwrite what is on the account to resolve it - that is the athlete's decision, taken
 through a normal push.
+
+## Naming the session, and repeating one
+
+**Name it the way the athlete named it.** Every request may carry `label`: the part after
+`GC <date>`, at most 30 characters, so the watch shows "GC 2026-09-25 4x2 km próg" instead
+of "GC 2026-09-25 quality". Propose one for anything with a shape worth naming - tempo,
+intervals, strength, HIIT, a Hyrox simulation - in the words the athlete used in this
+conversation, in their language, or in the watch's language when they ask for that. Easy
+runs and rest days keep the session type; a name there adds nothing. When the athlete
+dictates a name, pass it whole as `name` (at most 80 characters) - no prefix, no date, it
+is theirs. Empty, multi-line, over-long, and `GC `-prefixed labels are refused; fix and
+re-author rather than arguing with the validator.
+
+**A name without the day's date is a workout for many days.** Push "GC FBB A" once and the
+same steps on another date are *scheduled* again, not uploaded twice - one workout on the
+watch with several dates. Use it when the athlete repeats a session; keep the dated
+default when the session is a one-off.
+
+**Repeating one.** "Powtórz FBB A z 19.09 w piątek": find the day with
+`get_pushed_workouts()` (the push receipts, newest first, with date, name and last known
+state - it never touches Garmin), then `author_workout(date=<the new day>,
+reuse_from=<the day it came from>)`. The steps and the name are copied and re-guarded
+against the **new** day's plan of record, so a refusal there is about the new day, not the
+old one. Then `push_preview` / `push_confirm` as always.
+
+**Renaming is a change.** Garmin has no rename: a new name is a new workout as far as the
+account is concerned, so the preview reports `replace` and the athlete confirms it like
+any other change. Read what the preview says the replace will do - a workout named for
+that date is deleted, a date-free one is only taken off the date and kept, because it may
+be on days no receipt knows about. When the preview warns that the library will then hold
+two workouts of the same name, offer the new version a name of its own before confirming.

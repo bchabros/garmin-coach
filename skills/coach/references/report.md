@@ -175,6 +175,45 @@ may be null, and the structure of `report.md`.
    - **Wykresy** - embed both: `![HRV](hrv_band.png)` and `![ACWR](acwr.png)`.
    - **Zastrzeżenie** - end with the digest `disclaimer` verbatim.
 
+## What the athlete can tell you that the watch cannot
+
+Three local writes belong to the report flow, because what they record is what the next
+read is missing. All three are transport-free and recompute the marts themselves.
+
+- **How hard it felt.** `log_rpe(activity_id, rpe, soreness?, mood?, note?)` - the Borg
+  CR10 session RPE (1-10) for a stored activity. It blends into that day's load, so offer
+  it when the athlete volunteers how a session felt and the digest shows no rating.
+- **A niggle.** `log_niggle(body_part, severity, date?, note?)` - a sub-injury complaint,
+  severity 1-5. Record it when the athlete mentions one; the niggle signal reads these.
+- **The stations of a circuit.** `log_sets(activity_id, stations)` - see the movement
+  coverage note above.
+
+## When a read shows the data is wrong or missing
+
+The reads are only as good as what is in the DB, and three things can be fixed from the
+conversation instead of from a terminal (issue #72). Every one of them rebuilds the marts
+itself, so the next read is already current - and every one of them needs you to say what
+changed afterwards.
+
+- **A day the plan expected a session on, with nothing recorded.** Every response carries
+  `freshness.unconfirmed_days` (the digest repeats it in `window`): each entry is a day
+  inside the re-check window with a planned session and no stored activity. It is **not**
+  a skipped session - the watch may not have uploaded yet. Name the day and its planned
+  intent, ask whether the session happened, and withhold every conclusion that depends on
+  it (a deload, a missed session, an adherence score). If it did happen: the athlete syncs
+  the watch, then `repair_preview(from_date, to_date)` shows what each day of the range
+  holds, you show that to the athlete, and `repair_confirm(from_date, to_date,
+  confirm_token)` pulls it. At most 14 days, never today - today is `refresh_today`.
+- **A wrong or missing race.** `get_events` lists them; `event_add(...)` records one and
+  `event_update(event_id, ...)` corrects one (pin an approximate date, commit a tentative
+  start). Both answer with the block calendar's row for this week **before and after** -
+  report that move ("blok przechodzi z budowania w szczyt"), because a wrong race date
+  silently mis-dates every week of the periodization.
+- **A plan file the athlete edited by hand.** `plan_import()` re-reads
+  `plans/<monday>_week.md` into the plan of record. It reports the weeks it read and any
+  `invalidated_pushes` - days whose already-pushed workout the edited plan no longer
+  allows; name those days and offer to re-author them.
+
 ## Rules
 
 - If a signal is absent from the digest, do not mention it. Silence means "not flagged".

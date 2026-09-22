@@ -15,6 +15,13 @@ import pytest
 from garmin_coach.etl import client
 from garmin_coach.mcp import server
 
+
+def _past(days: int) -> str:
+    import datetime as dt
+
+    return (dt.date.today() - dt.timedelta(days=days)).isoformat()
+
+
 EXPECTED_TOOLS = {
     # read (local DB)
     "get_snapshot",
@@ -26,6 +33,7 @@ EXPECTED_TOOLS = {
     "get_recommendation",
     "get_events",
     "get_workout_status",
+    "get_pushed_workouts",
     # local writes
     "log_rpe",
     "log_niggle",
@@ -33,8 +41,14 @@ EXPECTED_TOOLS = {
     # plan of record (preview -> confirm writes plans/<monday>_week.md)
     "plan_preview",
     "plan_confirm",
+    "plan_import",
+    # goal events (the race calendar the periodization is dated from)
+    "event_add",
+    "event_update",
     # transport (Garmin read)
     "refresh_today",
+    "repair_preview",
+    "repair_confirm",
     # workout push (hash handshake)
     "author_workout",
     "push_preview",
@@ -92,3 +106,59 @@ def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_
 
     with pytest.raises(Exception, match="no terminal is attached; run sync from a terminal"):
         asyncio.run(server.server.call_tool("refresh_today", {}))
+
+
+def test_log_niggle_names_the_severity_scale_the_writer_accepts():
+    """The docstring said 1-3 while the writer took 1-5, so a valid 4 read as refused."""
+    tools = asyncio.run(server.server.list_tools())
+
+    niggle = next(t for t in tools if t.name == "log_niggle")
+    assert "1-5" in niggle.description
+
+
+def _settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "get_settings",
+        lambda: types.SimpleNamespace(
+            db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08", sync_recheck_days=3
+        ),
+    )
+
+
+def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(tmp_path, monkeypatch):
+    """Unattended, a stale saved login is a message to read, not a traceback (#71)."""
+    _settings(tmp_path, monkeypatch)
+
+    def _login(_settings_arg):
+        raise client.LoginUnavailableError("saved login expired; run a command in a terminal")
+
+    monkeypatch.setattr(server.client, "login", _login)
+    preview = server.repair_preview(from_date=_past(3), to_date=_past(1))["data"]
+
+    with pytest.raises(Exception, match="saved login expired"):
+        asyncio.run(
+            server.server.call_tool(
+                "repair_confirm",
+                {
+                    "from_date": _past(3),
+                    "to_date": _past(1),
+                    "confirm_token": preview["confirm_token"],
+                },
+            )
+        )
+
+
+def test_repair_confirm_refuses_a_stale_token_without_logging_in(tmp_path, monkeypatch):
+    """A refusal must not cost a Garmin login (ADR 0028)."""
+    _settings(tmp_path, monkeypatch)
+    logins = []
+    monkeypatch.setattr(server.client, "login", lambda s: logins.append(s))
+
+    out = server.repair_confirm(
+        from_date=_past(3), to_date=_past(1), confirm_token="0000000000000000"
+    )
+
+    assert "preview" in out["data"]["error"]
+    assert out["data"]["applied"] is False
+    assert logins == []

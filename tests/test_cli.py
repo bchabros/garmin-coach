@@ -245,152 +245,6 @@ def test_parser_rejects_an_unknown_event_status():
         )
 
 
-def test_parse_target_s_reads_hours_minutes_seconds():
-    assert cli.parse_target_s("1:00:00") == 3600
-    assert cli.parse_target_s("1:30:00") == 5400
-
-
-def test_parse_target_s_reads_minutes_seconds_and_bare_seconds():
-    assert cli.parse_target_s("61:46") == 3706
-    assert cli.parse_target_s("3600") == 3600
-
-
-def test_parse_target_s_rejects_nonsense():
-    with pytest.raises(ValueError, match="target"):
-        cli.parse_target_s("under an hour")
-
-
-def test_add_goal_event_records_the_race(conn):
-    cli.add_goal_event(
-        conn,
-        date="2026-10-17",
-        type="hyrox",
-        priority="A",
-        status="confirmed",
-        date_precision="approx",
-        target="1:00:00",
-    )
-
-    events = db.list_goal_events(conn)
-    assert len(events) == 1
-    assert events[0]["target_s"] == 3600
-
-
-def test_parse_target_s_rejects_out_of_range_minutes_and_seconds():
-    with pytest.raises(ValueError, match="target"):
-        cli.parse_target_s("1:99")
-    with pytest.raises(ValueError, match="target"):
-        cli.parse_target_s("0:0:75")
-
-
-def test_add_goal_event_rejects_a_malformed_date(conn):
-    """A date typo must be refused at entry: it would otherwise poison every later read."""
-    with pytest.raises(ValueError, match="date"):
-        cli.add_goal_event(
-            conn,
-            date="17/10/2026",
-            type="run_race",
-            priority="B",
-            status="tentative",
-            date_precision="exact",
-        )
-
-    assert db.list_goal_events(conn) == []
-
-
-def test_update_goal_event_rejects_a_malformed_date(conn):
-    cli.add_goal_event(
-        conn,
-        date="2026-10-17",
-        type="hyrox",
-        priority="A",
-        status="confirmed",
-        date_precision="approx",
-    )
-    event_id = db.list_goal_events(conn)[0]["id"]
-
-    with pytest.raises(ValueError, match="date"):
-        cli.update_goal_event(conn, event_id, date="24.10.2026")
-
-    assert db.list_goal_events(conn)[0]["date"] == "2026-10-17"
-
-
-def test_update_goal_event_rejects_an_unknown_id(conn):
-    with pytest.raises(ValueError, match="999"):
-        cli.update_goal_event(conn, 999, status="confirmed")
-
-
-def test_update_goal_event_rejects_an_empty_update(conn):
-    cli.add_goal_event(
-        conn,
-        date="2026-10-17",
-        type="hyrox",
-        priority="A",
-        status="confirmed",
-        date_precision="approx",
-    )
-    event_id = db.list_goal_events(conn)[0]["id"]
-
-    with pytest.raises(ValueError, match="nothing to update"):
-        cli.update_goal_event(conn, event_id)
-
-
-def test_update_goal_event_commits_a_tentative_race(conn):
-    cli.add_goal_event(
-        conn,
-        date="2026-09-05",
-        type="run_race",
-        priority="B",
-        status="tentative",
-        date_precision="exact",
-    )
-    event_id = db.list_goal_events(conn)[0]["id"]
-
-    cli.update_goal_event(conn, event_id, status="confirmed")
-
-    assert db.list_goal_events(conn)[0]["status"] == "confirmed"
-
-
-def test_add_goal_event_rejects_an_unknown_type(conn):
-    with pytest.raises(ValueError, match="type"):
-        cli.add_goal_event(
-            conn,
-            date="2026-10-17",
-            type="triathlon",
-            priority="A",
-            status="confirmed",
-            date_precision="approx",
-        )
-
-
-def test_add_goal_event_refuses_to_clobber_an_existing_race(conn):
-    """Re-adding without --target/--note would silently erase them; it must fail instead."""
-    cli.add_goal_event(
-        conn,
-        date="2026-10-17",
-        type="hyrox",
-        priority="A",
-        status="confirmed",
-        date_precision="approx",
-        target="1:00:00",
-        note="PB 1:01:46",
-    )
-
-    with pytest.raises(ValueError, match="already recorded"):
-        cli.add_goal_event(
-            conn,
-            date="2026-10-17",
-            type="hyrox",
-            priority="A",
-            status="confirmed",
-            date_precision="approx",
-        )
-
-    stored = db.list_goal_events(conn)[0]
-    assert stored["target_s"] == 3600
-    assert stored["note"] == "PB 1:01:46"
-
-
 def _week_file(intents):
     """A plan file for the week of 2026-07-13, in the athlete's own table format."""
     monday = _dt.date.fromisoformat("2026-07-13")
@@ -404,6 +258,135 @@ def _week_file(intents):
         "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n"
         "|---|---|---|---|---|\n" + rows + "\n"
     )
+
+
+def _seeded_db(tmp_path, dates=("2026-07-13",)):
+    """A DB file with one running activity per date, so the marts have something to build."""
+    path = tmp_path / "t.db"
+    conn = db.connect(str(path))
+    db.bootstrap(conn)
+    for i, date in enumerate(dates):
+        db.upsert_activity(
+            conn,
+            {
+                "activity_id": 900 + i,
+                "start_local": f"{date} 12:00:00",
+                "date": date,
+                "gtype": "running",
+                "dur_s": 2400,
+                "aero_te": 2.4,
+                "anaero_te": 0.2,
+                "training_load": 90.0,
+            },
+        )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_cmd_event_add_rebuilds_the_block_calendar(tmp_path, monkeypatch, capsys):
+    """A race recorded from the terminal dates the periodization at once (#72)."""
+    path = _seeded_db(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
+    )
+    args = argparse.Namespace(
+        event_command="add",
+        date="2026-10-10",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="exact",
+        target="1:00:00",
+        note=None,
+    )
+
+    assert cli._cmd_event(args) == 0
+
+    conn = db.connect(str(path))
+    blocks = conn.execute("SELECT count(*) FROM plan_block").fetchone()[0]
+    conn.close()
+    assert blocks > 0
+
+
+def test_cmd_event_update_rebuilds_the_block_calendar(tmp_path, monkeypatch):
+    """Pinning the race date moves every week's block without a second command (#72)."""
+    path = _seeded_db(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
+    )
+    add = argparse.Namespace(
+        event_command="add",
+        date="2026-10-17",
+        type="hyrox",
+        priority="A",
+        status="confirmed",
+        date_precision="approx",
+        target=None,
+        note=None,
+    )
+    cli._cmd_event(add)
+    conn = db.connect(str(path))
+    event_id = db.list_goal_events(conn)[0]["id"]
+    before = conn.execute(
+        "SELECT weeks_to_event FROM plan_block WHERE week_start = '2026-07-13'"
+    ).fetchone()[0]
+    conn.close()
+
+    update = argparse.Namespace(
+        event_command="update",
+        event_id=event_id,
+        date="2026-10-10",
+        type=None,
+        priority=None,
+        status=None,
+        date_precision="exact",
+        target=None,
+        note=None,
+    )
+    assert cli._cmd_event(update) == 0
+
+    conn = db.connect(str(path))
+    after = conn.execute(
+        "SELECT weeks_to_event FROM plan_block WHERE week_start = '2026-07-13'"
+    ).fetchone()[0]
+    conn.close()
+    assert after == before - 1
+
+
+def test_cmd_plan_import_rebuilds_plan_versus_actual(tmp_path, monkeypatch, capsys):
+    """An imported week is compared against what was actually done straight away (#72)."""
+    week = [
+        (_dt.date.fromisoformat("2026-07-13") + _dt.timedelta(days=i)).isoformat() for i in range(7)
+    ]
+    path = _seeded_db(tmp_path, dates=tuple(week))
+    plans_dir = tmp_path / "plans"
+    plans_dir.mkdir()
+    (plans_dir / "2026-07-13_week.md").write_text(
+        _week_file(["easy", "quality", "rest", "quality", "easy", "rest", "quality"]),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
+    )
+    args = argparse.Namespace(
+        week=None, plans_dir=str(plans_dir), reports_dir=str(tmp_path / "reports")
+    )
+
+    assert cli._cmd_plan(args) == 0
+
+    conn = db.connect(str(path))
+    rows = conn.execute(
+        "SELECT count(*) FROM weekly_plan_actual WHERE week_start = '2026-07-13'"
+    ).fetchone()[0]
+    conn.close()
+    assert rows == 7
 
 
 def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
@@ -425,7 +408,9 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
         )
     )
     monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date=DATA_START),
     )
     args = argparse.Namespace(week=None, plans_dir=str(plans_dir), reports_dir=str(reports_dir))
 

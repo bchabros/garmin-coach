@@ -278,10 +278,11 @@ never run from the nightly automation, and it bends the golden rule deliberately
    garmin-coach push --date 2026-07-17 --confirm --replace   # overwrite a changed same-name workout
    ```
 
-   Idempotency uses the **account** as the source of truth (workouts are named `GC {date}
-   {type}` and carry a `gc-hash` of the spec): an identical re-push is a no-op, a changed one
-   needs `--replace`, and a push that half-fails (uploaded, not scheduled) is completed by
-   running `push` again -- it skips the upload. Exit codes: `0` success/dry-run/no-op, `1`
+   Idempotency uses the **account** as the source of truth (every pushed workout carries a
+   `gc-hash` of the spec in its description, which is also how a coach-owned workout is
+   recognised): an identical re-push is a no-op, a changed one needs `--replace`, and a push
+   that half-fails (uploaded, not scheduled) is completed by running `push` again -- it skips
+   the upload. Exit codes: `0` success/dry-run/no-op, `1`
    refused (needs `--replace`) or missing spec, `2` a partial push (see the `error` in
    `push.json`).
 
@@ -289,6 +290,25 @@ never run from the nightly automation, and it bends the golden rule deliberately
    authored before the plan was revised is refused (exit `1`), and `--replace` does not
    override it -- that flag overwrites a different workout, it is not a licence to outrank
    the plan. Re-author the date instead.
+
+**Naming the workout (issue #58, ADR 0029).** Any request may name the session it pushes:
+`label` (at most 30 characters) becomes `GC {date} {label}`, `name` (at most 80) is used
+whole, and with neither the name is `GC {date} {session_type}` as before. Give the label
+the words the athlete used ("4x2 km próg", "FBB A"), in their language or the watch's when
+they ask for it; empty, multi-line, over-long, and `GC `-prefixed labels are refused.
+
+A name **without the session's own date** makes the workout reusable: the same steps on
+another date are scheduled again rather than uploaded twice, so the watch holds one "GC FBB
+A" with several dates. Repeat one with `author_workout(reuse_from=<date>)` over MCP -- the
+copy is re-guarded against the new day's plan of record -- and find the day it came from
+with `get_pushed_workouts`. Renaming a pushed workout is a change like any other: the
+preview reports `replace` and the athlete confirms it (Garmin has no rename).
+
+`--replace` deletes the account's old workout **only** when its name carries the requested
+date. A date-free name may be on days no receipt knows about (the athlete can schedule it
+by hand in Connect), so there the old version is taken off this date, kept, and the new one
+uploaded beside it; the preview says which will happen and warns when the library will then
+hold two workouts of the same name.
 
 **Custom run structure (Phase 11a).** An `athlete`/hybrid request may carry a `structure`
 block that shapes the run template (`warmup + reps x (work + recovery) + cooldown`, one
@@ -336,9 +356,18 @@ list instead of the run roles. Each entry is one exercise with uniform sets:
   dropped. Rep-ended steps count 0 s toward the duration estimate (Garmin recomputes on
   device).
 
+An exercise session may also carry a warm-up and a cool-down (issue #65), with the same
+keys and the same 10-minute default as a run role: `warmup_end` / `warmup_min` /
+`warmup_target` and `cooldown_end` / `cooldown_min` / `cooldown_target`. The step is
+authored **only when asked for** - any one of the three keys asks for it, so a target
+alone gives a 10-minute step with that ceiling - and it wraps the sets: the warm-up
+before the first, the cool-down after the last. Both go to the watch as Garmin's own
+warm-up and cool-down step types. Without these keys the session authors exactly as
+before.
+
 Ramping weight is consecutive entries of the same exercise (3x100 kg then 1x110 kg =
-two entries). The `GC {date} {type}` naming, `gc-hash` idempotency, and the confirm
-interlock are identical to the run path.
+two entries). The `gc-hash` idempotency and the confirm interlock are identical to the
+run path.
 
 "Tempo Thursday: warm-up on-click, 8x(1km at 3:40-4:00, 2:00 jog), cool-down on-click"
 becomes (canonical fixture: `tests/fixtures/tempo_request.json`):
@@ -378,6 +407,16 @@ Passed on 2026-07-17 (a `quality` push): create scheduled exactly one `GC 2026-0
 quality` (warmup + 4x interval repeat + cooldown, Z4 HR band), the re-push reported
 `noop` with no duplicate, and all four response mappings (`get_workouts`,
 `upload_workout`, `schedule_workout`, `get_scheduled_workouts`) matched unchanged.
+
+**Exercise-sport edges and name limits (issues #65, #58, run once).** Settled on
+2026-09-22 by `scratch/issue65_58_edges_and_names_probe.py --confirm`, which authors
+through the production path, uploads, reads back, and deletes. The account **accepted**
+warm-up (step type 1) and cool-down (2) in both `strength_training` (5) and `hiit` (9);
+every step type round-tripped, a heart-rate target on the warm-up came back as
+`heart.rate.zone` 110-140, and a lap-ended cool-down round-tripped. Workout names came
+back verbatim at 25, 43, 80, 120 and **200** characters, Polish diacritics included, so
+Garmin's own ceiling is above anything this system writes and the caps (30 for a label,
+80 for a whole name) are readability choices, not limits.
 
 **Strength/HIIT acceptance (issue #16, run once per sport).** The same four steps with
 an exercise request instead of `--from-recommendation`: one `sport: strength` push and
@@ -425,9 +464,28 @@ Which clients pick it up and how is covered in "Registering the server" below �
   rationale, and revision log survive (see ADR 0015). A confirmed week that leaves an
   already-pushed workout too hard comes back with `invalidated_pushes` naming those
   days — the week is written either way; tell the athlete which days to re-author.
+- **Race calendar and plan re-import** (transport-free, issue #72) —
+  `event_add(date, type, priority, status, date_precision, target?, note?)` and
+  `event_update(event_id, ...)` record and correct the races the periodization is
+  dated from; `plan_import(week?)` re-reads `plans/<monday>_week.md` after a hand
+  edit. All three rebuild the marts in the same call, so the next read is current
+  rather than a night behind, and the two event tools report the block calendar's row
+  for the current week **before and after** the write — report that move to the
+  athlete, it is the point of the call. A wrong race date silently mis-dates every
+  block (on 2026-09-13 the plan read `build` where it should have read `peak`).
 - **`refresh_today`** — the MCP form of `refresh-today` (see above): pulls today
   partial, rebuilds the mart, never advances watermarks. Call it at most once per
   coach read; it shares the login rate-limit exposure (429) of any transport call.
+- **Gap repair** (`repair_preview` / `repair_confirm`, ADR 0028) — for a day that is
+  missing rather than partial. The preview reads **only the DB**: per day of the
+  range, the stored activity count, whether sleep / HRV / wellness / readiness
+  answered, and what the plan of record expected, plus a `confirm_token`. Show it to
+  the athlete, then `repair_confirm(from_date, to_date, confirm_token)` pulls the
+  range whole through the same path as `backfill` and rebuilds the marts. At most 14
+  days, never today, and watermarks are never written, so the nightly re-check window
+  is unaffected. A stale token (the gap filled in between the two calls) is refused
+  without contacting Garmin. For ranges wider than the cap, use `backfill` in the
+  terminal.
 - **Workout push** — `author_workout(date, request?)` writes `workout.json`;
   `push_preview(date)` returns the resolved action, the Garmin payload, and a
   `confirm_token`; `push_confirm(date, confirm_token, replace?)` writes to the account
@@ -438,6 +496,10 @@ Which clients pick it up and how is covered in "Registering the server" below �
   Both `author_workout` and the push pair **refuse a session harder than the plan of
   record** (issue #22, ADR 0021), and `replace` does not override that; change the plan
   for the date first.
+- **`get_pushed_workouts(since?)`** — the push receipts on disk, newest first: date,
+  name, workout id, action, whether it applied, session type, and `last_state` (what the
+  last status read found on the account). Transport-free; it is how the coach resolves
+  "the FBB A from the 19th" to a date before repeating it.
 - **`get_workout_status(date)`** — the authored spec, the push receipt, and
   `reconciled`: that receipt checked against the Garmin account (issue #41). Read
   `reconciled.state`, not `push.applied` — the receipt records what the push did,
@@ -459,13 +521,21 @@ Which clients pick it up and how is covered in "Registering the server" below �
   after the push. A date with no receipt costs nothing and never logs in.
 
 **Reading the freshness envelope.** Every response carries
-`{data_through, today_included, partial_fields}`. If `today_included` is true, any
+`{data_through, today_included, partial_fields, unconfirmed_days}`. If `today_included` is true, any
 field listed in `partial_fields` (load, ACWR, zone minutes, RHR, stress, body
 battery) is an intraday running value — quote it as "so far today", never as final.
 Sleep, HRV, and readiness are morning-complete and safe to read all day. In
 `get_recent_activities`, an activity dated today additionally carries
 `partial_today: true` — its training-effect numbers may still settle, so treat them
 as provisional too.
+
+`unconfirmed_days` lists the trailing days (the re-check window) the plan of record
+expected a session on and that have **no stored activity**: each carries its `date`,
+the `planned` label, the `intent`, and which plan `source` answered. Such a day may
+be a session still uploading, so it is never evidence of a skipped session or a
+lighter week — the weekly review of 2026-09-13 read a Saturday run that had not yet
+reached Garmin Connect as a deload (issue #72). Name the day to the athlete, ask
+whether the session happened, and offer gap repair when it did.
 
 ### Registering the server in a client
 

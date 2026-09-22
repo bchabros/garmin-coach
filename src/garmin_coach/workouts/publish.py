@@ -236,13 +236,18 @@ def publish(
 
     existing, conflict = _find_target(publisher, spec["name"], marker, known_workout_id)
     action = "refuse" if conflict else _resolve_action(existing, marker, publisher, date, replace)
+    if action == "replace":
+        message, notes = _replace_notes(existing, spec)
+        warnings.extend(notes)
+    else:
+        message = conflict or _message(action)
     result = PublishResult(
         action=action,
         applied=False,
         spec_hash=marker,
         date=date,
         payload=payload,
-        message=conflict or _message(action),
+        message=message,
         warnings=warnings,
         session_type=session_type,
         hardness=hardness,
@@ -291,7 +296,8 @@ def _execute(
     if result.action == "replace":
         assert existing is not None
         _unschedule_existing(publisher, existing["workoutId"], spec["date"])
-        publisher.delete(existing["workoutId"])
+        if _is_one_day(existing, spec["date"]):
+            publisher.delete(existing["workoutId"])
         result.workout_id = publisher.upload(payload)
     elif result.action == "create":
         result.workout_id = publisher.upload(payload)
@@ -823,3 +829,32 @@ def _message(action: str) -> str:
         "schedule": "workout exists in the library; will schedule it to the date",
         "refuse": "this date's workout on the account differs; re-run with --replace to overwrite",
     }[action]
+
+
+def _is_one_day(existing: dict[str, Any], date: str) -> bool:
+    """Whether the account's workout is named for this date alone.
+
+    A workout named ``GC <date> ...`` cannot be on another day without lying about
+    itself, so replacing it deletes it. A workout named without that date may be on
+    days no receipt knows about - the athlete can schedule it by hand in Connect -
+    so replacing it takes it off the requested day only (issue #58).
+    """
+    name = str(existing.get("workoutName") or "")
+    return name.startswith(f"{_author.GC_PREFIX} {date}")
+
+
+def _replace_notes(existing: dict[str, Any] | None, spec: dict[str, Any]) -> tuple[str, list[str]]:
+    """What a replace will do to the old workout, and what the library will look like."""
+    if existing is None or _is_one_day(existing, spec["date"]):
+        return _message("replace"), []
+    kept = (
+        "this date's workout on the account differs; will take the old version off "
+        "this date and upload the new one beside it, leaving the other days it is on "
+        "untouched"
+    )
+    if str(existing.get("workoutName") or "") != spec["name"]:
+        return kept, []
+    return kept, [
+        f"the library will then hold two workouts with the same name ({spec['name']!r}); "
+        "give the new version its own name to tell them apart on the watch"
+    ]

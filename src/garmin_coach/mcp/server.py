@@ -137,6 +137,102 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
             days=days,
             plans_dir=_PLANS_DIR,
             reports_dir=_REPORTS_DIR,
+            data_start_date=get_settings().data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def plan_import(week: str | None = None) -> dict[str, Any]:
+    """Re-read the authored plan files into the plan of record, then rebuild the marts.
+
+    Use after the athlete edits ``plans/<monday>_week.md`` by hand: the file is the
+    plan of record, this refreshes the cache and everything derived from it.
+    Without ``week`` every plan file is read. ``invalidated_pushes`` lists days
+    whose already-pushed workout the edited plan no longer allows.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.plan_import(
+            conn,
+            plans_dir=_PLANS_DIR,
+            reports_dir=_REPORTS_DIR,
+            week=week,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def event_add(
+    date: str,
+    type: str,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str,
+    status: str,
+    date_precision: str,
+    target: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Record a goal race and re-date the periodization from it.
+
+    ``type`` is hyrox|run_race, ``priority`` A|B|C (only a confirmed A anchors the
+    plan), ``status`` confirmed|tentative, ``date_precision`` exact|approx (approx
+    still drives every block). ``target`` is a goal time as H:MM:SS, MM:SS or
+    seconds. The response carries the block calendar's row for this week before and
+    after the write - report that move to the athlete.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.event_add(
+            conn,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def event_update(
+    event_id: int,
+    date: str | None = None,
+    type: str | None = None,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str | None = None,
+    status: str | None = None,
+    date_precision: str | None = None,
+    target: str | None = None,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Change a recorded race (pin an approx date, commit a tentative start).
+
+    ``event_id`` comes from ``get_events``. Fields left unset keep their value; the
+    same vocabulary as ``event_add`` applies. The response carries the block
+    calendar's row for this week before and after the write.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.event_update(
+            conn,
+            event_id=event_id,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+            data_start_date=settings.data_start_date,
         )
     finally:
         conn.close()
@@ -231,7 +327,7 @@ def log_niggle(
     date: str | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """Log a niggle (a sub-injury complaint) with severity 1-3."""
+    """Log a niggle (a sub-injury complaint) with severity 1-5."""
     conn = _open()
     try:
         return tools.log_niggle(conn, body_part=body_part, severity=severity, date=date, note=note)
@@ -283,10 +379,68 @@ def refresh_today() -> dict[str, Any]:
 
 
 @server.tool()
+def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
+    """Show what the DB holds for each day of a range; nothing is fetched.
+
+    Use when a day looks empty - an unconfirmed day in the freshness envelope, a
+    session the athlete says they did. Each day reports its stored activity count,
+    which daily streams answered (sleep, HRV, wellness, readiness), and what the plan
+    of record expected. Show it to the athlete; ``repair_confirm`` with the returned
+    token is what pulls. At most 14 days, and never today (that is refresh_today).
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.repair_preview(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str, Any]:
+    """Re-pull a previewed range from Garmin and rebuild the marts over it.
+
+    Gated on the token from ``repair_preview``; a stale one is refused without
+    contacting Garmin. The range is pulled whole (every stream, every day), so a day
+    missing one stream is completed too. Watermarks are never written.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        # The refusals are transport-free on purpose: a stale token must not cost a login.
+        refusal = tools.repair_refusal(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            confirm_token=confirm_token,
+            data_start_date=settings.data_start_date,
+        )
+        if refusal is not None:
+            return tools.wrap(conn, {"applied": False, "error": refusal})
+        transport = client.login(settings)
+        return tools.repair_confirm(
+            conn,
+            transport,
+            from_date=from_date,
+            to_date=to_date,
+            confirm_token=confirm_token,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
 def author_workout(
     date: str,
     request: dict[str, Any] | None = None,
     sport: str | None = None,
+    reuse_from: str | None = None,
 ) -> dict[str, Any]:
     """Author a structured workout spec for a date and write workout.json.
 
@@ -294,6 +448,16 @@ def author_workout(
     date, its intent picking the sport unless an explicit ``sport`` overrides
     it; with one, the athlete/hybrid request (including a custom ``structure``
     block) is authored as-is. Pure - nothing touches Garmin.
+
+    The request may name the session: ``label`` becomes ``GC <date> <label>`` (at
+    most 30 characters - name it the way the athlete described the session), or
+    ``name`` sets the whole name when the athlete asked for one. A name without the
+    session's date is a reusable workout: the same steps pushed on another date are
+    scheduled again rather than uploaded twice.
+
+    ``reuse_from`` repeats a day's session on this date ("the FBB A from the 19th"):
+    the steps and the name are copied and re-guarded against this day's plan of
+    record. Find the day with ``get_pushed_workouts``.
 
     A session harder than the plan of record for that date is refused, naming both
     intents: the plan is the coaching decision, so change the plan first (a manual
@@ -305,6 +469,20 @@ def author_workout(
         return tools.author_workout(
             conn, date=date, request=request, sport=sport, reports_dir=_REPORTS_DIR
         )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def get_pushed_workouts(since: str | None = None) -> dict[str, Any]:
+    """The workouts already pushed, newest first (date, name, id, last known state).
+
+    Transport-free - it reads the push receipts on disk. Use it to find the session
+    the athlete means before repeating it with ``author_workout(reuse_from=...)``.
+    """
+    conn = _open()
+    try:
+        return tools.get_pushed_workouts(conn, since=since, reports_dir=_REPORTS_DIR)
     finally:
         conn.close()
 

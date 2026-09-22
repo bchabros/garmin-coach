@@ -16,6 +16,7 @@ publisher, so a date that was never pushed costs no login at all.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import sqlite3
@@ -24,7 +25,9 @@ from typing import Any
 
 from .. import cli, daily
 from ..coach import digest, report
-from ..core import db, manual_sets, plan
+from ..core import db, events, manual_sets, plan
+from ..core.config import get_settings
+from ..etl import sync
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -71,7 +74,12 @@ _ACTIVITY_COLUMNS = (
 
 
 def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Build the freshness envelope from the mart horizon vs the actual today."""
+    """Build the freshness envelope from the mart horizon vs the actual today.
+
+    ``unconfirmed_days`` rides along on every response, not only on the digest: the
+    weekly review that misread a not-yet-uploaded run as a rest day was written from
+    the weekly read (issue #72).
+    """
     row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
     data_through = row[0] if row else None
     today_included = data_through == dt.date.today().isoformat()
@@ -79,11 +87,17 @@ def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
         "data_through": data_through,
         "today_included": today_included,
         "partial_fields": list(PARTIAL_INTRADAY_FIELDS) if today_included else [],
+        "unconfirmed_days": plan.unconfirmed_days(conn, window_days=_recheck_days()),
     }
 
 
 def _wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
     return {"data": data, "freshness": _freshness(conn)}
+
+
+def wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
+    """Put a tool payload in the freshness envelope, for a server-side early return."""
+    return _wrap(conn, data)
 
 
 def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -94,7 +108,14 @@ def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
 def _digest_for(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
     """Build the cited digest for a horizon with the stored thresholds."""
     thresholds = report.read_thresholds(conn)
-    return digest.build_digest(conn, to_date=to_date, thresholds=thresholds)
+    return digest.build_digest(
+        conn, to_date=to_date, thresholds=thresholds, recheck_days=_recheck_days()
+    )
+
+
+def _recheck_days() -> int:
+    """The re-check window the nightly sync uses - one source for every response."""
+    return get_settings().sync_recheck_days
 
 
 def _day_before(date: str) -> str:
@@ -374,11 +395,183 @@ def refresh_today(
     return _wrap(conn, data)
 
 
+# --- gap repair: read the gap from the DB, then re-pull a bounded range (#72)
+
+# How wide a range one repair may pull. Wide enough for a holiday's worth of days a
+# watch uploaded late, narrow enough that it can never become a second backfill.
+REPAIR_MAX_DAYS = 14
+
+# The daily streams a preview reports on; their tables are core's to name.
+_REPAIR_STREAMS = ("sleep", "hrv", "wellness", "readiness")
+
+
+def repair_preview(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str,
+    to_date: str,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Show what the DB holds for each day of a range, and hand over a confirm token.
+
+    Transport-free: this is the read that decides whether a repair is worth it, so it
+    must never be the call that contacts Garmin. ``repair_confirm`` is what pulls.
+
+    The token covers the range *and* the per-day state, so a nightly run that fills
+    the gap between preview and confirm makes the token stale rather than letting a
+    pull happen against a picture that has moved.
+    """
+    error = _repair_range_error(from_date, to_date, data_start_date)
+    if error is not None:
+        return _wrap(conn, {"days": None, "confirm_token": None, "error": error})
+
+    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
+    data = {
+        "from_date": from_date,
+        "to_date": to_date,
+        "days": days,
+        "confirm_token": repair_token(from_date, to_date, days),
+        "error": None,
+    }
+    return _wrap(conn, data)
+
+
+def _repair_dates(from_date: str, to_date: str) -> list[str]:
+    start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
+    return [(start + dt.timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+
+
+def _repair_day(conn: sqlite3.Connection, date: str) -> dict[str, Any]:
+    """What one day holds: stored activities, which daily streams answered, what was planned."""
+    planned = plan.resolve_day(conn, date)
+    day: dict[str, Any] = {
+        "date": date,
+        "activities": db.count_activities(conn, date),
+        "planned": planned["intent"] if planned else None,
+        "plan_source": planned["source"] if planned else None,
+    }
+    for stream in _REPAIR_STREAMS:
+        day[stream] = db.has_daily_row(conn, db.DAILY_STREAM_TABLES[stream], date)
+    return day
+
+
+def _repair_range_error(from_date: str, to_date: str, data_start_date: str) -> str | None:
+    """Why this range may not be repaired, in the athlete's terms, or None."""
+    try:
+        start = dt.date.fromisoformat(from_date)
+        end = dt.date.fromisoformat(to_date)
+    except ValueError:
+        return f"dates must be YYYY-MM-DD (got {from_date!r} .. {to_date!r})"
+    if end < start:
+        return f"from_date must be on or before to_date (got {from_date} .. {to_date})"
+    if end >= dt.date.today():
+        return "the repair is for finished days; today is what refresh_today is for"
+    if (end - start).days + 1 > REPAIR_MAX_DAYS:
+        return (
+            f"a repair covers at most {REPAIR_MAX_DAYS} days "
+            f"(got {(end - start).days + 1}); repeat it for an older range"
+        )
+    if from_date < data_start_date:
+        return f"there is no real data before {data_start_date} (got {from_date})"
+    return None
+
+
+def repair_token(from_date: str, to_date: str, days: list[dict[str, Any]]) -> str:
+    """The token gating preview -> confirm: the range plus what each day held."""
+    payload = json.dumps(
+        {"from": from_date, "to": to_date, "days": days}, sort_keys=True, default=str
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def repair_refusal(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str,
+    to_date: str,
+    confirm_token: str,
+    data_start_date: str,
+) -> str | None:
+    """Why this repair may not run, or None when it may.
+
+    Transport-free and checked before the caller logs in, so a bad range or a token
+    from a picture that has moved costs no Garmin call at all (ADR 0028).
+    """
+    error = _repair_range_error(from_date, to_date, data_start_date)
+    if error is not None:
+        return error
+    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
+    if confirm_token != repair_token(from_date, to_date, days):
+        return (
+            "stale confirm_token: the range, or what the DB holds for it, changed "
+            "since the preview; run repair_preview again"
+        )
+    return None
+
+
+def repair_confirm(
+    conn: sqlite3.Connection,
+    client: GarminClient,
+    *,
+    from_date: str,
+    to_date: str,
+    confirm_token: str,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Re-pull a previewed range from Garmin and rebuild the marts over it.
+
+    The second tool that reaches Garmin for a date the caller chose (ADR 0028). It
+    pulls the range whole, exactly as ``backfill`` does, so a day that was missing
+    only one stream is completed too; watermarks are never written, so the nightly
+    run's own re-check window is unaffected.
+
+    A mismatched token is refused without touching the account: the range, or what
+    the DB held for it, changed since the preview (or no preview happened).
+    """
+    error = repair_refusal(
+        conn,
+        from_date=from_date,
+        to_date=to_date,
+        confirm_token=confirm_token,
+        data_start_date=data_start_date,
+    )
+    if error is not None:
+        return _wrap(conn, {"applied": False, "error": error})
+
+    days = _repair_dates(from_date, to_date)
+    before = _stored_activities(conn, from_date, to_date)
+    try:
+        sync.backfill(client, conn, from_date, to_date)
+    except Exception as exc:  # noqa: BLE001 - a tool reports; it never raises out of MCP
+        return _wrap(conn, {"applied": False, "error": f"repair failed: {exc}"})
+
+    data = {
+        "applied": True,
+        "from_date": from_date,
+        "to_date": to_date,
+        "days": len(days),
+        "activities_stored": _stored_activities(conn, from_date, to_date) - before,
+        "features_ok": False,
+        "error": None,
+    }
+    try:
+        cli.rebuild_marts(conn, data_start_date=data_start_date)
+        data["features_ok"] = True
+    except Exception as exc:  # noqa: BLE001 - the pull landed; say the rebuild did not
+        data["error"] = f"data pulled, but the mart rebuild failed: {exc}"
+    return _wrap(conn, data)
+
+
+def _stored_activities(conn: sqlite3.Connection, from_date: str, to_date: str) -> int:
+    return db.count_activities(conn, from_date, to_date)
+
+
 def author_workout(
     conn: sqlite3.Connection,
     date: str,
     request: dict[str, Any] | None = None,
     sport: str | None = None,
+    reuse_from: str | None = None,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Author a workout spec for a date and write ``workout.json``.
@@ -386,8 +579,13 @@ def author_workout(
     Mirrors the CLI author path: without ``request`` the spec comes from the
     recommendation targeting ``date`` (its intent picking the sport unless an
     explicit ``sport`` overrides it); with one, the request dict (athlete or
-    hybrid, including a custom ``structure``) is authored as-is.
+    hybrid, including a custom ``structure``) is authored as-is. With
+    ``reuse_from``, that day's spec is repeated on this one, guarded by this day's
+    plan of record (issue #58).
     """
+    if reuse_from is not None:
+        return _wrap(conn, _repeat_spec(conn, date, reuse_from, reports_dir))
+
     dg = _digest_for(conn, _day_before(date))
     recommendation = dg.get("recommendation")
 
@@ -416,11 +614,149 @@ def author_workout(
     if spec is None:
         return _wrap(conn, {"spec": None, "error": None, "note": "rest - nothing to author"})
 
-    out_dir = _day_dir(reports_dir, date)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "workout.json"
-    path.write_text(json.dumps(spec, indent=2))
+    path = _write_spec(spec, date, reports_dir)
     return _wrap(conn, {"spec": spec, "error": None, "path": str(path)})
+
+
+# --- goal events and plan import: the writers that keep the plan correct (#72)
+
+
+def _current_block(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The block calendar's row for the week that holds today, or None without an anchor.
+
+    Carries the anchor race's id beside the block, so a report of the move names the
+    race the periodization is now dated from.
+    """
+    row = periodize.current_plan(conn, dt.date.today().isoformat())
+    if row is None:
+        return None
+    return {**row, "anchor_event_id": periodize.anchor_event_id(conn, row["week_start"])}
+
+
+def _event_row(conn: sqlite3.Connection, event_id: int) -> dict[str, Any] | None:
+    """The recorded race the write touched, annotated as ``event list`` shows it.
+
+    Looked up by the id the write returned rather than by the fields the caller
+    passed: the writer normalises what it stores, so a date the athlete typed in
+    another shape would never match itself.
+    """
+    rows = periodize.annotate(db.list_goal_events(conn), dt.date.today().isoformat())
+    return next((row for row in rows if row["id"] == event_id), None)
+
+
+def event_add(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    type: str,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str,
+    status: str,
+    date_precision: str,
+    target: str | None = None,
+    note: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Record a goal race from chat and re-date the periodization.
+
+    Reports the block calendar's row for the current week before and after the
+    write, so the athlete sees what the race did to the plan rather than being
+    told a row was inserted.
+    """
+    before = _current_block(conn)
+    try:
+        event_id = events.add_goal_event(
+            conn,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+        )
+    except ValueError as exc:
+        return _wrap(conn, _event_error(str(exc)))
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
+
+
+def event_update(
+    conn: sqlite3.Connection,
+    *,
+    event_id: int,
+    date: str | None = None,
+    type: str | None = None,  # noqa: A002 - mirrors the goal_event column and the CLI flag
+    priority: str | None = None,
+    status: str | None = None,
+    date_precision: str | None = None,
+    target: str | None = None,
+    note: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Change a recorded race from chat (pin a date, commit a start) and re-date the plan.
+
+    Fields left unset keep their value. Reports the block calendar's row for the
+    current week before and after the write.
+    """
+    before = _current_block(conn)
+    try:
+        events.update_goal_event(
+            conn,
+            event_id,
+            date=date,
+            type=type,
+            priority=priority,
+            status=status,
+            date_precision=date_precision,
+            target=target,
+            note=note,
+        )
+    except ValueError as exc:
+        return _wrap(conn, _event_error(str(exc)))
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
+
+
+def _event_error(message: str) -> dict[str, Any]:
+    """A refused race write: nothing was written, so no block moved."""
+    return {"event": None, "block_before": None, "block_after": None, "error": message}
+
+
+def _event_result(
+    row: dict[str, Any] | None, before: dict[str, Any] | None, after: dict[str, Any] | None
+) -> dict[str, Any]:
+    return {"event": row, "block_before": before, "block_after": after, "error": None}
+
+
+def plan_import(
+    conn: sqlite3.Connection,
+    *,
+    plans_dir: str = "plans",
+    reports_dir: str = "reports",
+    week: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Re-read the authored plan files from chat, then rebuild the marts.
+
+    The counterpart of a hand edit to ``plans/<monday>_week.md``: the file stays the
+    plan of record (ADR 0015) and this refreshes the cache and everything derived
+    from it. ``invalidated_pushes`` names the days whose already-pushed workout the
+    edited plan no longer allows (issue #22).
+    """
+    try:
+        imported = plan.import_dir(conn, plans_dir, week=week)
+    except plan.PlanParseError as exc:
+        return _wrap(conn, _import_error(str(exc)))
+    if not imported:
+        return _wrap(conn, _import_error(f"no plan file for {week or 'any week'} in {plans_dir}"))
+
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    conflicts = cli.invalidated_by_import(conn, imported, reports_dir)
+    return _wrap(conn, {"weeks": imported, "invalidated_pushes": conflicts, "error": None})
+
+
+def _import_error(message: str) -> dict[str, Any]:
+    return {"weeks": [], "invalidated_pushes": [], "error": message}
 
 
 def plan_preview(
@@ -450,8 +786,9 @@ def plan_confirm(
     days: list[dict[str, Any]],
     plans_dir: str = "plans",
     reports_dir: str = "reports",
+    data_start_date: str,
 ) -> dict[str, Any]:
-    """Write a previewed week to ``plans/<monday>_week.md`` and cache it.
+    """Write a previewed week to ``plans/<monday>_week.md``, cache it, rebuild the marts.
 
     Refuses when a plan of record for the week already exists - the file carries
     prose the intent vocabulary cannot hold (paces, HR caps, the revision log), so
@@ -474,6 +811,7 @@ def plan_confirm(
         # A tool reports; it never raises out of the MCP call. Validation already
         # ran, so reaching here means the plans/ directory changed under us.
         return _wrap(conn, {"week_start": week_start, "written": False, "error": str(exc)})
+    cli.rebuild_marts(conn, data_start_date=data_start_date)
     data = {
         "week_start": week_start,
         "written": True,
@@ -511,6 +849,72 @@ def _validate_proposal(
         for i, d in enumerate(days)
     ]
     return resolved, None
+
+
+def _repeat_spec(
+    conn: sqlite3.Connection, date: str, reuse_from: str, reports_dir: str
+) -> dict[str, Any]:
+    """Copy the spec authored for one day onto another, then write it there."""
+    source, error = _load_spec(reuse_from, reports_dir)
+    if source is None:
+        return {"spec": None, "error": error}
+    try:
+        spec = author.copy_to_date(
+            source,
+            date=date,
+            planned_intent=plan.planned_intent(conn, date),
+            today=dt.date.today().isoformat(),
+        )
+    except ValueError as exc:
+        return {"spec": None, "error": str(exc)}
+    return {"spec": spec, "error": None, "path": str(_write_spec(spec, date, reports_dir))}
+
+
+def _write_spec(spec: dict[str, Any], date: str, reports_dir: str) -> pathlib.Path:
+    """Write a spec into its day's report directory."""
+    out_dir = _day_dir(reports_dir, date)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "workout.json"
+    path.write_text(json.dumps(spec, indent=2))
+    return path
+
+
+def get_pushed_workouts(
+    conn: sqlite3.Connection, since: str | None = None, reports_dir: str = "reports"
+) -> dict[str, Any]:
+    """The workouts already pushed, newest first, from the receipts on disk.
+
+    Transport-free: the receipts are the listing, so finding the session the athlete
+    means ("the FBB A from the 19th") costs nothing and works offline. ``last_state``
+    is what the last status read found on the account, when one ran.
+    """
+    root = pathlib.Path(reports_dir)
+    workouts = [
+        summary
+        for day in sorted((p for p in root.glob("*/push.json")), reverse=True)
+        if (summary := _pushed_summary(day)) is not None
+        and (since is None or summary["date"] >= since)
+    ]
+    return _wrap(conn, {"workouts": workouts, "error": None})
+
+
+def _pushed_summary(receipt_path: pathlib.Path) -> dict[str, Any] | None:
+    """One receipt as a listing row, or None when it cannot be read."""
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    reconciled = receipt.get("reconciled") or {}
+    return {
+        "date": receipt_path.parent.name,
+        "name": receipt.get("name"),
+        "workout_id": receipt.get("workout_id"),
+        "action": receipt.get("action"),
+        "applied": receipt.get("applied"),
+        "session_type": receipt.get("session_type"),
+        "pushed_at": receipt.get("pushed_at"),
+        "last_state": reconciled.get("state"),
+    }
 
 
 def push_preview(

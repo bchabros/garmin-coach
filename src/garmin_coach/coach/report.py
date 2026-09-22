@@ -13,6 +13,7 @@ import pathlib
 import sqlite3
 
 from . import charts, digest, thresholds as _thresholds
+from ..core.config import DEFAULT_RECHECK_DAYS
 from ..marts import snapshot
 
 
@@ -27,6 +28,7 @@ def generate_report(
     from_date: str | None = None,
     to_date: str | None = None,
     reports_dir: str = "./reports",
+    recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> pathlib.Path:
     """Build the digest + charts + snapshot and write them to ``reports/{today}/``.
 
@@ -38,12 +40,20 @@ def generate_report(
         from_date: Window start (default: trailing 28 days).
         to_date: Window end (default: latest mart day).
         reports_dir: Root directory for dated report folders.
+        recheck_days: Length of the re-check window, for the unconfirmed days the
+            digest's window reports (``sync_recheck_days``).
 
     Returns:
         The path to the created report folder.
     """
     thresholds = read_thresholds(conn)
-    dg = digest.build_digest(conn, from_date=from_date, to_date=to_date, thresholds=thresholds)
+    dg = digest.build_digest(
+        conn,
+        from_date=from_date,
+        to_date=to_date,
+        thresholds=thresholds,
+        recheck_days=recheck_days,
+    )
 
     rows = (
         digest.enrich_hrv_band(

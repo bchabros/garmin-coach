@@ -48,6 +48,12 @@ from garmin_coach.workouts import exercises, hardness as _hardness_of
 # own workouts and the athlete can tell them apart in Garmin Connect.
 GC_PREFIX = "GC"
 
+# What a name may carry. The account itself keeps at least 200 characters verbatim,
+# Polish diacritics included (live probe, 2026-09-22), so these caps are ours: a name
+# has to be readable in the watch's narrow list, not merely acceptable (issue #58).
+_LABEL_MAX_CHARS = 30
+_NAME_MAX_CHARS = 80
+
 # Default easy duration and how much slower than the Z2 ceiling the easy band runs.
 EASY_DEFAULT_S = 45 * 60
 EASY_PACE_SLOW_MARGIN_S = 40
@@ -232,20 +238,26 @@ _DEFAULT_PAUSE_ROLE = "recovery"
 # A Hyrox run-station sequence: one run then one station per ``structure.stations``
 # entry, in race order. Neither role has a default target - a Hyrox run is paced by
 # the athlete's own band, not the threshold chain, and a station by heart rate only
-# when asked - so both fall back to no target. The warmup and cooldown are optional
-# here: authored only when the structure gives them an end.
+# when asked - so both fall back to no target.
 _HYROX_RUN_ROLE = _Role("run", "run_min", 0)
 _HYROX_STATION_ROLE = _Role("station", "station_min", 0)
-_HYROX_EDGE_ROLES = (
+# The optional warmup and cooldown a session may be given but never defaults: the
+# Hyrox run-station sequence and the exercise sports both expand from a list rather
+# than the role table, so neither has a place for an edge until one is asked for
+# (issue #64, issue #65). One table, so their keys and lengths cannot drift apart.
+_EDGE_ROLES = (
     _Role("warmup", "warmup_min", TEMPO_WARMUP_S),
     _Role("cooldown", "cooldown_min", TEMPO_COOLDOWN_S),
 )
+
+# What an exercise sport's structure may carry: its sets, plus the optional edges.
+_EXERCISE_STRUCTURE_KEYS = {"exercises", *(key for role in _EDGE_ROLES for key in role.keys)}
 _HYROX_TARGET_KEYS = tuple(
-    role.target_key for role in (*_HYROX_EDGE_ROLES, _HYROX_RUN_ROLE, _HYROX_STATION_ROLE)
+    role.target_key for role in (*_EDGE_ROLES, _HYROX_RUN_ROLE, _HYROX_STATION_ROLE)
 )
 _HYROX_STRUCTURE_KEYS = frozenset(
     {"stations", _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
-    | {key for role in _HYROX_EDGE_ROLES for key in (role.end_key, role.min_key)}
+    | {key for role in _EDGE_ROLES for key in (role.end_key, role.min_key)}
 )
 
 # The race run between stations, when the structure does not say otherwise.
@@ -347,7 +359,9 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
     if request["sport"] in _EXERCISE_SPORTS:
         structure = request.get("structure") or {}
         _validate_exercises(structure)
-        steps = _expand_exercises(structure, request["sport"], warnings)
+        steps = _expand_exercises(
+            {**request, "structure": structure}, context.get("zones"), warnings
+        )
         measured = None
     elif session_type == "hyrox":
         _validate_hyrox_structure(request["structure"])
@@ -369,7 +383,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         "origin": request["origin"],
         "date": request["date"],
         "session_type": session_type,
-        "name": f"{GC_PREFIX} {request['date']} {session_type}",
+        "name": _workout_name(request, session_type),
         "steps": steps,
         "warnings": warnings,
     }
@@ -437,6 +451,84 @@ def _refuse_if_harder(error: str | None) -> None:
         raise ValueError(error)
 
 
+def _workout_name(request: dict[str, Any], session_type: str) -> str:
+    """The name the workout carries on the account and on the watch.
+
+    The athlete owns it (issue #58): ``name`` is used whole, ``label`` names the
+    session after the prefix and the date, and with neither the session type answers
+    as it always has. A name that carries the session's own date is a one-day
+    workout; one that does not is reusable on other days, which is what the push
+    path's fingerprint already makes of it.
+    """
+    name = _clean_name(request.get("name"), "name", _NAME_MAX_CHARS)
+    label = _clean_name(request.get("label"), "label", _LABEL_MAX_CHARS)
+    if name is not None and label is not None:
+        raise ValueError("give either label or name, not both")
+    if name is not None:
+        return name
+    if label is not None:
+        if label.upper().startswith(f"{GC_PREFIX} "):
+            raise ValueError(f"label must not start with '{GC_PREFIX} '; it is added for you")
+        return f"{GC_PREFIX} {request['date']} {label}"
+    return f"{GC_PREFIX} {request['date']} {session_type}"
+
+
+def _clean_name(value: Any, key: str, limit: int) -> str | None:
+    """Trim a requested name or label, refusing what a watch cannot show.
+
+    Raises:
+        ValueError: If the value is not text, is empty once trimmed, carries a line
+            break or another control character, or is longer than the limit.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{key} must not be empty")
+    if any(char < " " or char == "\x7f" for char in cleaned):
+        raise ValueError(f"{key} must not contain line breaks or control characters")
+    if len(cleaned) > limit:
+        raise ValueError(f"{key} must be at most {limit} characters (got {len(cleaned)})")
+    return cleaned
+
+
+def copy_to_date(
+    spec: dict[str, Any], *, date: str, planned_intent: str | None, today: str
+) -> dict[str, Any]:
+    """Copy an authored spec onto another day, re-running that day's guards.
+
+    How a session is repeated (issue #58): the steps and the name are the athlete's
+    from the first authoring, but every judgement about *when* it runs belongs to the
+    new day - a past date is refused, a target date of today warns, and a session
+    harder than the new day's plan of record is refused naming both intents. The
+    warnings of the day it came from are dropped rather than carried over.
+
+    Args:
+        spec: The authored spec to repeat.
+        date: The day it should run on.
+        planned_intent: The plan of record's intent for that day.
+        today: The as-of date the date guard reads.
+
+    Returns:
+        The copied spec, dated to the new day.
+
+    Raises:
+        ValueError: If the target date is in the past, or the session is harder than
+            the plan of record for it.
+    """
+    warnings = _date_guard(date, today)
+    hardness = spec.get("hardness")
+    if hardness is None:
+        _refuse_if_harder(_plan.guard_error(date, spec.get("session_type"), planned_intent))
+    elif _plan.is_harder(hardness, planned_intent):
+        # The frozen measurement is the evidence, as it is at push time: re-deriving it
+        # would judge the session against zones that have moved since (ADR 0024).
+        raise ValueError(_plan.spec_guard_error(date, hardness, planned_intent, "this session"))
+    return {**spec, "date": date, "warnings": warnings}
+
+
 def _validate_request(request: dict[str, Any]) -> None:
     """Check a request carries the required, well-formed fields.
 
@@ -475,7 +567,7 @@ def _validate_hyrox_structure(structure: dict[str, Any]) -> None:
     run_end = structure.get(_HYROX_RUN_ROLE.end_key)
     if run_end is not None:
         _validate_end(run_end, _HYROX_RUN_ROLE.end_key)
-    for role in _HYROX_EDGE_ROLES:
+    for role in _EDGE_ROLES:
         end = structure.get(role.end_key)
         if end is None:
             continue
@@ -529,17 +621,20 @@ def _validate_sport_session(sport: str, session_type: str) -> None:
 
 
 def _validate_exercises(structure: dict[str, Any]) -> None:
-    """Check an exercise sport's structure carries a well-formed exercises list.
+    """Check an exercise sport's structure: a well-formed exercises list and its edges.
 
     Raises:
         ValueError: If the structure has unknown keys, the list is missing or
-            empty, or any entry is malformed.
+            empty, any entry is malformed, or a warmup/cooldown is malformed.
     """
-    unknown = set(structure) - {"exercises"}
+    unknown = set(structure) - _EXERCISE_STRUCTURE_KEYS
     if unknown:
         raise ValueError(
             f"unknown structure keys for an exercise sport: {', '.join(sorted(unknown))}"
         )
+    for role in _EDGE_ROLES:
+        _validate_role_length(structure, role)
+    _validate_targets(structure, _EDGE_ROLES)
     entries = structure.get("exercises")
     if not isinstance(entries, list) or not entries:
         raise ValueError("an exercise session needs structure.exercises: a non-empty list")
@@ -589,21 +684,27 @@ def _validate_duration(value: Any, label: str) -> None:
 
 
 def _expand_exercises(
-    structure: dict[str, Any], sport: str, warnings: list[str]
+    request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
 ) -> list[dict[str, Any]]:
     """Expand exercise entries into flat per-set work steps with rests between sets.
 
     One step per set (never a repeat group - the probe-proven shape), a rest step
-    after every set, and the session's trailing rest skipped.
+    after every set, and the session's trailing rest skipped. A warmup and a cooldown
+    wrap the sets when the request asked for them (issue #65).
     """
-    steps: list[dict[str, Any]] = []
+    structure = request["structure"]
+    targets = _Targets(request, zones, warnings)
+    warmup, cooldown = (_edge_step(structure, role, targets) for role in _EDGE_ROLES)
+    steps: list[dict[str, Any]] = [warmup] if warmup else []
     for entry in structure["exercises"]:
         work = _exercise_work_step(entry, warnings)
-        rest_end = _rest_end(entry, sport)
+        rest_end = _rest_end(entry, request["sport"])
         for _ in range(entry["sets"]):
             steps.append(dict(work, target=_no_target()))
             steps.append({"kind": "rest", "end": rest_end, "target": _no_target()})
     steps.pop()
+    if cooldown:
+        steps.append(cooldown)
     return steps
 
 
@@ -930,7 +1031,7 @@ def _expand_hyrox(
     """
     structure = request["structure"]
     targets = _Targets(request, zones, warnings)
-    warmup, cooldown = (_hyrox_edge_step(structure, role, targets) for role in _HYROX_EDGE_ROLES)
+    warmup, cooldown = (_edge_step(structure, role, targets) for role in _EDGE_ROLES)
     run_end = _hyrox_run_end(structure)
     run_target = targets.for_role(_HYROX_RUN_ROLE)
     station_target = targets.for_role(_HYROX_STATION_ROLE)
@@ -943,11 +1044,14 @@ def _expand_hyrox(
     return steps
 
 
-def _hyrox_edge_step(
-    structure: dict[str, Any], role: _Role, targets: _Targets
-) -> dict[str, Any] | None:
-    """A warmup or cooldown step when the structure gives the role an end, else None."""
-    if structure.get(role.end_key) is None and structure.get(role.min_key) is None:
+def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any] | None:
+    """A warmup or cooldown step when the structure asks for one, else None.
+
+    Any of the role's keys asks for it - an end, a length, or a target alone (a
+    target with no length runs for the shared default, exactly as a summoned run
+    role does).
+    """
+    if not any(structure.get(key) is not None for key in role.keys):
         return None
     return _role_step(structure, role, targets)
 
@@ -1232,6 +1336,19 @@ _INTERVAL_STEP_TYPE = {
     "displayOrder": 3,
 }
 _REST_STEP_TYPE = {"stepTypeId": StepType.REST, "stepTypeKey": "rest", "displayOrder": 5}
+_WARMUP_STEP_TYPE = {"stepTypeId": StepType.WARMUP, "stepTypeKey": "warmup", "displayOrder": 1}
+_COOLDOWN_STEP_TYPE = {
+    "stepTypeId": StepType.COOLDOWN,
+    "stepTypeKey": "cooldown",
+    "displayOrder": 2,
+}
+
+# What each exercise-sport spec step is on the watch; anything else is a rest.
+_EXERCISE_STEP_TYPES = {
+    "work": _INTERVAL_STEP_TYPE,
+    "warmup": _WARMUP_STEP_TYPE,
+    "cooldown": _COOLDOWN_STEP_TYPE,
+}
 
 # Garmin's unit descriptor for kilogram weights (the system's fixed weight unit).
 _KILOGRAM_UNIT = {"unitId": 8, "unitKey": "kilogram", "factor": 1000.0}
@@ -1387,8 +1504,9 @@ def _exercise_garmin_step(step: dict[str, Any], order: int) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "type": "ExecutableStepDTO",
         "stepOrder": order,
-        "stepType": _INTERVAL_STEP_TYPE if step["kind"] == "work" else _REST_STEP_TYPE,
+        "stepType": _EXERCISE_STEP_TYPES.get(step["kind"], _REST_STEP_TYPE),
         **_exercise_end_condition(step["end"]),
+        **_exercise_target(step["target"]),
     }
     if "exercise" in step:
         payload["category"] = step["exercise"]["category"]
@@ -1397,6 +1515,28 @@ def _exercise_garmin_step(step: dict[str, Any], order: int) -> dict[str, Any]:
         payload["weightValue"] = float(step["weight_kg"])
         payload["weightUnit"] = _KILOGRAM_UNIT
     return payload
+
+
+def _exercise_target(target: dict[str, Any]) -> dict[str, Any]:
+    """The targetType and bounds for an exercise-sport step that has a target.
+
+    A step with no target contributes nothing: the shape the live probes accepted
+    carries no ``targetType`` at all, and every set authored before issue #65 must
+    still go up byte for byte as it did.
+    """
+    if target["type"] == "hr_band":
+        return {
+            "targetType": _garmin_target_type(target),
+            "targetValueOne": target["low_bpm"],
+            "targetValueTwo": target["high_bpm"],
+        }
+    if target["type"] == "pace_band":
+        return {
+            "targetType": _garmin_target_type(target),
+            "targetValueOne": 1000 / target["slow_s_per_km"],
+            "targetValueTwo": 1000 / target["fast_s_per_km"],
+        }
+    return {}
 
 
 def _exercise_end_condition(end: dict[str, Any]) -> dict[str, Any]:

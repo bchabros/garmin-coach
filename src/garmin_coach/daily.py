@@ -184,7 +184,7 @@ def run_daily(
     logger.info("daily: alert stage starting")
     try:
         thr = thresholds if thresholds is not None else report.read_thresholds(conn)
-        dg = digest.build_digest(conn, to_date=to_date, thresholds=thr)
+        dg = digest.build_digest(conn, to_date=to_date, thresholds=thr, recheck_days=recheck_days)
         result.alerts = [s for s in dg["signals"] if s["severity"] in ALERT_SEVERITIES]
     except Exception as exc:  # noqa: BLE001 - non-fatal: data is already persisted
         logger.exception("daily: alert stage crashed")

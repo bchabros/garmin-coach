@@ -13,6 +13,7 @@ import sqlite3
 from . import recommend as _recommend
 from . import signals as _signals
 from . import thresholds as _thresholds
+from ..core.config import DEFAULT_RECHECK_DAYS
 from ..core import db as _db
 from ..core import plan as _plan
 from ..core import weeks as _weeks
@@ -322,6 +323,7 @@ def build_digest(
     from_date: str | None = None,
     to_date: str | None = None,
     thresholds: dict[str, float] | None = None,
+    recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> dict:
     """Build the coach digest for a window of the ``daily_metrics`` mart.
 
@@ -330,6 +332,8 @@ def build_digest(
         from_date: First day of the window (inclusive).
         to_date: Last day of the window (inclusive).
         thresholds: Coach thresholds; code defaults fill any missing key.
+        recheck_days: Length of the re-check window, for the unconfirmed days the
+            window block reports (``sync_recheck_days``).
 
     Returns:
         A dict with ``window``, ``headline``, ``signals``, and ``disclaimer``.
@@ -359,7 +363,14 @@ def build_digest(
     if from_date is None or to_date is None:
         # Empty daily mart and no explicit range: only weekly rollups may report.
         return {
-            "window": {"from": from_date, "to": to_date, "days": 0},
+            "window": {
+                "from": from_date,
+                "to": to_date,
+                "days": 0,
+                "unconfirmed_days": _plan.unconfirmed_days(
+                    conn, window_days=recheck_days, through=to_date
+                ),
+            },
             "headline": _headline([], [], thr),
             "signals": [
                 s
@@ -376,6 +387,9 @@ def build_digest(
         "from": from_date,
         "to": to_date,
         "days": _date_range_days(from_date, to_date),
+        # What the trailing days are worth: a planned day with no activity yet may be
+        # a session still uploading, not a session skipped (issue #72).
+        "unconfirmed_days": _plan.unconfirmed_days(conn, window_days=recheck_days, through=to_date),
     }
     rows = enrich_hrv_band(read_mart(conn, from_date, to_date), thr)
     recent = _recent_rows(rows, to_date)

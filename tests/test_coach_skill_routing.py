@@ -70,3 +70,18 @@ def test_the_description_keeps_every_report_trigger_phrase():
         f"the frontmatter description dropped trigger phrases that used to work: {dropped}. "
         "Widen the description, never narrow it."
     )
+
+
+def test_every_registered_coach_tool_is_named_in_the_skill():
+    """A tool the uploaded skill never mentions is a tool the coach never reaches for."""
+    import asyncio
+
+    from garmin_coach.mcp import server
+
+    text = "\n".join(
+        path.read_text() for path in sorted((SKILL_DIR).rglob("*.md"))
+    )
+    registered = {t.name for t in asyncio.run(server.server.list_tools())}
+
+    missing = sorted(name for name in registered if name not in text)
+    assert not missing, f"registered but absent from the coach skill: {', '.join(missing)}"

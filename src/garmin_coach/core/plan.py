@@ -196,6 +196,64 @@ def resolve_day(conn: sqlite3.Connection, date: str) -> dict | None:
     }
 
 
+def unconfirmed_days(
+    conn: sqlite3.Connection,
+    *,
+    window_days: int,
+    today: str | None = None,
+    through: str | None = None,
+) -> list[dict]:
+    """The trailing days the plan expected a session on and no activity has arrived for.
+
+    A day Garmin has answered for is not yet a day whose data has arrived: a watch can
+    upload a run days late, so the nightly sync re-pulls the trailing window (ADR 0026).
+    Until a day leaves that window, "no activity" means "not in yet" as readily as it
+    means "skipped", and reading it as a skipped session is what turned a normal week
+    into a deload on 2026-09-13 (issue #72). Today is never included - it is flagged as
+    partial in its own right.
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        window_days: Length of the re-check window (``sync_recheck_days``).
+        today: The as-of date (default: the real today).
+        through: Horizon of the reading window; days after it are dropped, so a report
+            built for a past day reports none.
+
+    Returns:
+        One dict per unconfirmed day, oldest first: ``date``, ``planned``, ``intent``,
+        ``source``.
+    """
+    end = _dt.date.fromisoformat(today) if today else _dt.date.today()
+    days = []
+    for back in range(window_days, 0, -1):
+        date = (end - _dt.timedelta(days=back)).isoformat()
+        if through is not None and date > through:
+            continue
+        planned = resolve_day(conn, date)
+        if planned is None or planned["intent"] == "rest":
+            continue
+        if _has_activity(conn, date):
+            continue
+        days.append(
+            {
+                "date": date,
+                "planned": planned["planned"],
+                "intent": planned["intent"],
+                "source": planned["source"],
+            }
+        )
+    return days
+
+
+def _has_activity(conn: sqlite3.Connection, date: str) -> bool:
+    """Whether any activity is stored for a calendar date."""
+    row = conn.execute(
+        "SELECT 1 FROM activities WHERE date(start_local) = ? LIMIT 1", (date,)
+    ).fetchone()
+    return row is not None
+
+
+
 def resolve_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
     """Resolve all seven days of the week starting on ``week_start`` (a Monday)."""
     monday = _dt.date.fromisoformat(week_start)

@@ -25,6 +25,7 @@ from typing import Any
 from .. import cli, daily
 from ..coach import digest, report
 from ..core import db, events, manual_sets, plan
+from ..core.config import get_settings
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -71,7 +72,12 @@ _ACTIVITY_COLUMNS = (
 
 
 def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Build the freshness envelope from the mart horizon vs the actual today."""
+    """Build the freshness envelope from the mart horizon vs the actual today.
+
+    ``unconfirmed_days`` rides along on every response, not only on the digest: the
+    weekly review that misread a not-yet-uploaded run as a rest day was written from
+    the weekly read (issue #72).
+    """
     row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
     data_through = row[0] if row else None
     today_included = data_through == dt.date.today().isoformat()
@@ -79,6 +85,9 @@ def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
         "data_through": data_through,
         "today_included": today_included,
         "partial_fields": list(PARTIAL_INTRADAY_FIELDS) if today_included else [],
+        "unconfirmed_days": plan.unconfirmed_days(
+            conn, window_days=get_settings().sync_recheck_days
+        ),
     }
 
 

@@ -31,7 +31,12 @@ def test_empty_window_has_shape_and_no_data_signals(conn):
     was authored is a fact about the plan, not about the data."""
     d = build_digest(conn, from_date="2026-06-08", to_date="2026-06-08")
 
-    assert d["window"] == {"from": "2026-06-08", "to": "2026-06-08", "days": 1}
+    assert d["window"] == {
+        "from": "2026-06-08",
+        "to": "2026-06-08",
+        "days": 1,
+        "unconfirmed_days": [],
+    }
     assert _codes(d) == {"PLAN_MISSING"}
     assert d["headline"]["acwr"] is None
     assert d["headline"]["hrv_latest"] is None
@@ -965,3 +970,47 @@ def test_zones_section_confirms_a_standing_row_computed_at_the_horizon(conn):
     zones_section = build_digest(conn, from_date="2026-07-11", to_date="2026-07-11")["zones"]
 
     assert zones_section["matches_horizon"] is True
+
+
+# --- unconfirmed days: what the window's trailing days are worth (issue #72)
+
+
+def _plan_every_day(conn, week_start: str, intent: str = "tempo") -> None:
+    _seed_plan_week(conn, week_start, [intent] * 7)
+
+
+def test_window_names_the_days_the_data_may_still_be_waiting_for(conn):
+    """A weekly review must not read a not-yet-uploaded session as a rest day (#72)."""
+    import datetime as _dt
+
+    today = _dt.date.today()
+    yesterday = (today - _dt.timedelta(days=1)).isoformat()
+    monday = (today - _dt.timedelta(days=today.weekday() + 7)).isoformat()
+    _plan_every_day(conn, monday)
+    _plan_every_day(conn, (_dt.date.fromisoformat(monday) + _dt.timedelta(days=7)).isoformat())
+    for back in (2, 3):  # the older window days did arrive
+        date = (today - _dt.timedelta(days=back)).isoformat()
+        db.upsert_activity(
+            conn,
+            {
+                "activity_id": 700 + back,
+                "start_local": f"{date} 12:00:00",
+                "date": date,
+                "gtype": "running",
+            },
+        )
+    _mart(conn, date=yesterday, load_day=0)
+
+    d = build_digest(conn, from_date=yesterday, to_date=yesterday)
+
+    assert [u["date"] for u in d["window"]["unconfirmed_days"]] == [yesterday]
+    assert d["window"]["unconfirmed_days"][0]["intent"] == "tempo"
+
+
+def test_window_of_an_old_report_has_no_unconfirmed_days(conn):
+    """Every day of a report about July settled months ago."""
+    _mart(conn, date="2026-07-01", load_day=50)
+
+    d = build_digest(conn, from_date="2026-07-01", to_date="2026-07-01")
+
+    assert d["window"]["unconfirmed_days"] == []

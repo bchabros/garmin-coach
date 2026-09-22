@@ -1671,3 +1671,34 @@ def test_plan_confirm_rebuilds_plan_versus_actual(conn, tmp_path):
         "SELECT count(*) FROM weekly_plan_actual WHERE week_start = ?", (WEEK,)
     ).fetchone()[0]
     assert rows == 7
+
+
+def test_envelope_names_the_unconfirmed_days(conn):
+    """A weekly read, not only the digest, must carry what the trailing days are worth."""
+    today = dt.date.today()
+    for back in (1, 2, 3):
+        day = today - dt.timedelta(days=back)
+        monday = (day - dt.timedelta(days=day.weekday())).isoformat()
+        plan_mod.upsert_week(
+            conn,
+            [
+                {"week_start": monday, "dow": dow, "planned": "tempo", "intent": "tempo"}
+                for dow in range(7)
+            ],
+        )
+    _seed_mart(conn, YESTERDAY, hrv=60)
+
+    envelope = tools.get_weekly(conn)["freshness"]
+
+    assert [u["date"] for u in envelope["unconfirmed_days"]] == [
+        (today - dt.timedelta(days=back)).isoformat() for back in (3, 2, 1)
+    ]
+
+
+def test_envelope_reports_no_unconfirmed_days_when_every_planned_day_arrived(conn):
+    _seed_core_day(conn, YESTERDAY)
+    _seed_mart(conn, YESTERDAY, hrv=60)
+
+    envelope = tools.get_zones(conn)["freshness"]
+
+    assert YESTERDAY not in [u["date"] for u in envelope["unconfirmed_days"]]

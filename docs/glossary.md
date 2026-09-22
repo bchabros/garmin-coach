@@ -423,6 +423,13 @@ code, docstrings, PRDs, and ADRs.
   The translator expands each set to its own flat step - never a repeat group
   (exercise metadata inside repeat groups is unproven; the flat shape
   round-tripped in the live probes).
+- **session edge (workout request)** - the optional `warmup` / `cooldown` step of a
+  session that expands from a list rather than the run role table: an exercise sport
+  (issue #65) or a Hyrox run-station sequence (issue #64). Same keys, same vocabulary
+  and the same 10-minute default as a run role, but never defaulted: the step exists
+  only when the structure gives the role an end, a length, or a target. No target
+  unless one is asked for. Authored before the first set and after the last, leaving
+  everything between them unchanged.
 - **rest default (exercise sports)** - the between-sets rest applied when an
   exercise entry gives none: 90 s for `strength`, 60 s for `hiit`; overridable
   per entry (`{"min"/"s"}` or `"lap"`). The session's trailing rest is dropped.

@@ -1663,3 +1663,104 @@ def test_a_hyrox_sequence_carries_no_measured_hardness():
 def test_a_hyrox_sequence_is_still_guarded_by_its_session_type():
     with pytest.raises(ValueError, match="planned as easy"):
         author(_hyrox_request(), _context(planned_intent="easy"))
+
+
+# --- warm-up and cool-down on the exercise sports (issue #65) ----------------
+
+
+def _exercise_edges(**structure):
+    """A strength request carrying warm-up / cool-down keys beside its exercises."""
+    request = _strength_request()
+    request["structure"] = {**request["structure"], **structure}
+    return request
+
+
+def test_strength_authors_a_warmup_before_the_first_set():
+    """A FBB day that starts on the erg is one workout, not the lifting alone (#65)."""
+    spec = author(_exercise_edges(warmup_min=10), _context())
+
+    assert _kinds(spec["steps"]) == ["warmup", "work", "rest", "work"]
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 600}
+    assert spec["steps"][0]["target"] == {"type": "none"}
+
+
+def test_hiit_authors_a_cooldown_after_the_last_set():
+    """The watch must not end the workout on the last set (#65)."""
+    request = _hiit_request()
+    request["structure"] = {**request["structure"], "cooldown_min": 8}
+
+    spec = author(request, _context())
+
+    assert _kinds(spec["steps"]) == ["work", "rest", "work", "cooldown"]
+    assert spec["steps"][-1]["end"] == {"type": "time", "seconds": 480}
+
+
+def test_an_exercise_sport_takes_both_edges_at_once():
+    spec = author(_exercise_edges(warmup_min=10, cooldown_min=5), _context())
+
+    assert _kinds(spec["steps"]) == ["warmup", "work", "rest", "work", "cooldown"]
+
+
+def test_an_exercise_warmup_can_end_on_the_lap_button():
+    """A self-timed warm-up: press lap when you are ready to lift."""
+    spec = author(_exercise_edges(warmup_end="lap"), _context())
+
+    assert spec["steps"][0]["end"] == {"type": "lap"}
+
+
+def test_an_exercise_warmup_carries_the_heart_rate_ceiling_it_was_given():
+    spec = author(_exercise_edges(warmup_target={"hr_band": [120, 145]}), _context())
+
+    assert spec["steps"][0]["kind"] == "warmup"
+    assert spec["steps"][0]["target"] == {"type": "hr_band", "low_bpm": 120, "high_bpm": 145}
+
+
+def test_a_target_alone_summons_the_warmup_at_the_shared_default_length():
+    """"warm up under 140" needs no minutes: the run roles' default answers (#65)."""
+    spec = author(_exercise_edges(warmup_target={"hr_band": [120, 140]}), _context())
+
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 600}
+
+
+def test_an_exercise_session_without_the_keys_authors_exactly_as_before():
+    """The regression that matters: nothing changes for the sessions already pushed."""
+    spec = author(_strength_request(), _context())
+
+    assert _kinds(spec["steps"]) == ["work", "rest", "work"]
+
+
+def test_an_unknown_exercise_structure_key_is_still_refused():
+    with pytest.raises(ValueError, match="unknown structure keys"):
+        author(_exercise_edges(warmup_minutes=10), _context())
+
+
+def test_an_exercise_warmup_refuses_two_lengths_at_once():
+    with pytest.raises(ValueError, match="give only one"):
+        author(_exercise_edges(warmup_end="lap", warmup_min=10), _context())
+
+
+def test_an_exercise_warmup_refuses_a_target_it_cannot_express():
+    with pytest.raises(ValueError, match="warmup_target must be"):
+        author(_exercise_edges(warmup_target={"power_band": [200, 240]}), _context())
+
+
+def test_the_garmin_payload_marks_the_edges_as_warmup_and_cooldown():
+    """Garmin's own step types, so the watch shows a warm-up as a warm-up (#65)."""
+    spec = author(_exercise_edges(warmup_min=10, cooldown_min=5), _context())
+
+    steps = to_garmin(spec)["workoutSegments"][0]["workoutSteps"]
+
+    assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
+    assert steps[0]["stepType"]["stepTypeId"] == 1
+    assert steps[-1]["stepType"]["stepTypeKey"] == "cooldown"
+    assert steps[-1]["stepType"]["stepTypeId"] == 2
+    assert steps[1]["stepType"]["stepTypeKey"] == "interval"
+
+
+def test_the_exercise_edges_carry_their_heart_rate_target_into_the_payload():
+    spec = author(_exercise_edges(warmup_target={"hr_band": [120, 145]}), _context())
+
+    first = to_garmin(spec)["workoutSegments"][0]["workoutSteps"][0]
+
+    assert first["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert (first["targetValueOne"], first["targetValueTwo"]) == (120, 145)

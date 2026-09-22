@@ -336,9 +336,18 @@ list instead of the run roles. Each entry is one exercise with uniform sets:
   dropped. Rep-ended steps count 0 s toward the duration estimate (Garmin recomputes on
   device).
 
+An exercise session may also carry a warm-up and a cool-down (issue #65), with the same
+keys and the same 10-minute default as a run role: `warmup_end` / `warmup_min` /
+`warmup_target` and `cooldown_end` / `cooldown_min` / `cooldown_target`. The step is
+authored **only when asked for** - any one of the three keys asks for it, so a target
+alone gives a 10-minute step with that ceiling - and it wraps the sets: the warm-up
+before the first, the cool-down after the last. Both go to the watch as Garmin's own
+warm-up and cool-down step types. Without these keys the session authors exactly as
+before.
+
 Ramping weight is consecutive entries of the same exercise (3x100 kg then 1x110 kg =
-two entries). The `GC {date} {type}` naming, `gc-hash` idempotency, and the confirm
-interlock are identical to the run path.
+two entries). The `gc-hash` idempotency and the confirm interlock are identical to the
+run path.
 
 "Tempo Thursday: warm-up on-click, 8x(1km at 3:40-4:00, 2:00 jog), cool-down on-click"
 becomes (canonical fixture: `tests/fixtures/tempo_request.json`):

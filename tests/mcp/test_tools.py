@@ -1891,3 +1891,53 @@ def test_repair_confirm_reports_a_failed_pull_without_raising(conn, fake_client)
 
     assert "garmin timed out" in out["error"]
     assert out["applied"] is False
+
+
+def _authorable_day(conn) -> str:
+    """A near-future date whose plan of record allows anything (the guards are not the test)."""
+    date = dt.date.today() + dt.timedelta(days=2)
+    monday = (date - dt.timedelta(days=date.weekday())).isoformat()
+    plan_mod.upsert_week(
+        conn,
+        [
+            {"week_start": monday, "dow": dow, "planned": "quality", "intent": "quality"}
+            for dow in range(7)
+        ],
+    )
+    return date.isoformat()
+
+
+def test_author_workout_carries_the_athletes_label_into_the_spec(conn, tmp_path):
+    """The name on the watch comes from the conversation, not from the session type (#58)."""
+    _seed_mart(conn, YESTERDAY, hrv=60)
+    day = _authorable_day(conn)
+    request = {
+        "sport": "strength",
+        "origin": "athlete",
+        "date": day,
+        "session_type": "strength",
+        "label": "FBB A",
+        "structure": {"exercises": [{"exercise": "back_squat", "sets": 2, "reps": 5}]},
+    }
+
+    out = tools.author_workout(conn, day, request=request, reports_dir=str(tmp_path))
+
+    assert out["data"]["spec"]["name"] == f"GC {day} FBB A"
+
+
+def test_author_workout_reports_a_malformed_label_as_tool_text(conn, tmp_path):
+    _seed_mart(conn, YESTERDAY, hrv=60)
+    day = _authorable_day(conn)
+    request = {
+        "sport": "strength",
+        "origin": "athlete",
+        "date": day,
+        "session_type": "strength",
+        "label": "x" * 40,
+        "structure": {"exercises": [{"exercise": "back_squat", "sets": 2, "reps": 5}]},
+    }
+
+    out = tools.author_workout(conn, day, request=request, reports_dir=str(tmp_path))
+
+    assert out["data"]["spec"] is None
+    assert "30" in out["data"]["error"]

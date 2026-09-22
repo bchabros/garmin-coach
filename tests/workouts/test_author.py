@@ -1764,3 +1764,77 @@ def test_the_exercise_edges_carry_their_heart_rate_target_into_the_payload():
 
     assert first["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
     assert (first["targetValueOne"], first["targetValueTwo"]) == (120, 145)
+
+
+# --- the workout's name belongs to the athlete (issue #58) -------------------
+
+
+def test_a_label_names_the_session_after_the_date():
+    """On the watch, "4x2 km próg" beats "quality" (#58)."""
+    request = {**_strength_request(), "label": "FBB A"}
+
+    spec = author(request, _context())
+
+    assert spec["name"] == "GC 2026-07-17 FBB A"
+
+
+def test_a_name_is_used_whole():
+    """A name the athlete asked for is theirs: no prefix, no date."""
+    request = {**_strength_request(), "name": "FBB A"}
+
+    spec = author(request, _context())
+
+    assert spec["name"] == "FBB A"
+
+
+def test_without_a_name_or_label_the_session_type_still_names_it():
+    spec = author(_strength_request(), _context())
+
+    assert spec["name"] == "GC 2026-07-17 strength"
+
+
+def test_a_label_and_a_name_at_once_are_refused():
+    request = {**_strength_request(), "label": "FBB A", "name": "FBB A"}
+
+    with pytest.raises(ValueError, match="either label or name"):
+        author(request, _context())
+
+
+def test_a_name_is_trimmed():
+    request = {**_strength_request(), "name": "  FBB A  "}
+
+    assert author(request, _context())["name"] == "FBB A"
+
+
+@pytest.mark.parametrize("value", ["", "   ", "FBB\nA", "FBB\tA"])
+def test_a_malformed_name_is_refused(value):
+    with pytest.raises(ValueError, match="name"):
+        author({**_strength_request(), "name": value}, _context())
+
+
+def test_a_label_that_repeats_the_prefix_is_refused():
+    """Otherwise the watch shows "GC 2026-07-17 GC tempo"."""
+    with pytest.raises(ValueError, match="GC"):
+        author({**_strength_request(), "label": "GC tempo"}, _context())
+
+
+def test_an_overlong_label_is_refused():
+    with pytest.raises(ValueError, match="30"):
+        author({**_strength_request(), "label": "x" * 31}, _context())
+
+
+def test_an_overlong_name_is_refused():
+    with pytest.raises(ValueError, match="80"):
+        author({**_strength_request(), "name": "x" * 81}, _context())
+
+
+def test_a_label_may_hold_the_polish_the_athlete_speaks():
+    request = {**_strength_request(), "label": "4x2 km próg"}
+
+    assert author(request, _context())["name"] == "GC 2026-07-17 4x2 km próg"
+
+
+def test_a_run_session_takes_a_label_too():
+    spec = author({**_targets(), "label": "próg 3x10"}, _context())
+
+    assert spec["name"] == "GC 2026-07-17 próg 3x10"

@@ -440,6 +440,12 @@ def author_workout(
     it; with one, the athlete/hybrid request (including a custom ``structure``
     block) is authored as-is. Pure - nothing touches Garmin.
 
+    The request may name the session: ``label`` becomes ``GC <date> <label>`` (at
+    most 30 characters - name it the way the athlete described the session), or
+    ``name`` sets the whole name when the athlete asked for one. A name without the
+    session's date is a reusable workout: the same steps pushed on another date are
+    scheduled again rather than uploaded twice.
+
     A session harder than the plan of record for that date is refused, naming both
     intents: the plan is the coaching decision, so change the plan first (a manual
     edit of ``plans/<monday>_week.md`` plus ``plan import``, or ``plan_confirm`` for

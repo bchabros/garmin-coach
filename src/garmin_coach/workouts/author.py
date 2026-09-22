@@ -48,6 +48,11 @@ from garmin_coach.workouts import exercises, hardness as _hardness_of
 # own workouts and the athlete can tell them apart in Garmin Connect.
 GC_PREFIX = "GC"
 
+# What a name may carry. The watch shows a name in a narrow list, and Garmin's own
+# ceiling is unverified offline, so both are deliberately short (issue #58).
+_LABEL_MAX_CHARS = 30
+_NAME_MAX_CHARS = 80
+
 # Default easy duration and how much slower than the Z2 ceiling the easy band runs.
 EASY_DEFAULT_S = 45 * 60
 EASY_PACE_SLOW_MARGIN_S = 40
@@ -377,7 +382,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         "origin": request["origin"],
         "date": request["date"],
         "session_type": session_type,
-        "name": f"{GC_PREFIX} {request['date']} {session_type}",
+        "name": _workout_name(request, session_type),
         "steps": steps,
         "warnings": warnings,
     }
@@ -443,6 +448,49 @@ def _refuse_if_harder(error: str | None) -> None:
     """
     if error is not None:
         raise ValueError(error)
+
+
+def _workout_name(request: dict[str, Any], session_type: str) -> str:
+    """The name the workout carries on the account and on the watch.
+
+    The athlete owns it (issue #58): ``name`` is used whole, ``label`` names the
+    session after the prefix and the date, and with neither the session type answers
+    as it always has. A name that carries the session's own date is a one-day
+    workout; one that does not is reusable on other days, which is what the push
+    path's fingerprint already makes of it.
+    """
+    name = _clean_name(request.get("name"), "name", _NAME_MAX_CHARS)
+    label = _clean_name(request.get("label"), "label", _LABEL_MAX_CHARS)
+    if name is not None and label is not None:
+        raise ValueError("give either label or name, not both")
+    if name is not None:
+        return name
+    if label is not None:
+        if label.upper().startswith(f"{GC_PREFIX} "):
+            raise ValueError(f"label must not start with '{GC_PREFIX} '; it is added for you")
+        return f"{GC_PREFIX} {request['date']} {label}"
+    return f"{GC_PREFIX} {request['date']} {session_type}"
+
+
+def _clean_name(value: Any, key: str, limit: int) -> str | None:
+    """Trim a requested name or label, refusing what a watch cannot show.
+
+    Raises:
+        ValueError: If the value is not text, is empty once trimmed, carries a line
+            break or another control character, or is longer than the limit.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be text")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{key} must not be empty")
+    if any(char < " " or char == "\x7f" for char in cleaned):
+        raise ValueError(f"{key} must not contain line breaks or control characters")
+    if len(cleaned) > limit:
+        raise ValueError(f"{key} must be at most {limit} characters (got {len(cleaned)})")
+    return cleaned
 
 
 def _validate_request(request: dict[str, Any]) -> None:

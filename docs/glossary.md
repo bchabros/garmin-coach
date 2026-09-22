@@ -451,15 +451,28 @@ code, docstrings, PRDs, and ADRs.
 ## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 
 - **coach MCP** - the local `coach` stdio server (`mcp__coach__*`, registered in the
-  repo's `.mcp.json`): 14 tools in four groups (read / local write / transport read /
+  repo's `.mcp.json`): 23 tools in four groups (read / local write / transport /
   workout push), each a thin wrapper over a seam the CLI already uses. Distinct from
-  the exploratory `mcp__garmin__*` server. See ADR 0014.
+  the exploratory `mcp__garmin__*` server. See ADR 0014, and ADR 0028 for the second
+  transport tool.
 - **same-day refresh** - the opt-in pull of *today's* (partial) data plus a mart
   rebuild through today: `garmin-coach refresh-today` on the CLI, `refresh_today`
   over MCP. Never advances watermarks, so the nightly run re-pulls the day complete.
 - **freshness envelope** - the metadata every coach-MCP response carries:
-  `data_through` (the mart horizon), `today_included`, and `partial_fields`. How a
-  chat session knows what it may treat as final.
+  `data_through` (the mart horizon), `today_included`, `partial_fields`, and
+  `unconfirmed_days`. How a chat session knows what it may treat as final.
+- **unconfirmed day** - a day inside the re-check window that the plan of record
+  expected a session on and that has no stored activity. Not evidence of a skipped
+  session: the window is exactly the stretch where "nothing recorded" can still mean
+  "not uploaded yet" (issue #72). Carried by every coach-MCP response and by the
+  digest's `window`, with the planned intent and which plan source answered. It is a
+  question for the athlete - sync the watch, or confirm the session did not happen -
+  and gap repair is the action when the answer is the former.
+- **gap repair** - the two-step re-pull of finished days from chat: `repair_preview`
+  reads what the DB holds for each day of a range (activity count, which daily
+  streams answered, the planned intent) and returns a `confirm_token`;
+  `repair_confirm` pulls the range whole through the `backfill` path and rebuilds the
+  marts. At most 14 days, never today, watermarks untouched. See ADR 0028.
 - **partial fields** - the intraday-accumulating mart fields (load, ACWR, zone
   minutes, RHR, stress, body battery) listed in the envelope when today is included.
   Morning-complete streams (sleep, HRV, readiness) are never flagged.

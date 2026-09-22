@@ -425,9 +425,28 @@ Which clients pick it up and how is covered in "Registering the server" below �
   rationale, and revision log survive (see ADR 0015). A confirmed week that leaves an
   already-pushed workout too hard comes back with `invalidated_pushes` naming those
   days — the week is written either way; tell the athlete which days to re-author.
+- **Race calendar and plan re-import** (transport-free, issue #72) —
+  `event_add(date, type, priority, status, date_precision, target?, note?)` and
+  `event_update(event_id, ...)` record and correct the races the periodization is
+  dated from; `plan_import(week?)` re-reads `plans/<monday>_week.md` after a hand
+  edit. All three rebuild the marts in the same call, so the next read is current
+  rather than a night behind, and the two event tools report the block calendar's row
+  for the current week **before and after** the write — report that move to the
+  athlete, it is the point of the call. A wrong race date silently mis-dates every
+  block (on 2026-09-13 the plan read `build` where it should have read `peak`).
 - **`refresh_today`** — the MCP form of `refresh-today` (see above): pulls today
   partial, rebuilds the mart, never advances watermarks. Call it at most once per
   coach read; it shares the login rate-limit exposure (429) of any transport call.
+- **Gap repair** (`repair_preview` / `repair_confirm`, ADR 0028) — for a day that is
+  missing rather than partial. The preview reads **only the DB**: per day of the
+  range, the stored activity count, whether sleep / HRV / wellness / readiness
+  answered, and what the plan of record expected, plus a `confirm_token`. Show it to
+  the athlete, then `repair_confirm(from_date, to_date, confirm_token)` pulls the
+  range whole through the same path as `backfill` and rebuilds the marts. At most 14
+  days, never today, and watermarks are never written, so the nightly re-check window
+  is unaffected. A stale token (the gap filled in between the two calls) is refused
+  without contacting Garmin. For ranges wider than the cap, use `backfill` in the
+  terminal.
 - **Workout push** — `author_workout(date, request?)` writes `workout.json`;
   `push_preview(date)` returns the resolved action, the Garmin payload, and a
   `confirm_token`; `push_confirm(date, confirm_token, replace?)` writes to the account
@@ -459,13 +478,21 @@ Which clients pick it up and how is covered in "Registering the server" below �
   after the push. A date with no receipt costs nothing and never logs in.
 
 **Reading the freshness envelope.** Every response carries
-`{data_through, today_included, partial_fields}`. If `today_included` is true, any
+`{data_through, today_included, partial_fields, unconfirmed_days}`. If `today_included` is true, any
 field listed in `partial_fields` (load, ACWR, zone minutes, RHR, stress, body
 battery) is an intraday running value — quote it as "so far today", never as final.
 Sleep, HRV, and readiness are morning-complete and safe to read all day. In
 `get_recent_activities`, an activity dated today additionally carries
 `partial_today: true` — its training-effect numbers may still settle, so treat them
 as provisional too.
+
+`unconfirmed_days` lists the trailing days (the re-check window) the plan of record
+expected a session on and that have **no stored activity**: each carries its `date`,
+the `planned` label, the `intent`, and which plan `source` answered. Such a day may
+be a session still uploading, so it is never evidence of a skipped session or a
+lighter week — the weekly review of 2026-09-13 read a Saturday run that had not yet
+reached Garmin Connect as a deload (issue #72). Name the day to the athlete, ask
+whether the session happened, and offer gap repair when it did.
 
 ### Registering the server in a client
 

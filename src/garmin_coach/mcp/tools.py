@@ -16,6 +16,7 @@ publisher, so a date that was never pushed costs no login at all.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import sqlite3
@@ -26,6 +27,7 @@ from .. import cli, daily
 from ..coach import digest, report
 from ..core import db, events, manual_sets, plan
 from ..core.config import get_settings
+from ..etl import sync
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
 from ..workouts import author, publish
@@ -381,6 +383,171 @@ def refresh_today(
         "errors": list(result.errors),
     }
     return _wrap(conn, data)
+
+
+# --- gap repair: read the gap from the DB, then re-pull a bounded range (#72)
+
+# How wide a range one repair may pull. Wide enough for a holiday's worth of days a
+# watch uploaded late, narrow enough that it can never become a second backfill.
+REPAIR_MAX_DAYS = 14
+
+# The daily streams a preview reports on, by the core table that holds them.
+_REPAIR_STREAMS = {
+    "sleep": "sleep",
+    "hrv": "hrv_nightly",
+    "wellness": "daily_wellness",
+    "readiness": "training_readiness",
+}
+
+
+def repair_preview(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str,
+    to_date: str,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Show what the DB holds for each day of a range, and hand over a confirm token.
+
+    Transport-free: this is the read that decides whether a repair is worth it, so it
+    must never be the call that contacts Garmin. ``repair_confirm`` is what pulls.
+
+    The token covers the range *and* the per-day state, so a nightly run that fills
+    the gap between preview and confirm makes the token stale rather than letting a
+    pull happen against a picture that has moved.
+    """
+    error = _repair_range_error(from_date, to_date, data_start_date)
+    if error is not None:
+        return _wrap(conn, {"days": None, "confirm_token": None, "error": error})
+
+    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
+    data = {
+        "from_date": from_date,
+        "to_date": to_date,
+        "days": days,
+        "confirm_token": repair_token(from_date, to_date, days),
+        "error": None,
+    }
+    return _wrap(conn, data)
+
+
+def _repair_dates(from_date: str, to_date: str) -> list[str]:
+    start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
+    return [(start + dt.timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+
+
+def _repair_day(conn: sqlite3.Connection, date: str) -> dict[str, Any]:
+    """What one day holds: stored activities, which daily streams answered, what was planned."""
+    activities = conn.execute(
+        "SELECT count(*) FROM activities WHERE date(start_local) = ?", (date,)
+    ).fetchone()[0]
+    planned = plan.resolve_day(conn, date)
+    day: dict[str, Any] = {
+        "date": date,
+        "activities": activities,
+        "planned": planned["intent"] if planned else None,
+        "plan_source": planned["source"] if planned else None,
+    }
+    for stream, table in _REPAIR_STREAMS.items():
+        row = conn.execute(f"SELECT 1 FROM {table} WHERE date = ? LIMIT 1", (date,)).fetchone()
+        day[stream] = row is not None
+    return day
+
+
+def _repair_range_error(from_date: str, to_date: str, data_start_date: str) -> str | None:
+    """Why this range may not be repaired, in the athlete's terms, or None."""
+    try:
+        start = dt.date.fromisoformat(from_date)
+        end = dt.date.fromisoformat(to_date)
+    except ValueError:
+        return f"dates must be YYYY-MM-DD (got {from_date!r} .. {to_date!r})"
+    if end < start:
+        return f"from_date must be on or before to_date (got {from_date} .. {to_date})"
+    if end >= dt.date.today():
+        return "the repair is for finished days; today is what refresh_today is for"
+    if (end - start).days + 1 > REPAIR_MAX_DAYS:
+        return (
+            f"a repair covers at most {REPAIR_MAX_DAYS} days "
+            f"(got {(end - start).days + 1}); repeat it for an older range"
+        )
+    if from_date < data_start_date:
+        return f"there is no real data before {data_start_date} (got {from_date})"
+    return None
+
+
+def repair_token(from_date: str, to_date: str, days: list[dict[str, Any]]) -> str:
+    """The token gating preview -> confirm: the range plus what each day held."""
+    payload = json.dumps(
+        {"from": from_date, "to": to_date, "days": days}, sort_keys=True, default=str
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+
+def repair_confirm(
+    conn: sqlite3.Connection,
+    client: GarminClient,
+    *,
+    from_date: str,
+    to_date: str,
+    confirm_token: str,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Re-pull a previewed range from Garmin and rebuild the marts over it.
+
+    The second tool that reaches Garmin for a date the caller chose (ADR 0028). It
+    pulls the range whole, exactly as ``backfill`` does, so a day that was missing
+    only one stream is completed too; watermarks are never written, so the nightly
+    run's own re-check window is unaffected.
+
+    A mismatched token is refused without touching the account: the range, or what
+    the DB held for it, changed since the preview (or no preview happened).
+    """
+    error = _repair_range_error(from_date, to_date, data_start_date)
+    if error is not None:
+        return _wrap(conn, {"applied": False, "error": error})
+
+    days = [_repair_day(conn, date) for date in _repair_dates(from_date, to_date)]
+    if confirm_token != repair_token(from_date, to_date, days):
+        return _wrap(
+            conn,
+            {
+                "applied": False,
+                "error": "stale confirm_token: the range, or what the DB holds for it, "
+                "changed since the preview; run repair_preview again",
+            },
+        )
+
+    before = _stored_activities(conn, from_date, to_date)
+    try:
+        sync.backfill(client, conn, from_date, to_date)
+    except Exception as exc:  # noqa: BLE001 - a tool reports; it never raises out of MCP
+        return _wrap(conn, {"applied": False, "error": f"repair failed: {exc}"})
+
+    data = {
+        "applied": True,
+        "from_date": from_date,
+        "to_date": to_date,
+        "days": len(days),
+        "activities_stored": _stored_activities(conn, from_date, to_date) - before,
+        "features_ok": False,
+        "error": None,
+    }
+    try:
+        cli.rebuild_marts(conn, data_start_date=data_start_date)
+        data["features_ok"] = True
+    except Exception as exc:  # noqa: BLE001 - the pull landed; say the rebuild did not
+        data["error"] = f"data pulled, but the mart rebuild failed: {exc}"
+    return _wrap(conn, data)
+
+
+def _stored_activities(conn: sqlite3.Connection, from_date: str, to_date: str) -> int:
+    row = conn.execute(
+        "SELECT count(*) FROM activities WHERE date(start_local) BETWEEN ? AND ?",
+        (from_date, to_date),
+    ).fetchone()
+    return int(row[0])
+
 
 
 def author_workout(

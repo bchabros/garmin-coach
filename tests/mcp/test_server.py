@@ -39,6 +39,8 @@ EXPECTED_TOOLS = {
     "event_update",
     # transport (Garmin read)
     "refresh_today",
+    "repair_preview",
+    "repair_confirm",
     # workout push (hash handshake)
     "author_workout",
     "push_preview",
@@ -104,3 +106,15 @@ def test_log_niggle_names_the_severity_scale_the_writer_accepts():
 
     niggle = next(t for t in tools if t.name == "log_niggle")
     assert "1-5" in niggle.description
+
+
+def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(monkeypatch):
+    """Unattended, a stale saved login is a message to read, not a traceback (#71)."""
+
+    def _login(settings):
+        raise client.LoginUnavailableError("saved login expired; run a command in a terminal")
+
+    monkeypatch.setattr(server.client, "login", _login)
+
+    with pytest.raises(client.LoginUnavailableError, match="terminal"):
+        server.repair_confirm(from_date="2026-09-10", to_date="2026-09-12", confirm_token="x")

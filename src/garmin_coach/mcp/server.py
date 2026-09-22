@@ -379,6 +379,54 @@ def refresh_today() -> dict[str, Any]:
         conn.close()
 
 
+
+@server.tool()
+def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
+    """Show what the DB holds for each day of a range; nothing is fetched.
+
+    Use when a day looks empty - an unconfirmed day in the freshness envelope, a
+    session the athlete says they did. Each day reports its stored activity count,
+    which daily streams answered (sleep, HRV, wellness, readiness), and what the plan
+    of record expected. Show it to the athlete; ``repair_confirm`` with the returned
+    token is what pulls. At most 14 days, and never today (that is refresh_today).
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.repair_preview(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str, Any]:
+    """Re-pull a previewed range from Garmin and rebuild the marts over it.
+
+    Gated on the token from ``repair_preview``; a stale one is refused without
+    contacting Garmin. The range is pulled whole (every stream, every day), so a day
+    missing one stream is completed too. Watermarks are never written.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        transport = client.login(settings)
+        return tools.repair_confirm(
+            conn,
+            transport,
+            from_date=from_date,
+            to_date=to_date,
+            confirm_token=confirm_token,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
 @server.tool()
 def author_workout(
     date: str,

@@ -17,7 +17,7 @@ from garmin_coach.core import plan as plan_mod
 from garmin_coach.marts import snapshot
 from garmin_coach.mcp import tools
 from garmin_coach.workouts import author, publish
-from tests.conftest import FakePublisher, as_account_read_back, run_spec
+from tests.conftest import FakeGarminClient, FakePublisher, as_account_read_back, run_spec
 
 DATA_START = "2026-06-08"
 TODAY = dt.date.today().isoformat()
@@ -1702,3 +1702,192 @@ def test_envelope_reports_no_unconfirmed_days_when_every_planned_day_arrived(con
     envelope = tools.get_zones(conn)["freshness"]
 
     assert YESTERDAY not in [u["date"] for u in envelope["unconfirmed_days"]]
+
+
+# --- gap repair: what the data holds, then a bounded re-pull (issue #72) ------
+
+
+def _in_window(back: int) -> str:
+    return (dt.date.today() - dt.timedelta(days=back)).isoformat()
+
+
+def _preview(conn, *, from_back=3, to_back=1, **over):
+    fields = {
+        "from_date": _in_window(from_back),
+        "to_date": _in_window(to_back),
+        "data_start_date": DATA_START,
+    }
+    fields.update(over)
+    return tools.repair_preview(conn, **fields)["data"]
+
+
+def test_repair_preview_reports_what_each_day_holds(conn):
+    """The Saturday that had sleep but no run must read as exactly that (#72)."""
+    day = _in_window(2)
+    _seed_core_day(conn, day, activity_id=910)
+    db.upsert_daily(conn, "sleep", {"date": _in_window(1), "score": 80})
+
+    out = _preview(conn)
+
+    assert out["error"] is None
+    assert [d["date"] for d in out["days"]] == [_in_window(3), _in_window(2), _in_window(1)]
+    assert out["days"][1]["activities"] == 1
+    assert out["days"][2]["activities"] == 0
+    assert out["days"][2]["sleep"] is True
+    assert out["days"][2]["hrv"] is False
+    assert out["days"][0]["planned"] is not None
+
+
+def test_repair_preview_hands_over_a_confirm_token(conn):
+    out = _preview(conn)
+
+    assert out["confirm_token"]
+    assert out["confirm_token"] == _preview(conn)["confirm_token"]
+
+
+def test_repair_preview_token_changes_when_a_day_fills_in(conn):
+    before = _preview(conn)["confirm_token"]
+
+    _seed_core_day(conn, _in_window(2), activity_id=911)
+
+    assert _preview(conn)["confirm_token"] != before
+
+
+def test_repair_preview_refuses_today(conn):
+    """Today is what refresh_today is for; the repair is about finished days."""
+    out = _preview(conn, to_back=0)
+
+    assert "today" in out["error"]
+    assert out["days"] is None
+
+
+def test_repair_preview_refuses_a_range_over_the_cap(conn):
+    out = _preview(conn, from_back=20)
+
+    assert "14" in out["error"]
+
+
+def test_repair_preview_refuses_a_reversed_range(conn):
+    out = _preview(conn, from_back=1, to_back=3)
+
+    assert "before" in out["error"]
+
+
+def test_repair_preview_refuses_a_start_before_the_data_start(conn):
+    out = _preview(conn, from_date="2026-01-01", to_date="2026-01-05")
+
+    assert DATA_START in out["error"]
+
+
+def test_repair_preview_refuses_a_malformed_date(conn):
+    out = _preview(conn, from_date="11.09.2026")
+
+    assert "YYYY-MM-DD" in out["error"]
+
+
+def test_repair_preview_never_contacts_garmin(conn):
+    """It reads the DB only - that is what makes it safe to run before deciding."""
+    out = _preview(conn)
+
+    assert out["days"] is not None
+
+
+def _late_run(date: str, activity_id: int = 900123):
+    """The run that reached Garmin Connect after the nightly sync had passed the day."""
+    return {
+        "activityId": activity_id,
+        "startTimeLocal": f"{date} 09:00:00",
+        "activityType": {"typeKey": "running"},
+        "activityName": "Sobotni bieg",
+        "duration": 3600.0,
+    }
+
+
+def _run_repair(conn, client, *, from_back=3, to_back=1, token=None, **over):
+    from_date, to_date = _in_window(from_back), _in_window(to_back)
+    if token is None:
+        token = _preview(conn, from_back=from_back, to_back=to_back)["confirm_token"]
+    fields = {
+        "from_date": from_date,
+        "to_date": to_date,
+        "confirm_token": token,
+        "data_start_date": DATA_START,
+    }
+    fields.update(over)
+    return tools.repair_confirm(conn, client, **fields)["data"]
+
+
+def test_repair_confirm_pulls_the_range_and_stores_the_late_run(conn, fake_client):
+    """The whole point: the gap closes from chat instead of from the terminal (#72)."""
+    day = _in_window(2)
+    client = fake_client(activities=[_late_run(day)])
+
+    out = _run_repair(conn, client)
+
+    assert out["error"] is None
+    assert out["days"] == 3
+    assert out["activities_stored"] == 1
+    assert out["features_ok"] is True
+    assert conn.execute("SELECT count(*) FROM activities").fetchone()[0] == 1
+
+
+def test_repair_confirm_asks_garmin_for_the_whole_range(conn, fake_client):
+    """A day missing only one stream is repaired too, so the range is pulled whole."""
+    client = fake_client()
+
+    _run_repair(conn, client)
+
+    assert ("activities", f"{_in_window(3)}..{_in_window(1)}") in client.calls
+    assert ("sleep", _in_window(2)) in client.calls
+
+
+def test_repair_confirm_refuses_a_stale_token_without_touching_garmin(conn, fake_client):
+    client = fake_client(activities=[_late_run(_in_window(2))])
+
+    out = _run_repair(conn, client, token="0000000000000000")
+
+    assert "preview" in out["error"]
+    assert out["applied"] is False
+    assert client.calls == []
+
+
+def test_repair_confirm_refuses_a_token_from_a_moved_picture(conn, fake_client):
+    """A nightly run that filled the gap between preview and confirm invalidates it."""
+    stale = _preview(conn)["confirm_token"]
+    _seed_core_day(conn, _in_window(2), activity_id=912)
+    client = fake_client()
+
+    out = _run_repair(conn, client, token=stale)
+
+    assert "preview" in out["error"]
+    assert client.calls == []
+
+
+def test_repair_confirm_refuses_a_bad_range_before_the_token(conn, fake_client):
+    client = fake_client()
+
+    out = _run_repair(conn, client, to_back=0, token="whatever")
+
+    assert "today" in out["error"]
+    assert client.calls == []
+
+
+def test_repair_confirm_leaves_the_watermarks_alone(conn, fake_client):
+    """The nightly run owns the watermarks; a repair must not let it skip a day."""
+    db.set_sync_watermark(conn, "activities", _in_window(5))
+    client = fake_client(activities=[_late_run(_in_window(2))])
+
+    _run_repair(conn, client)
+
+    assert db.get_sync_watermark(conn, "activities") == _in_window(5)
+
+
+def test_repair_confirm_reports_a_failed_pull_without_raising(conn, fake_client):
+    class _Failing(FakeGarminClient):
+        def get_activities(self, start_date, end_date):
+            raise RuntimeError("garmin timed out")
+
+    out = _run_repair(conn, _Failing())
+
+    assert "garmin timed out" in out["error"]
+    assert out["applied"] is False

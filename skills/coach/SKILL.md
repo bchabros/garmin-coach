@@ -1,7 +1,7 @@
 ---
 name: coach
 description: >-
-  Coach the athlete from the deterministic digest: write the daily coaching report, plan the training week, and author/push structured workouts to Garmin. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); asks to plan or re-plan a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); or describes a session to put on the watch ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek").
+  Coach the athlete from the deterministic digest: write the daily coaching report, plan the training week, and author/push structured workouts to Garmin. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); asks to plan or re-plan a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); or describes a session to put on the watch ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek"); or calls a pushed session off ("zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka").
 ---
 
 # Coach
@@ -27,8 +27,9 @@ every time, however small the request looks.
 - Before you read, propose, preview, or write a training week - opening
   `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` /
   `plan_import` - you **MUST** read `references/planning.md`.
-- Before you author a workout or push one to Garmin - `garmin-coach author` / `push`, or
-  `author_workout` / `push_preview` / `push_confirm` / `get_workout_status` /
+- Before you author a workout, push one to Garmin, or take one off a day -
+  `garmin-coach author` / `push`, or `author_workout` / `push_preview` / `push_confirm` /
+  `unschedule_preview` / `unschedule_confirm` / `get_workout_status` /
   `get_pushed_workouts` - you **MUST** read `references/authoring.md`.
 
 A conversation often crosses flows (a report surfaces an unplanned week; a recommendation
@@ -103,7 +104,10 @@ request from the athlete.
   unasked; never overwrite a week that already has a file.
 - **A workout reaches Garmin only after a dry run.** `push --date D` (or `push_preview`)
   shows the spec to the athlete; `push --date D --confirm` (or `push_confirm`) is their
-  deliberate write. Never hand-edit Garmin through the ad-hoc `mcp__garmin__*` tools.
+  deliberate write. Taking one off a day is the same handshake: `unschedule_preview`
+  shows what will leave the calendar, `unschedule_confirm` is their deliberate write, and
+  nothing is ever deleted from the library from chat. Never hand-edit Garmin through the
+  ad-hoc `mcp__garmin__*` tools.
 - **The plan of record bounds authoring.** Authoring and pushing refuse a session harder
   than the plan for that date; softer is always allowed. A refusal is final - report what
   the plan says and leave changing it to the athlete. Report a `plan_divergence`, never

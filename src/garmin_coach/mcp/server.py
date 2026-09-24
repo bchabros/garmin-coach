@@ -2,12 +2,14 @@
 
 Registered as ``coach`` in the repo's ``.mcp.json`` (stdio). Every tool opens
 its own connection to the finished DB, delegates to a pure function in
-``mcp.tools``, and returns its freshness-enveloped dict. Four tools touch
-Garmin: ``refresh_today`` (a read through the transport seam),
-``push_preview``/``push_confirm`` (the outbound push path behind the
-preview-hash handshake), and ``get_workout_status``, which checks a push
-receipt against the account rather than reporting it as fact (issue #41) - see
-ADR 0014 and its annex. No computation happens here.
+``mcp.tools``, and returns its freshness-enveloped dict. The tools that touch
+Garmin: ``refresh_today`` and ``repair_confirm`` (reads through the transport
+seam, ADR 0028), ``push_preview``/``push_confirm`` (the outbound push path behind
+the preview-hash handshake), ``unschedule_preview``/``unschedule_confirm`` (the
+same handshake for taking a pushed workout off a day, issue #74), and
+``get_workout_status``, which checks a push receipt against the account rather
+than reporting it as fact (issue #41) - see ADR 0014 and its annexes. No
+computation happens here.
 """
 
 from __future__ import annotations
@@ -528,6 +530,58 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
             confirm_token=confirm_token,
             publisher=publisher,
             replace=replace,
+            reports_dir=_REPORTS_DIR,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def unschedule_preview(date: str) -> dict[str, Any]:
+    """Show what taking the coach's workout off a day would remove; nothing changes.
+
+    Use when a pushed session is called off - illness, a moved day. Reads the day's
+    push receipt for the workout and checks the account: the response names the
+    workout (``renamed_to`` when the athlete renamed it in Connect), its id, the
+    calendar entries it holds on that day, and a ``confirm_token``. ``action: refuse``
+    with a plain reason when the workout is no longer on the account or is already off
+    that day; ``error`` when the coach never pushed that day (a workout scheduled by
+    hand is removed in Garmin Connect). Show it to the athlete; ``unschedule_confirm``
+    is what removes.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.unschedule_preview(
+            conn,
+            date=date,
+            connect=lambda: publish.connect_publisher(settings),
+            reports_dir=_REPORTS_DIR,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool()
+def unschedule_confirm(date: str, confirm_token: str) -> dict[str, Any]:
+    """Take the previewed workout off the day's calendar; the library is never touched.
+
+    Requires the ``confirm_token`` from ``unschedule_preview``; any other value is
+    refused without touching the account. Removes that day's entries only - the
+    workout stays in the library and on every other day it is on, so it goes back
+    with a normal ``push_preview`` / ``push_confirm`` (which schedule the existing
+    workout without a second upload). The outcome is appended to the day's receipt,
+    so ``get_workout_status``, ``get_pushed_workouts`` and the plan-divergence read
+    see the day as off the watch.
+    """
+    settings = get_settings()
+    conn = _open()
+    try:
+        return tools.unschedule_confirm(
+            conn,
+            date=date,
+            confirm_token=confirm_token,
+            connect=lambda: publish.connect_publisher(settings),
             reports_dir=_REPORTS_DIR,
         )
     finally:

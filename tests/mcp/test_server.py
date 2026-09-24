@@ -49,10 +49,12 @@ EXPECTED_TOOLS = {
     "refresh_today",
     "repair_preview",
     "repair_confirm",
-    # workout push (hash handshake)
+    # workout push (hash handshake), and taking one off a day again
     "author_workout",
     "push_preview",
     "push_confirm",
+    "unschedule_preview",
+    "unschedule_confirm",
 }
 
 
@@ -161,4 +163,31 @@ def test_repair_confirm_refuses_a_stale_token_without_logging_in(tmp_path, monke
 
     assert "preview" in out["data"]["error"]
     assert out["data"]["applied"] is False
+    assert logins == []
+
+
+def test_unschedule_confirm_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
+    """A day the coach never pushed is refused before any login (issue #74)."""
+    _settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "_REPORTS_DIR", str(tmp_path))
+    logins = []
+    monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
+
+    out = server.unschedule_confirm(date="2026-07-17", confirm_token="0000000000000000")
+
+    assert "no push receipt" in out["data"]["error"]
+    assert out["data"]["applied"] is False
+    assert logins == []
+
+
+def test_unschedule_preview_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
+    _settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "_REPORTS_DIR", str(tmp_path))
+    logins = []
+    monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
+
+    out = server.unschedule_preview(date="2026-07-17")
+
+    assert "no push receipt" in out["data"]["error"]
+    assert out["data"]["confirm_token"] is None
     assert logins == []

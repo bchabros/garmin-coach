@@ -7,7 +7,19 @@ are exercised without any live Garmin call. Prior art: ``tests/test_sync.py``.
 
 from __future__ import annotations
 
-from garmin_coach.workouts.publish import confirm_token, plan_divergence, publish, spec_hash
+import json
+import logging
+
+from garmin_coach.workouts.publish import (
+    UNSCHEDULED,
+    confirm_token,
+    invalidated_pushes,
+    plan_divergence,
+    publish,
+    spec_hash,
+    unschedule,
+    unschedule_token,
+)
 from tests.conftest import FakePublisher
 from tests.conftest import run_spec as _spec
 
@@ -498,3 +510,236 @@ def test_a_renamed_version_carries_no_same_name_warning():
 
     assert result.action == "create"
     assert not any("same name" in w for w in result.warnings)
+
+
+# --- taking a workout off a day: the calendar entry goes, the library stays (#74)
+
+
+def _off(pub, date="2026-07-17", workout_id=1000, name=None, **kw):
+    """Plan (or, with ``confirm=True`` and a token, apply) taking a workout off a day."""
+    return unschedule(
+        pub,
+        date=date,
+        workout_id=workout_id,
+        pushed_name=name or f"GC {date} tempo",
+        confirm=kw.pop("confirm", False),
+        **kw,
+    )
+
+
+def test_a_preview_of_taking_a_workout_off_a_day_touches_nothing():
+    pub = FakePublisher()
+    _pushed(pub)
+
+    result = _off(pub)
+
+    assert result.action == "unschedule"
+    assert result.applied is False
+    assert result.schedule_ids == [5000]
+    assert result.confirm_token
+    assert "stays in the library" in result.message
+    assert pub.calls == []
+
+
+def test_a_confirmed_removal_clears_the_day_and_keeps_the_library():
+    """Friday's FBB A comes off Friday; the 17th and the library are untouched (#74)."""
+    pub = FakePublisher()
+    workout_id = _pushed(pub, _reusable())
+    publish(_reusable(date="2026-07-24"), pub, confirm=True)
+    pub.calls.clear()
+    preview = _off(pub, date="2026-07-24", name="GC FBB A")
+
+    result = _off(
+        pub, date="2026-07-24", name="GC FBB A", confirm=True, confirm_token=preview.confirm_token
+    )
+
+    assert result.action == "unschedule"
+    assert result.applied is True
+    assert pub.calls == ["unschedule"]
+    assert workout_id in pub.workouts
+    assert pub.list_scheduled("2026-07-24") == []
+    assert [e["workoutId"] for e in pub.list_scheduled("2026-07-17")] == [workout_id]
+
+
+def test_a_one_day_workout_is_kept_in_the_library_too():
+    """Unlike a replace, a removal never deletes: the next push schedules the stray again."""
+    pub = FakePublisher()
+    _pushed(pub)
+    preview = _off(pub)
+
+    _off(pub, confirm=True, confirm_token=preview.confirm_token)
+
+    assert "delete" not in pub.calls
+    assert 1000 in pub.workouts
+    assert publish(_spec(), pub, confirm=False).action == "schedule"
+
+
+def test_every_entry_of_the_workout_on_the_day_is_removed_and_nothing_else():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.schedule(1000, "2026-07-17")  # a doubled entry from an earlier half-failed push
+    pub.workouts[2000] = {"workoutName": "Hand-made", "description": None}
+    other = pub.schedule(2000, "2026-07-17")
+    pub.calls.clear()
+    preview = _off(pub)
+
+    result = _off(pub, confirm=True, confirm_token=preview.confirm_token)
+
+    assert result.applied is True
+    assert pub.calls == ["unschedule", "unschedule"]
+    assert [e["scheduleId"] for e in pub.list_scheduled("2026-07-17")] == [other]
+
+
+def test_a_workout_the_account_no_longer_holds_is_refused():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts.clear()
+
+    result = _off(pub)
+
+    assert result.action == "refuse"
+    assert "no longer on the account" in result.message
+    assert result.confirm_token is None
+    assert pub.calls == []
+
+
+def test_a_workout_already_off_the_day_is_refused():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.scheduled.clear()
+
+    result = _off(pub)
+
+    assert result.action == "refuse"
+    assert "not on 2026-07-17" in result.message
+    assert result.confirm_token is None
+    assert pub.calls == []
+
+
+def test_a_stale_token_is_refused_without_touching_the_calendar():
+    pub = FakePublisher()
+    _pushed(pub)
+
+    result = _off(pub, confirm=True, confirm_token="deadbeef")
+
+    assert result.action == "refuse"
+    assert result.applied is False
+    assert "stale" in result.message and "unschedule_preview" in result.message
+    assert pub.calls == []
+    assert pub.list_scheduled("2026-07-17") != []
+
+
+def test_the_token_reacts_to_the_days_calendar_moving():
+    """A workout moved by hand between preview and confirm must invalidate the preview."""
+    pub = FakePublisher()
+    _pushed(pub)
+    before = _off(pub).confirm_token
+    pub.scheduled.clear()
+    pub.schedule(1000, "2026-07-17")
+
+    assert _off(pub).confirm_token != before
+    assert unschedule_token("2026-07-17", 1000, [5001]) != unschedule_token(
+        "2026-07-18", 1000, [5001]
+    )
+
+
+class FailingUnschedulePublisher(FakePublisher):
+    """A publisher whose second calendar removal fails, to model a partial removal."""
+
+    def unschedule(self, schedule_id: int) -> None:
+        if self.calls.count("unschedule") == 1:
+            self.calls.append("unschedule-fail")
+            raise RuntimeError("calendar timed out")
+        super().unschedule(schedule_id)
+
+
+def test_a_partial_removal_says_how_far_it_got():
+    pub = FailingUnschedulePublisher()
+    _pushed(pub)
+    pub.schedule(1000, "2026-07-17")
+    pub.calls.clear()
+    preview = _off(pub)
+
+    result = _off(pub, confirm=True, confirm_token=preview.confirm_token)
+
+    assert result.applied is False
+    assert result.error == "calendar timed out"
+    assert "1 of 2" in result.message
+    assert len(pub.list_scheduled("2026-07-17")) == 1
+
+
+def test_a_renamed_workout_is_found_by_its_id_and_shown_under_its_current_name():
+    pub = FakePublisher()
+    _pushed(pub)
+    pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
+
+    result = _off(pub)
+
+    assert result.action == "unschedule"
+    assert result.renamed_to == "Hyrox Tempo"
+    assert "'Hyrox Tempo' (workout 1000)" in result.message
+
+
+def test_the_finding_a_removal_leaves_behind_reads_unscheduled():
+    pub = FakePublisher()
+    _pushed(pub)
+    preview = _off(pub)
+
+    finding = _off(pub, confirm=True, confirm_token=preview.confirm_token).finding()
+
+    assert finding.state == UNSCHEDULED
+    assert finding.scheduled is False
+    assert finding.steps_changed is None
+
+
+def test_divergence_is_silent_for_a_day_whose_workout_was_taken_off():
+    """Off the calendar is off the watch, so the plan cannot diverge from it."""
+    receipt = {"workout_id": 1000, "session_type": "quality", "pushed_at": "2026-07-15T17:28:00"}
+
+    assert plan_divergence(receipt, None, "easy") is not None
+    assert (
+        plan_divergence({**receipt, "unscheduled_at": "2026-07-16T08:00:00"}, None, "easy") is None
+    )
+
+
+def test_divergence_returns_once_a_later_read_finds_the_workout_back_on_the_day():
+    """A hand re-schedule in Connect ends the silence: the last finding says scheduled."""
+    receipt = {"workout_id": 1000, "session_type": "quality", "unscheduled_at": "2026-07-16T08:00"}
+    silent = {**receipt, "reconciled": {"state": "unscheduled", "scheduled": False}}
+    back = {**receipt, "reconciled": {"state": "live", "scheduled": True}}
+
+    assert plan_divergence(silent, None, "easy") is None
+    assert plan_divergence(back, None, "easy") is not None
+
+
+def test_invalidated_pushes_skip_a_day_taken_off(tmp_path):
+    """A plan re-import must not ask for a re-author of a session no longer on the watch."""
+    for date, extra in (
+        ("2026-07-17", {"unscheduled_at": "2026-07-16T08:00:00"}),
+        ("2026-07-18", {}),
+    ):
+        (tmp_path / date).mkdir()
+        (tmp_path / date / "push.json").write_text(
+            json.dumps({"workout_id": 1000, "session_type": "quality", **extra})
+        )
+
+    conflicts = invalidated_pushes(tmp_path, {"2026-07-17": "easy", "2026-07-18": "easy"})
+
+    assert [c["date"] for c in conflicts] == ["2026-07-18"]
+
+
+def test_the_token_survives_an_entry_without_an_id():
+    """The live listing can yield a None schedule id; the token must not trip over it."""
+    assert unschedule_token("2026-07-17", 1000, [5001, None])
+
+
+def test_a_partial_removal_is_logged(caplog):
+    pub = FailingUnschedulePublisher()
+    _pushed(pub)
+    pub.schedule(1000, "2026-07-17")
+    preview = _off(pub)
+
+    with caplog.at_level(logging.WARNING, logger="garmin_coach.workouts.publish"):
+        _off(pub, confirm=True, confirm_token=preview.confirm_token)
+
+    assert any(r.message.startswith("unschedule:") for r in caplog.records)

@@ -250,3 +250,29 @@ any other change. Read what the preview says the replace will do - a workout nam
 that date is deleted, a date-free one is only taken off the date and kept, because it may
 be on days no receipt knows about. When the preview warns that the library will then hold
 two workouts of the same name, offer the new version a name of its own before confirming.
+
+## Taking a session off a day
+
+"Zdejmij czwartkowy trening", "odwołaj piątek, jestem chory": the session leaves that
+day's calendar and nothing else changes. `unschedule_preview(date)` reads the day's push
+receipt and the account, and shows what will leave: the workout's name (`renamed_to` when
+the athlete renamed it in Connect), its id, the calendar entries it holds on that day, and
+a `confirm_token`. Show it to the athlete; on their go-ahead
+`unschedule_confirm(date, confirm_token)` removes exactly those entries.
+
+- **The library is never touched**, whatever the name. A date-free workout may be on
+  other days - including days the athlete scheduled by hand that no receipt knows about -
+  and a one-day workout left behind is a harmless stray. Housekeeping is the athlete's,
+  in Connect; never reach for the ad-hoc `mcp__garmin__*` tools to tidy it.
+- **Putting it back is a normal push.** After a sick week, `push_preview` on the same
+  date resolves to `schedule`: the existing workout goes back on the day with no second
+  upload. Moving a session to another day is a removal plus `author_workout` with
+  `reuse_from` on the new day, then the usual preview and confirm.
+- **A refusal is a plain reason, not a fault.** No receipt for the day means the coach
+  never put a workout there - a hand-scheduled one is removed in Garmin Connect. A
+  workout no longer on the account, or already off that day, is refused too (`action:
+  refuse`, no token); tell the athlete which it was and stop.
+- **Say what changed.** The receipt records the removal (`unscheduled_at`), so
+  `get_pushed_workouts` shows the day as taken off, an offline `get_workout_status`
+  serves `unscheduled` as `last_known`, and the `plan_divergence` for that day goes
+  silent - off the calendar is off the watch. Name the day and the workout that left it.

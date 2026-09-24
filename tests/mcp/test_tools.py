@@ -2122,3 +2122,200 @@ def test_event_add_reports_the_row_it_stored_whatever_shape_the_date_came_in(con
     assert out["error"] is None
     assert out["event"] is not None
     assert out["event"]["date"] == RACE
+
+
+# --- issue #74: taking a pushed workout off a day from chat ------------------
+
+
+def _connect_recording(pub):
+    """A publisher factory that records each login, for the no-login refusals."""
+    logins: list[str] = []
+
+    def connect():
+        logins.append("login")
+        return pub
+
+    return connect, logins
+
+
+def _off_preview(conn, tmp_path, pub, date=PUSH_DATE):
+    return tools.unschedule_preview(conn, date=date, connect=lambda: pub, reports_dir=str(tmp_path))
+
+
+def _off_confirm(conn, tmp_path, pub, token, date=PUSH_DATE):
+    return tools.unschedule_confirm(
+        conn, date=date, confirm_token=token, connect=lambda: pub, reports_dir=str(tmp_path)
+    )
+
+
+def _taken_off(conn, tmp_path, pub, date=PUSH_DATE):
+    """Preview and confirm in one go, returning the confirm's response."""
+    preview = _off_preview(conn, tmp_path, pub, date)
+    return _off_confirm(conn, tmp_path, pub, preview["data"]["confirm_token"], date)
+
+
+def test_unschedule_preview_without_a_receipt_never_logs_in(conn, tmp_path):
+    connect, logins = _connect_recording(FakePublisher())
+
+    out = tools.unschedule_preview(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
+
+    assert "no push receipt" in out["data"]["error"]
+    assert out["data"]["confirm_token"] is None
+    assert logins == []
+
+
+def test_unschedule_preview_with_a_receipt_naming_no_workout_never_logs_in(conn, tmp_path):
+    """A push that failed before uploading recorded no id: nothing on the account to take off."""
+    day_dir = _seed_pushed(tmp_path)
+    receipt = json.loads((day_dir / "push.json").read_text())
+    (day_dir / "push.json").write_text(json.dumps({**receipt, "workout_id": None}))
+    connect, logins = _connect_recording(FakePublisher())
+
+    out = tools.unschedule_preview(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
+
+    assert "never reached the account" in out["data"]["error"]
+    assert logins == []
+
+
+def test_unschedule_preview_names_the_workout_and_hands_over_a_token(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _off_preview(conn, tmp_path, pub)
+
+    data = out["data"]
+    assert data["action"] == "unschedule"
+    assert data["name"] == PUSHED_NAME
+    assert data["workout_id"] == 1000
+    assert data["schedule_ids"] == [5000]
+    assert data["confirm_token"]
+    assert data["error"] is None
+    assert pub.calls == []
+
+
+def test_unschedule_preview_names_the_current_name_when_the_athlete_renamed_it(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    pub = _account_with(FakePublisher(), name="Hyrox Tempo", scheduled_on=PUSH_DATE)
+
+    out = _off_preview(conn, tmp_path, pub)
+
+    assert out["data"]["renamed_to"] == "Hyrox Tempo"
+    assert "Hyrox Tempo" in out["data"]["message"]
+
+
+def test_unschedule_confirm_refuses_a_stale_token_and_leaves_the_receipt_alone(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+    before = (day_dir / "push.json").read_text()
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _off_confirm(conn, tmp_path, pub, "deadbeef")
+
+    assert out["data"]["action"] == "refuse"
+    assert out["data"]["applied"] is False
+    assert "stale" in out["data"]["message"]
+    assert pub.calls == []
+    assert (day_dir / "push.json").read_text() == before
+
+
+def test_unschedule_confirm_clears_the_day_and_appends_the_outcome(conn, tmp_path):
+    """The push's own fields stay as written; the removal sits beside them (ADR 0014)."""
+    day_dir = _seed_pushed(tmp_path)
+    original = json.loads((day_dir / "push.json").read_text())
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+
+    out = _taken_off(conn, tmp_path, pub)
+
+    assert out["data"]["applied"] is True
+    assert out["data"]["action"] == "unschedule"
+    assert pub.calls == ["unschedule"]
+    assert pub.list_scheduled(PUSH_DATE) == []
+    assert 1000 in pub.workouts
+    receipt = json.loads((day_dir / "push.json").read_text())
+    assert receipt["unscheduled_at"]
+    assert receipt["reconciled"]["state"] == "unscheduled"
+    assert receipt["reconciled"]["scheduled"] is False
+    assert {
+        k: v for k, v in receipt.items() if k not in ("unscheduled_at", "reconciled")
+    } == original
+
+
+def test_a_removal_the_account_refuses_writes_nothing(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+    before = (day_dir / "push.json").read_text()
+    pub = _account_with(FakePublisher(), scheduled_on=None)  # already off the day
+
+    preview = _off_preview(conn, tmp_path, pub)
+    out = _off_confirm(conn, tmp_path, pub, "0000000000000000")
+
+    assert preview["data"]["action"] == "refuse"
+    assert preview["data"]["confirm_token"] is None
+    assert "not on" in preview["data"]["message"]
+    assert out["data"]["applied"] is False
+    assert (day_dir / "push.json").read_text() == before
+
+
+class _FailingUnschedule(FakePublisher):
+    def unschedule(self, schedule_id):
+        self.calls.append("unschedule-fail")
+        raise RuntimeError("calendar timed out")
+
+
+def test_a_failed_removal_reports_the_error_and_marks_nothing(conn, tmp_path):
+    day_dir = _seed_pushed(tmp_path)
+    before = (day_dir / "push.json").read_text()
+    pub = _account_with(_FailingUnschedule(), scheduled_on=PUSH_DATE)
+
+    out = _taken_off(conn, tmp_path, pub)
+
+    assert out["data"]["applied"] is False
+    assert out["data"]["error"] == "calendar timed out"
+    assert "0 of 1" in out["data"]["message"]
+    assert (day_dir / "push.json").read_text() == before
+
+
+def test_an_offline_status_read_after_a_removal_serves_unscheduled(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    _taken_off(conn, tmp_path, _account_with(FakePublisher(), scheduled_on=PUSH_DATE))
+
+    out = _status(conn, tmp_path, UnreachablePublisher())
+
+    assert out["data"]["reconciled"]["state"] == "unverified"
+    assert out["data"]["reconciled"]["last_known"]["state"] == "unscheduled"
+    assert out["data"]["push"]["unscheduled_at"]
+
+
+def test_the_listing_marks_a_day_taken_off(conn, tmp_path):
+    _seed_pushed(tmp_path)
+    _taken_off(conn, tmp_path, _account_with(FakePublisher(), scheduled_on=PUSH_DATE))
+
+    row = tools.get_pushed_workouts(conn, reports_dir=str(tmp_path))["data"]["workouts"][0]
+
+    assert row["date"] == PUSH_DATE
+    assert row["last_state"] == "unscheduled"
+    assert row["unscheduled_at"]
+
+
+def test_status_stops_reporting_divergence_for_a_day_taken_off(conn, tmp_path):
+    """Off the calendar is off the watch: the plan has nothing to diverge from (#74)."""
+    _seed_pushed(tmp_path)
+    _seed_plan(conn, PUSH_DATE, "easy")
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+    assert _status(conn, tmp_path, pub)["data"]["plan_divergence"] is not None
+
+    _taken_off(conn, tmp_path, pub)
+
+    assert _status(conn, tmp_path, pub)["data"]["plan_divergence"] is None
+
+
+def test_a_push_after_a_removal_schedules_the_workout_back(conn, tmp_path):
+    """Recovering from a sick week is one preview and one confirm, with no second upload."""
+    spec = _seed_spec(tmp_path, run_spec(date=FUTURE))
+    pub = FakePublisher()
+    _confirm(conn, tmp_path, pub, spec)
+    _taken_off(conn, tmp_path, pub, date=FUTURE)
+    pub.calls.clear()
+
+    out = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+
+    assert out["data"]["action"] == "schedule"
+    assert len(pub.workouts) == 1

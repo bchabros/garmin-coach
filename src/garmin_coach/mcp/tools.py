@@ -10,7 +10,8 @@ constructs a Garmin transport; the tools that need one take it injected).
 ``get_workout_status`` is the one *read* that needs an injected transport: a
 push receipt describes what a push did, and only the account can say what
 became of it (issue #41, annexed to ADR 0014). It takes a factory rather than a
-publisher, so a date that was never pushed costs no login at all.
+publisher, so a date that was never pushed costs no login at all. The unschedule
+pair (issue #74) takes the same factory for the same reason.
 """
 
 from __future__ import annotations
@@ -913,6 +914,7 @@ def _pushed_summary(receipt_path: pathlib.Path) -> dict[str, Any] | None:
         "applied": receipt.get("applied"),
         "session_type": receipt.get("session_type"),
         "pushed_at": receipt.get("pushed_at"),
+        "unscheduled_at": receipt.get("unscheduled_at"),
         "last_state": reconciled.get("state"),
     }
 
@@ -1045,3 +1047,122 @@ def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None
     receipt = result.as_receipt()
     receipt["pushed_at"] = dt.datetime.now().isoformat(timespec="seconds")
     (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))
+
+
+# --- taking a pushed workout off a day (issue #74) --------------------------
+
+
+def unschedule_preview(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    connect: Callable[[], publish.WorkoutPublisher],
+    reports_dir: str = "reports",
+) -> dict[str, Any]:
+    """Show what taking the coach's workout off a day would remove, and hand over a token.
+
+    The day's push receipt names the workout; the account says whether it is still
+    there and on the day. The account is read because the refusals need it - a
+    workout deleted or moved in Connect is refused with a plain reason, never guessed
+    at - and a token must never be handed over for a removal that cannot happen.
+    ``connect`` is called only once the receipt names a workout, so a day the coach
+    never pushed costs no login.
+    """
+    receipt, error = _pushed_receipt(_day_dir(reports_dir, date), date)
+    if receipt is None:
+        return _wrap(conn, {"date": date, "action": None, "confirm_token": None, "error": error})
+    result = _unschedule(connect(), date, receipt, confirm=False)
+    return _wrap(conn, {**_unschedule_view(result), "confirm_token": result.confirm_token})
+
+
+def unschedule_confirm(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    confirm_token: str,
+    connect: Callable[[], publish.WorkoutPublisher],
+    reports_dir: str = "reports",
+) -> dict[str, Any]:
+    """Take the previewed workout off the day's calendar, gated on the preview's token.
+
+    Removes that day's calendar entries for the workout and nothing else: the workout
+    stays in the library and on every other day it is on (ADR 0029). The outcome is
+    appended to the receipt beside the push's own fields, so a later offline read sees
+    the day as off the watch. A mismatched token is refused without touching the
+    calendar.
+    """
+    day_dir = _day_dir(reports_dir, date)
+    receipt, error = _pushed_receipt(day_dir, date)
+    if receipt is None:
+        return _wrap(conn, {"date": date, "action": None, "applied": False, "error": error})
+    result = _unschedule(connect(), date, receipt, confirm=True, confirm_token=confirm_token)
+    if result.applied:
+        _record_unschedule(day_dir, receipt, result)
+    return _wrap(conn, {**_unschedule_view(result), "applied": result.applied})
+
+
+def _unschedule(
+    publisher: publish.WorkoutPublisher,
+    date: str,
+    receipt: dict[str, Any],
+    *,
+    confirm: bool,
+    confirm_token: str | None = None,
+) -> publish.UnscheduleResult:
+    """Run the removal for the workout a receipt names; ``publish`` owns the rules."""
+    return publish.unschedule(
+        publisher,
+        date=date,
+        workout_id=receipt["workout_id"],
+        pushed_name=receipt.get("name"),
+        confirm=confirm,
+        confirm_token=confirm_token,
+    )
+
+
+def _pushed_receipt(day_dir: pathlib.Path, date: str) -> tuple[dict[str, Any] | None, str | None]:
+    """The day's push receipt when it names a workout on the account, or why it does not."""
+    receipt = _read_json(day_dir / "push.json")
+    if not isinstance(receipt, dict):
+        return None, (
+            f"no push receipt for {date}: the coach put no workout on this day, so there is "
+            "nothing to take off (a workout scheduled by hand is removed in Garmin Connect)"
+        )
+    if receipt.get("workout_id") is None:
+        return None, (
+            f"the push for {date} never reached the account (its receipt names no workout); "
+            "nothing to take off"
+        )
+    return receipt, None
+
+
+def _unschedule_view(result: publish.UnscheduleResult) -> dict[str, Any]:
+    """The removal as both tools report it; the confirm adds ``applied``, the preview the token."""
+    return {
+        "date": result.date,
+        "action": result.action,
+        "workout_id": result.workout_id,
+        "name": result.name,
+        "renamed_to": result.renamed_to,
+        "schedule_ids": result.schedule_ids,
+        "message": result.message,
+        "error": result.error,
+    }
+
+
+def _record_unschedule(
+    day_dir: pathlib.Path, receipt: dict[str, Any], result: publish.UnscheduleResult
+) -> None:
+    """Append the removal to the receipt; the push's own fields stay as written (ADR 0014).
+
+    ``unscheduled_at`` is the event and ``reconciled`` the state it leaves: the first is
+    what the divergence read and the listing key on, the second what an offline status
+    read serves as ``last_known``. A later push rewrites the receipt whole and takes both
+    with it - a new push is a new event.
+    """
+    updated = {
+        **receipt,
+        "unscheduled_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "reconciled": result.finding().as_finding(),
+    }
+    (day_dir / "push.json").write_text(json.dumps(updated, indent=2))

@@ -12,13 +12,14 @@ finished spec into the Garmin ``RunningWorkout`` JSON the transport uploads,
 reusing garminconnect's verified step/target structures.
 
 Run authoring covers ``easy``/``tempo``/``quality``; ``rest`` yields no spec, a
-``hyrox`` recommendation asks the athlete for the run/station split. A ``hyrox``
-run request carrying ``structure.stations`` authors the race's own shape: one run
-then one station per entry, the runs ended by distance (or the lap button on race
-day) and the stations by the lap button, each station named on the step so the
-watch shows what comes next. The exercise sports (``strength``, ``hiit``) expand
-``structure.exercises`` entries into flat per-set steps with rests between sets
-(issue #16).
+``hyrox`` recommendation asks the athlete for the run/station split. A request
+carrying ``structure.stations`` authors a station sequence: one run beside each
+station (before it, after it, or none at all), every station named on its step so
+the watch shows what comes next, no rest steps. Under ``sport: run`` the runs end
+by distance (or the lap button on race day); under ``sport: hiit`` the watch
+measures no distance, so they end on the lap button (issue #76). The exercise
+sports (``strength``, ``hiit``) otherwise expand ``structure.exercises`` entries
+into flat per-set steps with rests between sets (issue #16).
 """
 
 from __future__ import annotations
@@ -235,14 +236,14 @@ _PAUSE_ROLES = ("recovery", "rest")
 # The pause a repeat block falls back to when the request asks for repeats but no pause.
 _DEFAULT_PAUSE_ROLE = "recovery"
 
-# A Hyrox run-station sequence: one run then one station per ``structure.stations``
-# entry, in race order. Neither role has a default target - a Hyrox run is paced by
+# A station sequence: one run beside one station per ``structure.stations`` entry,
+# in race order. Neither role has a default target - a Hyrox run is paced by
 # the athlete's own band, not the threshold chain, and a station by heart rate only
 # when asked - so both fall back to no target.
 _HYROX_RUN_ROLE = _Role("run", "run_min", 0)
 _HYROX_STATION_ROLE = _Role("station", "station_min", 0)
 # The optional warmup and cooldown a session may be given but never defaults: the
-# Hyrox run-station sequence and the exercise sports both expand from a list rather
+# station sequence and the exercise sports both expand from a list rather
 # than the role table, so neither has a place for an edge until one is asked for
 # (issue #64, issue #65). One table, so their keys and lengths cannot drift apart.
 _EDGE_ROLES = (
@@ -334,9 +335,9 @@ class HyroxSplitRequired(Exception):
     def __init__(self) -> None:
         super().__init__(
             "hyrox is run-dominant or station-based; author it as a run session type "
-            "(easy/tempo/quality with explicit structure), as a hyrox run request whose "
-            "structure.stations lists the race's stations (one run before each), or as a "
-            "hiit request carrying the station exercises"
+            "(easy/tempo/quality with explicit structure), as a station sequence whose "
+            "structure.stations lists the stations (sport run for GPS-measured runs, "
+            "sport hiit indoors), or as a hiit request carrying the station exercises"
         )
 
 

@@ -255,9 +255,10 @@ never run from the nightly automation, and it bends the golden rule deliberately
 
    `rest` produces no spec; a `hyrox` recommendation asks you to say run-vs-station, and
    either answer is a hand-written `--request` file: a run one under a run session type
-   (`easy`/`tempo`/`quality`) with explicit structure, or a `hiit` one carrying
-   `structure.exercises`. `session_type: hyrox` is only authored under `sport: hiit` --
-   there is no run template for it, so `--sport` alone cannot answer the split. A
+   (`easy`/`tempo`/`quality`) with explicit structure, a `hiit` one carrying
+   `structure.exercises`, or a station sequence (`structure.stations`) under `sport: run`
+   for GPS-measured runs or `sport: hiit` indoors (issue #76). `session_type: hyrox` has
+   no run template, so `--sport` alone cannot answer the split. A
    recommendation's intent picks the sport by itself (`strength` -> strength, `crossfit` ->
    hiit, run types -> run); `--sport` overrides it. Warnings (target is today, no measured
    pace, an override of the recommender's advice, an unknown exercise) are printed and
@@ -417,6 +418,14 @@ every step type round-tripped, a heart-rate target on the warm-up came back as
 back verbatim at 25, 43, 80, 120 and **200** characters, Polish diacritics included, so
 Garmin's own ceiling is above anything this system writes and the caps (30 for a label,
 80 for a whole name) are readability choices, not limits.
+
+**Step notes on the exercise sports (issue #76, run once).** Settled on 2026-09-24 by
+`scratch/issue76_hiit_step_notes_probe.py --confirm` (upload, read back, delete). A step
+`description` round-trips verbatim, Polish diacritics included, in both `hiit` (9) and
+`strength_training` (5): beside a resolved `exerciseName`, on a step with no exercise at
+all, and on a step carrying a heart-rate target. A workout of note-only lap-ended steps
+with no rest steps between them is accepted. This is what lets a station sequence author
+under `sport: hiit` and an unknown exercise name ride as its step's notes.
 
 **Strength/HIIT acceptance (issue #16, run once per sport).** The same four steps with
 an exercise request instead of `--from-recommendation`: one `sport: strength` push and

@@ -210,7 +210,7 @@ code, docstrings, PRDs, and ADRs.
   boundaries are the athlete's own: the Z2 pace ceiling and Z2 heart-rate bound for
   `easy`, threshold pace (within the authoring chain's margin) and LTHR for
   `threshold`. **Absent means unmeasured** - no zone ladder, an exercise sport, or a
-  Hyrox run-station sequence - and the *plan guard* then ranks the session type
+  station sequence - and the *plan guard* then ranks the session type
   instead, as it did before ADR 0024. Its own words on purpose: a threshold interval
   session is not a `tempo` session, it is one that measures `threshold`.
 - **intent class** - the measurable class a planned intent collapses to for
@@ -365,16 +365,25 @@ code, docstrings, PRDs, and ADRs.
   refused, and a pause asked for explicitly replaces the session type's default
   pause. Not to be confused with the `rest` *session type* (a day off, which yields
   no spec) - the two share a word on different axes (ADR 0023).
-- **run-station sequence (workout request)** - a Hyrox race simulation authored as
-  `sport: run`, `session_type: hyrox` with a `structure.stations` list: one run
-  before each station, in race order, the stations named on their steps so the watch
-  says what comes next. Runs share one end and one target, stations share one target
-  and end on the lap button unless an entry says otherwise; a distance-ended station
-  is refused, since the watch would measure an erg by GPS. Like the exercise sports
-  it expands from a **list**, not from the *step role* table (ADR 0023), so it
-  carries no *hardness* and the *plan guard* ranks its session type instead. Without
-  `stations`, a run hyrox request still asks whether the session is run-dominant or
-  station-based.
+- **station sequence (workout request)** - a session of named blocks with a run
+  beside each one - a Hyrox race simulation, EMOM blocks with runs between them, a
+  labelled circuit - authored from a `structure.stations` list under `sport: run`
+  (`session_type: hyrox`) or `sport: hiit` (`hyrox` / `crossfit`; issue #76). The
+  stations are named on their steps so the watch says what comes next; **no rest
+  steps** are inserted. Runs share one end, one target and one label (`run_end`,
+  `run_target`, `run_label`), stations share one target (`station_target`) and end on
+  the lap button unless an entry says otherwise; `run_position` puts the run before
+  each station (default, race order), after it, or nowhere. **The sport says how the
+  watch measures the session**: under `run` the runs end on a distance by default and
+  may carry a pace band; under `hiit` the watch measures no distance and shows no
+  pace, so runs end on the lap button by default, a distance end or a pace band is
+  refused, and an unlabelled run reads "Run". A distance-ended station is refused in
+  both, since the watch would measure an erg by GPS; `run_position: none` is refused
+  under `run`, a running workout with no running. Like the exercise sports it expands
+  from a **list**, not from the *step role* table (ADR 0023), so it carries no
+  *hardness* and the *plan guard* ranks its session type instead. Without `stations`,
+  a run hyrox request still asks whether the session is run-dominant or
+  station-based. Formerly *run-station sequence*, when only `run` had the shape.
 - **structure override (workout request)** - the optional `structure` block in an
   `athlete`/hybrid request that shapes the session type's defaults: for runs,
   `reps` plus, per *step role*, an end condition and an intensity target; for the
@@ -425,9 +434,10 @@ code, docstrings, PRDs, and ADRs.
   round-tripped in the live probes).
 - **session edge (workout request)** - the optional `warmup` / `cooldown` step of a
   session that expands from a list rather than the run role table: an exercise sport
-  (issue #65) or a Hyrox run-station sequence (issue #64). Same keys, same vocabulary
+  (issue #65) or a station sequence (issue #64). Same keys, same vocabulary
   and the same 10-minute default as a run role, but never defaulted: the step exists
-  only when the structure gives the role an end, a length, or a target. No target
+  only when the structure gives the role an end, a length, a target, or (in a station
+  sequence) a label. No target
   unless one is asked for. Authored before the first set and after the last, leaving
   everything between them unchanged.
 - **rest default (exercise sports)** - the between-sets rest applied when an

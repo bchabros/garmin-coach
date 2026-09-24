@@ -98,7 +98,9 @@ weight_kg?, rest?}`:
 - **sport + session_type**: FBB/gym -> `strength`/`strength`; stations/metcon ->
   `hiit` with `crossfit`, or `hyrox` for Hyrox-specific station work. A run-dominant
   Hyrox day is a run request under a run session type (`easy`/`tempo`/`quality`) with
-  explicit structure - `session_type: hyrox` only authors under `sport: hiit`.
+  explicit structure. A session of named blocks - stations, EMOMs, runs between them -
+  is a **station sequence** (next section), not an exercises list: it has no rests and
+  its blocks end on the lap button.
 - **exercise** - the athlete's own words ("przysiad" -> "back squat", "wall balls",
   "sled push"); the whitelist in `workouts/exercises.py` resolves them to Garmin's
   labels. An unknown name still authors (warning; the athlete's words become the step's
@@ -125,23 +127,65 @@ Example (fuller ones in `tests/fixtures/strength_request.json` and
 }
 ```
 
-**Hyrox race simulation** (run-station sequence) authors as `sport: run`,
-`session_type: hyrox` with a `structure.stations` list - one run *before* each station,
-in race order. Runs share one end and one target; stations share one target and end on
-the lap button unless an entry says otherwise:
+**Station sequence** (a Hyrox race simulation, EMOM blocks with runs between them, a
+labelled circuit) authors from a `structure.stations` list: one run beside each station,
+the stations named on their steps so the watch says what comes next, **no rest steps**
+(whatever happens between a station and the next run is inside the lap). Runs share one
+end, one target and one label; stations share one target and end on the lap button unless
+an entry says otherwise.
 
-- **stations** - labels in the athlete's words (`"SkiErg 1000 m"`), shown on the watch as
-  the step's notes; an entry may be `{"label": ..., "end": {"min": N}}` for a time-boxed
-  station. A distance end is refused (the watch would GPS-measure an erg).
-- **run_end** - `{"distance_m": 1000}` by default (training); `"lap"` for race day, where
-  the course is never exactly a kilometre.
-- **run_target** / **station_target** - the usual target spellings (`{"pace_band": [fast,
-  slow]}`, a zone name, `{"hr_band": [...]}`, `"none"`); both default to no target. A
-  `run_target` band faster than a recommendation gets the same cited warning as
-  `work_pace_band`.
-- **warmup_end** / **cooldown_end** (or the `_min` aliases) - optional; the step is
-  authored only when given. Without `stations`, a run hyrox request still asks for the
-  split.
+**Pick the sport by how the watch measures the session**, not by the word "Hyrox":
+
+- `sport: run`, `session_type: hyrox` - outdoors or anywhere GPS measures the runs: runs
+  end on a distance by default and may carry a pace band. The activity records as a run.
+- `sport: hiit` (`hyrox` or `crossfit`) - treadmill, indoors, a station circuit: the watch
+  measures no distance and shows no pace, so runs end on the lap button by default (or a
+  time), a distance end or a pace band is refused with a message pointing at `sport: run`,
+  and the activity records as HIIT. `stations` and `exercises` cannot both be given.
+
+The keys, in both sports:
+
+- **stations** - labels in the athlete's words (`"SkiErg 1000 m"`, `"EMOM 1: 14 kcal row,
+  20 WBS, 10 burpees"`), shown on the watch as the step's notes; an entry may be
+  `{"label": ..., "end": {"min": N}}` for a time-boxed station. A distance end is refused
+  (the watch would GPS-measure an erg).
+- **run_position** - `"before"` each station (default; race order), `"after"` each station
+  (an EMOM block, then its run), or `"none"` for a pure labelled circuit with no runs.
+  `"none"` is refused under `sport: run` - a running workout with no running is `hiit`.
+- **run_end** - under `run`: `{"distance_m": 1000}` by default (training), `"lap"` for race
+  day, where the course is never exactly a kilometre. Under `hiit`: `"lap"` by default, or a
+  time.
+- **run_label** - the notes on every run (`"Run 2 km (bieżnia)"`). Under `hiit` an unlabelled
+  run reads `"Run"`; under `run` it stays unlabelled unless given.
+- **run_target** / **station_target** - the usual target spellings (a zone name,
+  `{"hr_band": [...]}`, `"none"`, and under `run` also `{"pace_band": [fast, slow]}`); both
+  default to no target. A `run_target` band faster than a recommendation gets the same
+  cited warning as `work_pace_band`.
+- **warmup_end** / **cooldown_end** (or the `_min` aliases) and **warmup_label** /
+  **cooldown_label** - optional; the step is authored only when one of its keys is given.
+  Without `stations`, a run hyrox request still asks for the split.
+
+Indoors, the 2026-09-23 session "3x EMOM + 2 km" (three 12-minute EMOM blocks, a 2 km
+treadmill run after each) - the full file is `tests/fixtures/hiit_emom_request.json`:
+
+```json
+{
+  "sport": "hiit", "origin": "athlete", "date": "2026-09-23", "session_type": "crossfit",
+  "label": "3x EMOM + 2 km",
+  "structure": {
+    "run_position": "after",
+    "run_end": {"min": 10},
+    "run_label": "Run 2 km (bieżnia)",
+    "stations": [
+      {"label": "EMOM 1: 14 kcal row, 20 WBS, 10 burpees", "end": {"min": 12}},
+      {"label": "EMOM 2: 12 cal ski, 15 KB swings, 10 box jumps", "end": {"min": 12}},
+      {"label": "EMOM 3: 10 cal bike, 20 lunges, 8 burpee broad jumps", "end": {"min": 12}}
+    ]
+  }
+}
+```
+
+Outdoors, a race simulation with GPS-measured kilometres:
 
 ```json
 {

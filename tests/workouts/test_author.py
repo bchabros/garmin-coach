@@ -2127,3 +2127,61 @@ def test_the_2026_09_23_emom_session_authors_as_blocks_then_runs(fixture):
         e["label"] for e in request["structure"]["stations"]
     ]
     assert not any(s["stepType"]["stepTypeKey"] == "rest" for s in steps)
+
+
+# --- labels on runs and edges (issue #76) ---------------------------------------
+
+
+def test_hiit_runs_read_run_when_no_label_is_given():
+    """Between labelled stations the run must not be the one blank step."""
+    spec = author(_hiit_stations_request(), _context())
+    runs = [s for s in spec["steps"] if s["kind"] == "work"]
+    assert all(s["label"] == "Run" for s in runs)
+
+
+def test_run_label_names_every_run_in_both_sports():
+    for request in (_hiit_stations_request, _hyrox_request):
+        spec = author(request({"run_label": "Run 1 km"}), _context())
+        runs = [s for s in spec["steps"] if s["kind"] == "work"]
+        assert [s["label"] for s in runs] == ["Run 1 km"] * 3
+
+
+def test_a_run_sequence_run_stays_unlabelled_unless_asked():
+    """Every run-station sequence pushed before #76 must still go up as it did."""
+    spec = author(_hyrox_request(), _context())
+    assert all("label" not in s for s in spec["steps"] if s["kind"] == "work")
+
+
+def test_edge_labels_name_the_warmup_and_cooldown():
+    structure = {
+        "warmup_end": "lap",
+        "warmup_label": "Rozgrzewka",
+        "cooldown_min": 5,
+        "cooldown_label": "Chłodzenie",
+    }
+    spec = author(_hiit_stations_request(structure), _context())
+    assert spec["steps"][0]["label"] == "Rozgrzewka"
+    assert spec["steps"][-1]["label"] == "Chłodzenie"
+
+
+def test_an_edge_label_alone_summons_the_edge():
+    """Any of a role's keys summons it (ADR 0023); a label is one of them."""
+    spec = author(_hiit_stations_request({"warmup_label": "Rozgrzewka"}), _context())
+    assert spec["steps"][0]["kind"] == "warmup"
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 600}
+
+
+@pytest.mark.parametrize("key", ["run_label", "warmup_label", "cooldown_label"])
+@pytest.mark.parametrize("value", ["", "   ", 3])
+def test_a_label_must_be_a_non_empty_string(key, value):
+    with pytest.raises(ValueError, match=f"{key} must be a non-empty string"):
+        author(_hiit_stations_request({key: value}), _context())
+
+
+def test_to_garmin_labels_ride_as_notes_on_runs_and_edges(fixture):
+    spec = author(fixture("hiit_stations_request"), _context(today="2026-09-24"))
+    steps = _hyrox_steps(to_garmin(spec))
+    assert [s["description"] for s in steps[1::2]] == ["Run 1 km"] * 8
+    assert "description" not in steps[0]
+    run_spec = author(_hyrox_request({"run_label": "Run 1 km"}), _context())
+    assert _hyrox_steps(to_garmin(run_spec))[0]["description"] == "Run 1 km"

@@ -262,8 +262,22 @@ _RUN_POSITION_KEY = "run_position"
 _RUN_POSITIONS = ("before", "after", "none")
 _DEFAULT_RUN_POSITION = "before"
 
+# A run in a HIIT station sequence with no ``run_label`` reads this, so it is not the
+# one blank step between labelled stations. A run-sport sequence stays unlabelled
+# unless asked, so what was pushed before issue #76 keeps its content.
+_HIIT_RUN_DEFAULT_LABEL = "Run"
+
+
+def _label_key(role: _Role) -> str:
+    """The structure key that names a role's step on the watch (``<role>_label``)."""
+    return f"{role.name}_label"
+
+
+_STATION_LABEL_KEYS = tuple(_label_key(role) for role in (_HYROX_RUN_ROLE, *_EDGE_ROLES))
+
 _HYROX_STRUCTURE_KEYS = frozenset(
     {"stations", _RUN_POSITION_KEY, _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
+    | set(_STATION_LABEL_KEYS)
     | {key for role in _EDGE_ROLES for key in (role.end_key, role.min_key)}
 )
 
@@ -604,8 +618,23 @@ def _validate_station_structure(structure: dict[str, Any], sport: str) -> None:
         if target is not None:
             _validate_target(target, key)
     _validate_run_position(structure, sport)
+    _validate_labels(structure)
     if sport == "hiit":
         _validate_hiit_measures(structure)
+
+
+def _validate_labels(structure: dict[str, Any]) -> None:
+    """Check each given ``<role>_label`` is a non-empty string.
+
+    Raises:
+        ValueError: If a label is not a string or is blank.
+    """
+    for key in _STATION_LABEL_KEYS:
+        if key not in structure:
+            continue
+        label = structure[key]
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError(f"{key} must be a non-empty string")
 
 
 def _validate_run_position(structure: dict[str, Any], sport: str) -> None:
@@ -1117,14 +1146,31 @@ def _expand_stations(
     run_target = targets.for_role(_HYROX_RUN_ROLE)
     station_target = targets.for_role(_HYROX_STATION_ROLE)
     position = structure.get(_RUN_POSITION_KEY, _DEFAULT_RUN_POSITION)
+    run_label = _station_run_label(structure, request["sport"])
     steps: list[dict[str, Any]] = [warmup] if warmup else []
     for station in structure["stations"]:
         run = _step("work", dict(run_end), dict(run_target))
+        if run_label is not None:
+            run["label"] = run_label
         station_step = _station_step(station, dict(station_target))
         steps.extend(_place_run(position, run, station_step))
     if cooldown:
         steps.append(cooldown)
     return steps
+
+
+def _station_run_label(structure: dict[str, Any], sport: str) -> str | None:
+    """The notes every run in the sequence shares.
+
+    The given ``run_label``, else the HIIT default, else none at all on a run-sport
+    sequence.
+    """
+    label = structure.get(_label_key(_HYROX_RUN_ROLE))
+    if label is not None:
+        return str(label).strip()
+    if sport == "hiit":
+        return _HIIT_RUN_DEFAULT_LABEL
+    return None
 
 
 def _place_run(position: str, run: dict[str, Any], station: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1143,9 +1189,14 @@ def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dic
     target with no length runs for the shared default, exactly as a summoned run
     role does).
     """
-    if not any(structure.get(key) is not None for key in role.keys):
+    keys = (*role.keys, _label_key(role))
+    if not any(structure.get(key) is not None for key in keys):
         return None
-    return _role_step(structure, role, targets)
+    step = _role_step(structure, role, targets)
+    label = structure.get(_label_key(role))
+    if label is not None:
+        step["label"] = label.strip()
+    return step
 
 
 def _station_run_end(structure: dict[str, Any], sport: str) -> dict[str, Any]:

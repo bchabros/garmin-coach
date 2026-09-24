@@ -471,7 +471,8 @@ code, docstrings, PRDs, and ADRs.
   Garmin `category`/`exerciseName` pairs, held to Garmin Connect's public
   exercise taxonomy by contract tests (the athlete's logged sets carry no enums,
   so the taxonomy is the mining source). Warn-never-block: an unknown exercise
-  authors an unlabeled step and a spec warning.
+  authors a step whose notes are the athlete's own words, plus a spec warning
+  (issue #76).
 
 ## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 

@@ -360,14 +360,30 @@ def test_strength_rest_override_and_lap():
     assert spec["steps"][5]["end"] == {"type": "lap"}
 
 
-def test_strength_unknown_exercise_warns_and_stays_unlabeled():
+def test_strength_unknown_exercise_warns_and_becomes_the_step_notes():
     # the ski erg has no entry in Garmin's taxonomy - the canonical unmapped case
     spec = author(
         _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
         _context(),
     )
-    assert any("unknown exercise 'ski erg'" in w for w in spec["warnings"])
+    assert any(
+        "'ski erg' is not a Garmin exercise; shown as the step's notes" in w
+        for w in spec["warnings"]
+    )
     assert "exercise" not in spec["steps"][0]
+    assert spec["steps"][0]["label"] == "ski erg"
+
+
+def test_a_resolved_exercise_carries_no_notes():
+    spec = author(_strength_request(), _context())
+    assert "label" not in spec["steps"][0]
+
+
+def test_an_unknown_exercise_keeps_the_athlete_words_as_written():
+    """An EMOM block is a sentence, not a name: it goes out as typed (issue #76)."""
+    block = "EMOM 1: 14 kcal row, 20 WBS, 10 burpees"
+    spec = author(_strength_request([{"exercise": block, "sets": 1, "reps": 1}]), _context())
+    assert spec["steps"][0]["label"] == block
 
 
 def test_strength_time_ended_entry():
@@ -578,7 +594,7 @@ def test_to_garmin_strength_payload_matches_the_probe_shape():
     assert rest["endConditionValue"] == 90.0
 
 
-def test_to_garmin_strength_unknown_exercise_step_has_no_labels():
+def test_to_garmin_strength_unknown_exercise_step_carries_only_its_notes():
     spec = author(
         _strength_request([{"exercise": "ski erg", "sets": 1, "reps": 10}]),
         _context(),
@@ -587,6 +603,13 @@ def test_to_garmin_strength_unknown_exercise_step_has_no_labels():
     assert "category" not in step
     assert "exerciseName" not in step
     assert "weightValue" not in step
+    assert step["description"] == "ski erg"
+
+
+def test_to_garmin_resolved_exercise_step_carries_no_description():
+    """Every exercise session pushed before #76 must still go up byte for byte."""
+    steps = to_garmin(author(_strength_request(), _context()))["workoutSegments"][0]
+    assert all("description" not in step for step in steps["workoutSteps"])
 
 
 def test_to_garmin_strength_lap_rest_and_estimated_duration():

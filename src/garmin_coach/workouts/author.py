@@ -709,12 +709,19 @@ def _expand_exercises(
 
 
 def _exercise_work_step(entry: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
-    """One entry's work step: end condition, resolved exercise label, optional weight."""
+    """One entry's work step: end condition, resolved exercise or notes, optional weight.
+
+    A name the whitelist cannot resolve is not dropped: it rides as the step's notes,
+    so an EMOM block written in the athlete's words is still readable on the watch
+    (issue #76). A resolved exercise carries no notes, so every session authored
+    before that change translates exactly as it did.
+    """
     step: dict[str, Any] = {"kind": "work", "end": _exercise_end(entry), "target": _no_target()}
     pair = exercises.resolve(entry["exercise"])
     if pair is None:
+        step["label"] = entry["exercise"].strip()
         warnings.append(
-            f"unknown exercise '{entry['exercise']}'; the step will be unlabeled on the watch"
+            f"'{entry['exercise']}' is not a Garmin exercise; shown as the step's notes"
         )
     else:
         step["exercise"] = {"category": pair[0], "name": pair[1]}
@@ -1511,6 +1518,10 @@ def _exercise_garmin_step(step: dict[str, Any], order: int) -> dict[str, Any]:
     if "exercise" in step:
         payload["category"] = step["exercise"]["category"]
         payload["exerciseName"] = step["exercise"]["name"]
+    if "label" in step:
+        # The step's notes; the account keeps them beside an exercise name or without
+        # one (live probe, 2026-09-24).
+        payload["description"] = step["label"]
     if "weight_kg" in step:
         payload["weightValue"] = float(step["weight_kg"])
         payload["weightUnit"] = _KILOGRAM_UNIT

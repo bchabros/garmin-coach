@@ -6,12 +6,12 @@ reference is Garmin Connect's own public exercise taxonomy
 ``tests/fixtures/garmin_exercise_taxonomy.json`` on 2026-07-21). The athlete's
 logged sets carry no enums (the watch records whole sessions as a single
 UNKNOWN set), so the taxonomy is the mining source; the contract tests hold
-every entry to it. Resolution is warn-never-block: an unknown name authors an
-unlabeled step, it never refuses the session.
+every entry to it. Resolution is warn-never-block: an unknown name authors a step
+whose notes are the athlete's own words, it never refuses the session.
 
 Curation notes: Hyrox's burpee broad jump has no taxonomy entry - the closest
 honest label is TOTAL_BODY/BURPEE; the ski erg has none at all and stays
-unmapped (the step goes out unlabeled).
+unmapped (the step goes out with the athlete's words as its notes).
 """
 
 from __future__ import annotations

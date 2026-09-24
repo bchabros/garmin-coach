@@ -101,8 +101,8 @@ weight_kg?, rest?}`:
   explicit structure - `session_type: hyrox` only authors under `sport: hiit`.
 - **exercise** - the athlete's own words ("przysiad" -> "back squat", "wall balls",
   "sled push"); the whitelist in `workouts/exercises.py` resolves them to Garmin's
-  labels. An unknown name still authors (warning + unlabeled step) - flag it to the
-  athlete rather than inventing a different exercise.
+  labels. An unknown name still authors (warning; the athlete's words become the step's
+  notes) - flag it to the athlete rather than inventing a different exercise.
 - **sets/reps/weight**: "5x5 100 kg" -> `{"sets": 5, "reps": 5, "weight_kg": 100}`;
   ramping ("100/105/110") -> consecutive single-set entries. Time-boxed stations
   ("45 s sled") -> `{"time": {"s": 45}}` instead of reps.

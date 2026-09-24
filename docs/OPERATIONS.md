@@ -344,8 +344,8 @@ list instead of the run roles. Each entry is one exercise with uniform sets:
 
 - `exercise` - the athlete's name for it ("back squat", "wall balls", "sled push");
   resolved against the curated whitelist in `workouts/exercises.py` to Garmin's
-  `category`/`exerciseName` pair. An unknown name warns and authors an unlabeled step -
-  it never blocks.
+  `category`/`exerciseName` pair. An unknown name warns and authors a step whose notes are
+  the athlete's words - it never blocks.
 - `sets` - how many sets; each becomes its own step on the watch (flat steps, never a
   repeat group - the shape the live probes proved).
 - `reps: N` **or** `time: {"min": N} | {"s": N}` - exactly one; rep-ended or time-ended

@@ -1,0 +1,22 @@
+{
+  "sport": "hiit",
+  "origin": "athlete",
+  "date": "2026-09-26",
+  "session_type": "hyrox",
+  "label": "8 Wonders + 8x1 km",
+  "structure": {
+    "warmup_end": "lap",
+    "station_target": "none",
+    "run_label": "Run 1 km",
+    "stations": [
+      "SkiErg 1000 m",
+      "Sled Push 50 m",
+      "Sled Pull 50 m",
+      "Burpee Broad Jumps 80 m",
+      "Row 1000 m",
+      "Farmers Carry 200 m",
+      "Sandbag Lunges 100 m",
+      "Wall Balls 100"
+    ]
+  }
+}

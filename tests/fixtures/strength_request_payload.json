@@ -1,0 +1,667 @@
+{
+  "workoutName": "GC 2026-07-28 strength",
+  "sportType": {
+    "sportTypeId": 5,
+    "sportTypeKey": "strength_training",
+    "displayOrder": 5
+  },
+  "estimatedDurationInSecs": 1590,
+  "workoutSegments": [
+    {
+      "segmentOrder": 1,
+      "sportType": {
+        "sportTypeId": 5,
+        "sportTypeKey": "strength_training",
+        "displayOrder": 5
+      },
+      "workoutSteps": [
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 1,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 5.0,
+          "category": "SQUAT",
+          "exerciseName": "BARBELL_BACK_SQUAT",
+          "weightValue": 100.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 2,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 120.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 3,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 5.0,
+          "category": "SQUAT",
+          "exerciseName": "BARBELL_BACK_SQUAT",
+          "weightValue": 100.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 4,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 120.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 5,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 5.0,
+          "category": "SQUAT",
+          "exerciseName": "BARBELL_BACK_SQUAT",
+          "weightValue": 100.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 6,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 120.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 7,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 5.0,
+          "category": "SQUAT",
+          "exerciseName": "BARBELL_BACK_SQUAT",
+          "weightValue": 100.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 8,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 120.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 9,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 5.0,
+          "category": "SQUAT",
+          "exerciseName": "BARBELL_BACK_SQUAT",
+          "weightValue": 100.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 10,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 120.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 11,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "BENCH_PRESS",
+          "exerciseName": "BARBELL_BENCH_PRESS",
+          "weightValue": 80.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 12,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 13,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "BENCH_PRESS",
+          "exerciseName": "BARBELL_BENCH_PRESS",
+          "weightValue": 80.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 14,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 15,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "BENCH_PRESS",
+          "exerciseName": "BARBELL_BENCH_PRESS",
+          "weightValue": 80.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 16,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 17,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "ROW",
+          "exerciseName": "BARBELL_ROW",
+          "weightValue": 70.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 18,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 19,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "ROW",
+          "exerciseName": "BARBELL_ROW",
+          "weightValue": 70.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 20,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 21,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 8.0,
+          "category": "ROW",
+          "exerciseName": "BARBELL_ROW",
+          "weightValue": 70.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 22,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 23,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "LUNGE",
+          "exerciseName": "WALKING_LUNGE",
+          "weightValue": 20.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 24,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 25,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "LUNGE",
+          "exerciseName": "WALKING_LUNGE",
+          "weightValue": 20.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 26,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 27,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "LUNGE",
+          "exerciseName": "WALKING_LUNGE",
+          "weightValue": 20.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 28,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 29,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 10.0,
+          "category": "PULL_UP",
+          "exerciseName": "PULL_UP"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 30,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 31,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 10.0,
+          "category": "PULL_UP",
+          "exerciseName": "PULL_UP"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 32,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 90.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 33,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 10.0,
+          "category": "PULL_UP",
+          "exerciseName": "PULL_UP"
+        }
+      ]
+    }
+  ]
+}

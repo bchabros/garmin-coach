@@ -1,0 +1,465 @@
+{
+  "workoutName": "GC 2026-07-23 crossfit",
+  "sportType": {
+    "sportTypeId": 9,
+    "sportTypeKey": "hiit",
+    "displayOrder": 9
+  },
+  "estimatedDurationInSecs": 1155,
+  "workoutSegments": [
+    {
+      "segmentOrder": 1,
+      "sportType": {
+        "sportTypeId": 9,
+        "sportTypeKey": "hiit",
+        "displayOrder": 9
+      },
+      "workoutSteps": [
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 1,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "SQUAT",
+          "exerciseName": "WALL_BALL"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 2,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 3,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "SQUAT",
+          "exerciseName": "WALL_BALL"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 4,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 5,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "SQUAT",
+          "exerciseName": "WALL_BALL"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 6,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 7,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 45.0,
+          "category": "SLED",
+          "exerciseName": "PUSH"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 8,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 9,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 45.0,
+          "category": "SLED",
+          "exerciseName": "PUSH"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 10,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 11,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 45.0,
+          "category": "SLED",
+          "exerciseName": "PUSH"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 12,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 13,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 15.0,
+          "category": "TOTAL_BODY",
+          "exerciseName": "BURPEE"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 14,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 15,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 15.0,
+          "category": "TOTAL_BODY",
+          "exerciseName": "BURPEE"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 16,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 17,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 15.0,
+          "category": "TOTAL_BODY",
+          "exerciseName": "BURPEE"
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 18,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 19,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "HIP_RAISE",
+          "exerciseName": "KETTLEBELL_SWING",
+          "weightValue": 24.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 20,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 21,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "HIP_RAISE",
+          "exerciseName": "KETTLEBELL_SWING",
+          "weightValue": 24.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 22,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 23,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 10,
+            "conditionTypeKey": "reps",
+            "displayOrder": 10,
+            "displayable": true
+          },
+          "endConditionValue": 20.0,
+          "category": "HIP_RAISE",
+          "exerciseName": "KETTLEBELL_SWING",
+          "weightValue": 24.0,
+          "weightUnit": {
+            "unitId": 8,
+            "unitKey": "kilogram",
+            "factor": 1000.0
+          }
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 24,
+          "stepType": {
+            "stepTypeId": 5,
+            "stepTypeKey": "rest",
+            "displayOrder": 5
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 60.0
+        },
+        {
+          "type": "ExecutableStepDTO",
+          "stepOrder": 25,
+          "stepType": {
+            "stepTypeId": 3,
+            "stepTypeKey": "interval",
+            "displayOrder": 3
+          },
+          "endCondition": {
+            "conditionTypeId": 2,
+            "conditionTypeKey": "time",
+            "displayOrder": 2,
+            "displayable": true
+          },
+          "endConditionValue": 300.0,
+          "category": "ROW",
+          "exerciseName": "INDOOR_ROW"
+        }
+      ]
+    }
+  ]
+}

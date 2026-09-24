@@ -487,7 +487,8 @@ code, docstrings, PRDs, and ADRs.
   planned_intent, pushed_at}`. It can only arise from a plan revised after the push,
   since both guards refuse it at write time. Read from the DB and the receipt, so it
   is answered even when the account is unreachable. Silent for a day whose workout the
-  coach took off (`unscheduled_at` on the receipt): off the calendar is off the watch.
+  coach took off (`unscheduled_at` on the receipt) until a status read finds it back on
+  the day: off the calendar is off the watch (ADR 0030).
 - **invalidated push** - the same divergence found at plan-ingestion time: `plan
   import` and `plan_confirm` check the imported week's dates against their receipts
   and name the days that now need re-authoring. Revising a week is when a divergence

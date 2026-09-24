@@ -318,7 +318,8 @@ entries for the workout and nothing else. The library is never touched, whatever
 name - a one-day workout left behind is a harmless stray, and pushing the same spec again
 resolves to `schedule` and puts it back without a second upload. The removal is appended
 to the receipt as `unscheduled_at` beside the push's own fields, so `get_pushed_workouts`
-shows the day as taken off and the plan-divergence read goes silent for it. A day with no
+shows the day as taken off and the plan-divergence read goes silent for it (until a status
+read finds the workout back on the day, put there by hand). A day with no
 receipt is refused before any login: the coach put nothing there, and a workout scheduled
 by hand is removed in Garmin Connect.
 

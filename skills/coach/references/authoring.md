@@ -272,7 +272,8 @@ a `confirm_token`. Show it to the athlete; on their go-ahead
   never put a workout there - a hand-scheduled one is removed in Garmin Connect. A
   workout no longer on the account, or already off that day, is refused too (`action:
   refuse`, no token); tell the athlete which it was and stop.
-- **Say what changed.** The receipt records the removal (`unscheduled_at`), so
-  `get_pushed_workouts` shows the day as taken off, an offline `get_workout_status`
-  serves `unscheduled` as `last_known`, and the `plan_divergence` for that day goes
-  silent - off the calendar is off the watch. Name the day and the workout that left it.
+- **Say what changed.** The receipt records the removal (`unscheduled_at`), so the
+  listing of pushed workouts shows the day as taken off, a status read that cannot reach
+  Garmin still reports the day as off the watch (`last_known`), and the plan no longer
+  counts that day as diverging - off the calendar is off the watch, until the athlete
+  puts it back by hand and a read sees it. Name the day and the workout that left it.

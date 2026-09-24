@@ -331,9 +331,9 @@ def _unschedule_existing(publisher: WorkoutPublisher, workout_id: int, date: str
 
 
 def _entries_on(publisher: WorkoutPublisher, workout_id: int, date: str) -> list[int]:
-    """The calendar entries a workout holds on a date, as schedule ids in a stable order."""
+    """The calendar entries a workout holds on a date, as schedule ids in the account's order."""
     entries = publisher.list_scheduled(date)
-    return sorted(entry["scheduleId"] for entry in entries if entry["workoutId"] == workout_id)
+    return [entry["scheduleId"] for entry in entries if entry["workoutId"] == workout_id]
 
 
 # --- taking a workout off a day (issue #74) ----------------------------------
@@ -402,7 +402,22 @@ def unschedule(
         An ``UnscheduleResult`` with the resolved action, the entries it covers, and
         (when confirmed) whether they were removed.
     """
-    entry = _library_entry(publisher, workout_id)
+    result = _plan_unschedule(publisher, date, workout_id, pushed_name)
+    if not confirm or result.action == "refuse":
+        return result
+    if confirm_token != result.confirm_token:
+        return _refused(
+            result,
+            "stale confirm_token: the workout, or the day's calendar, changed since the "
+            "preview (or no preview happened); run unschedule_preview again",
+        )
+    return _remove_entries(result, publisher)
+
+
+def _plan_unschedule(
+    publisher: WorkoutPublisher, date: str, workout_id: int, pushed_name: str | None
+) -> UnscheduleResult:
+    """Read the account once and resolve what taking the workout off the day would do."""
     result = UnscheduleResult(
         action="unschedule",
         applied=False,
@@ -410,12 +425,14 @@ def unschedule(
         workout_id=workout_id,
         name=pushed_name,
         message="",
-        renamed_to=_renamed_to(entry, pushed_name) if entry is not None else None,
-        schedule_ids=_entries_on(publisher, workout_id, date) if entry is not None else [],
     )
-    label = _shown_as(result)
+    entry = _library_entry(publisher, workout_id)
     if entry is None:
-        return _refused(result, f"{label} is no longer on the account; nothing to take off {date}")
+        message = f"{_shown_as(result)} is no longer on the account; nothing to take off {date}"
+        return _refused(result, message)
+    result.renamed_to = _renamed_to(entry, pushed_name)
+    result.schedule_ids = _entries_on(publisher, workout_id, date)
+    label = _shown_as(result)
     if not result.schedule_ids:
         return _refused(
             result, f"{label} is in the library but not on {date}'s calendar; nothing to take off"
@@ -425,15 +442,7 @@ def unschedule(
         f"will take {label} off {date}; it stays in the library and on any other day it is "
         "scheduled"
     )
-    if not confirm:
-        return result
-    if confirm_token != result.confirm_token:
-        return _refused(
-            result,
-            "stale confirm_token: the workout, or the day's calendar, changed since the "
-            "preview (or no preview happened); run unschedule_preview again",
-        )
-    return _remove_entries(result, publisher, label)
+    return result
 
 
 def _refused(result: UnscheduleResult, message: str) -> UnscheduleResult:
@@ -444,20 +453,27 @@ def _refused(result: UnscheduleResult, message: str) -> UnscheduleResult:
     return result
 
 
-def _remove_entries(
-    result: UnscheduleResult, publisher: WorkoutPublisher, label: str
-) -> UnscheduleResult:
+def _remove_entries(result: UnscheduleResult, publisher: WorkoutPublisher) -> UnscheduleResult:
     """Remove the planned entries, recording how far it got if the account stops answering.
 
     No rollback, for the reason ADR 0013 gives the push: an entry already removed is
     the outcome the athlete asked for, and the next preview shows what is left.
     """
+    label = _shown_as(result)
     removed = 0
     try:
         for schedule_id in result.schedule_ids:
             publisher.unschedule(schedule_id)
             removed += 1
     except Exception as exc:  # noqa: BLE001 - any transport failure records a partial removal
+        logger.warning(
+            "unschedule: removed %d of %d entries for workout %s on %s before failing: %s",
+            removed,
+            len(result.schedule_ids),
+            result.workout_id,
+            result.date,
+            exc,
+        )
         result.error = str(exc)
         result.message = (
             f"removed {removed} of {len(result.schedule_ids)} calendar entries for {label} on "
@@ -606,7 +622,7 @@ def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[
         at or below the plan, or the type is unknowable.
     """
     body = _json_object(receipt)
-    if body is None or body.get("workout_id") is None or body.get("unscheduled_at"):
+    if body is None or body.get("workout_id") is None or _taken_off(body):
         return None
     pushed_type = (
         body.get("hardness")
@@ -620,6 +636,19 @@ def plan_divergence(receipt: object, spec: object, planned: str | None) -> dict[
         "planned_intent": planned,
         "pushed_at": body.get("pushed_at"),
     }
+
+
+def _taken_off(receipt: dict[str, Any]) -> bool:
+    """Whether the coach took the workout off the day and no read since found it back on it.
+
+    Off the calendar is off the watch, so the plan has nothing to diverge from - until
+    the athlete puts the workout back by hand in Connect and a status read sees it, at
+    which point the finding beside the marker says ``scheduled`` again (ADR 0030).
+    """
+    if not receipt.get("unscheduled_at"):
+        return False
+    known = receipt.get("reconciled")
+    return not (isinstance(known, dict) and known.get("scheduled") is True)
 
 
 def invalidated_pushes(
@@ -979,9 +1008,10 @@ def unschedule_token(date: str, workout_id: int, schedule_ids: list[int]) -> str
     calls must make the preview stale rather than let the confirm act on a picture
     that has moved. Same 16-hex shape as the push and repair tokens, nothing stored.
     """
-    return _canonical_hash(
-        {"date": date, "workout_id": workout_id, "schedule_ids": sorted(schedule_ids)}
-    )
+    # Sorted by their text so the token is order-independent and an entry the live
+    # listing returned without an id (None) cannot make the sort itself fail.
+    entries = sorted(schedule_ids, key=str)
+    return _canonical_hash({"date": date, "workout_id": workout_id, "schedule_ids": entries})
 
 
 def _message(action: str) -> str:

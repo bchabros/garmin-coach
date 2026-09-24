@@ -178,3 +178,16 @@ def test_unschedule_confirm_without_a_receipt_never_logs_in(tmp_path, monkeypatc
     assert "no push receipt" in out["data"]["error"]
     assert out["data"]["applied"] is False
     assert logins == []
+
+
+def test_unschedule_preview_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
+    _settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(server, "_REPORTS_DIR", str(tmp_path))
+    logins = []
+    monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
+
+    out = server.unschedule_preview(date="2026-07-17")
+
+    assert "no push receipt" in out["data"]["error"]
+    assert out["data"]["confirm_token"] is None
+    assert logins == []

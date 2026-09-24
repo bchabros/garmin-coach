@@ -2319,3 +2319,28 @@ def test_a_push_after_a_removal_schedules_the_workout_back(conn, tmp_path):
 
     assert out["data"]["action"] == "schedule"
     assert len(pub.workouts) == 1
+
+
+def test_divergence_returns_when_the_athlete_puts_the_workout_back_by_hand(conn, tmp_path):
+    """Off the calendar is off the watch - until a read finds it back on the day."""
+    _seed_pushed(tmp_path)
+    _seed_plan(conn, PUSH_DATE, "easy")
+    pub = _account_with(FakePublisher(), scheduled_on=PUSH_DATE)
+    _taken_off(conn, tmp_path, pub)
+    pub.schedule(1000, PUSH_DATE)  # re-scheduled by hand in Connect
+
+    out = _status(conn, tmp_path, pub)
+
+    assert out["data"]["reconciled"]["state"] == "live"
+    assert out["data"]["plan_divergence"] is not None
+
+
+def test_unschedule_preview_with_an_unreadable_receipt_never_logs_in(conn, tmp_path):
+    (tmp_path / PUSH_DATE).mkdir()
+    (tmp_path / PUSH_DATE / "push.json").write_text("not json")
+    connect, logins = _connect_recording(FakePublisher())
+
+    out = tools.unschedule_preview(conn, date=PUSH_DATE, connect=connect, reports_dir=str(tmp_path))
+
+    assert "cannot be read" in out["data"]["error"]
+    assert logins == []

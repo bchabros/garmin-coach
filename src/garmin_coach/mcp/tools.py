@@ -260,9 +260,24 @@ def get_workout_status(
         "workout": workout,
         "push": _receipt_view(push),
         "reconciled": finding.as_finding() if finding is not None else None,
-        "plan_divergence": publish.plan_divergence(push, workout, plan.planned_intent(conn, date)),
+        "plan_divergence": publish.plan_divergence(
+            _with_finding(push, finding), workout, plan.planned_intent(conn, date)
+        ),
     }
     return _wrap(conn, data)
+
+
+def _with_finding(push: Any, finding: publish.Reconciliation | None) -> Any:
+    """The receipt as this read leaves it, so the divergence check reads the fresh finding.
+
+    A workout the coach took off the day silences the divergence read until a finding
+    says it is back on the calendar (issue #74); that finding must count on the read
+    that made it, not one read later. An unverified read replaces nothing, exactly as
+    it persists nothing.
+    """
+    if not isinstance(push, dict) or finding is None or finding.state == publish.UNVERIFIED:
+        return push
+    return {**push, "reconciled": finding.as_finding()}
 
 
 def _receipt_view(push: Any) -> Any:
@@ -1122,7 +1137,13 @@ def _unschedule(
 
 def _pushed_receipt(day_dir: pathlib.Path, date: str) -> tuple[dict[str, Any] | None, str | None]:
     """The day's push receipt when it names a workout on the account, or why it does not."""
-    receipt = _read_json(day_dir / "push.json")
+    try:
+        receipt = _read_json(day_dir / "push.json")
+    except ValueError:
+        return None, (
+            f"the push receipt {day_dir / 'push.json'} cannot be read (not valid JSON); fix or "
+            "remove it before taking anything off"
+        )
     if not isinstance(receipt, dict):
         return None, (
             f"no push receipt for {date}: the coach put no workout on this day, so there is "

@@ -53,7 +53,8 @@ Two things made the shape of the answer less obvious than "call `unschedule`":
   receipt carrying `unscheduled_at` - covering `get_workout_status`, `plan_import` and
   `plan_confirm` at once - and the pushed-workouts listing carries the timestamp. Keyed
   on the recorded event rather than on the last reconciliation state, so the offline
-  answer is deterministic.
+  answer is deterministic; the silence ends the moment a finding beside the marker says
+  the workout is scheduled again, because the athlete can put it back by hand in Connect.
 - **A day with no receipt costs no login.** Both tools take a publisher factory, as
   `get_workout_status` does; the receipt is read first.
 - **No date guard, and no CLI command.** Any day the receipt names can be cleared -
@@ -66,14 +67,17 @@ Two things made the shape of the answer less obvious than "call `unschedule`":
 
 - A called-off session is two calls in the conversation, and putting it back is the
   ordinary push pair.
-- A fourth path reaches Garmin from chat (after refresh, repair and push): one library
-  read plus one calendar read per call, and one calendar write per entry on the confirm.
+- Another path reaches Garmin from chat, beside the refresh, the repair, the push and
+  the status read: one library read plus one calendar read per call, and one calendar
+  write per entry on the confirm.
 - Every entry of the workout on that day goes, including one an earlier half-failed
   push doubled; entries of other workouts on the day stay.
 - A removal that fails midway leaves what it removed and says so; the next preview shows
   what is left, and running it again is the fix.
 - A workout the athlete unscheduled by hand still reports a plan divergence until a
   status read runs, as before this decision: only the coach's own removal is an event
-  the receipt records.
+  the receipt records. The mirror case is covered: a workout the athlete puts back by
+  hand after a chat removal reports divergence again from the first status read that
+  finds it on the day.
 - The library accumulates strays the coach never cleans up. Housekeeping stays the
   athlete's, in Connect, as ADR 0029 already accepted.

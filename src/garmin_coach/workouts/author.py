@@ -356,20 +356,20 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
         return None
 
     warnings.extend(_hybrid_warnings(request, context))
-    if request["sport"] in _EXERCISE_SPORTS:
+    if _is_station_sequence(request):
+        _validate_station_structure(request["structure"], request["sport"])
+        warnings.extend(_pace_band_warning(request, context))
+        steps = _expand_stations(request, context.get("zones"), warnings)
+        # A station sequence expands from a list, not from the role table, so there is
+        # no work chain to rank an untargeted step against and no session-wide pace to
+        # measure: the guard falls back to the session type (ADR 0023, ADR 0024).
+        measured = None
+    elif request["sport"] in _EXERCISE_SPORTS:
         structure = request.get("structure") or {}
         _validate_exercises(structure)
         steps = _expand_exercises(
             {**request, "structure": structure}, context.get("zones"), warnings
         )
-        measured = None
-    elif session_type == "hyrox":
-        _validate_hyrox_structure(request["structure"])
-        warnings.extend(_pace_band_warning(request, context))
-        steps = _expand_hyrox(request, context.get("zones"), warnings)
-        # A station sequence expands from a list, not from the role table, so there is
-        # no work chain to rank an untargeted step against and no session-wide pace to
-        # measure: the guard falls back to the session type (ADR 0023, ADR 0024).
         measured = None
     else:
         _validate_structure(request.get("structure") or {}, session_type)
@@ -552,17 +552,33 @@ def _is_hyrox_sequence(request: dict[str, Any]) -> bool:
     return isinstance(structure, dict) and "stations" in structure
 
 
-def _validate_hyrox_structure(structure: dict[str, Any]) -> None:
-    """Check a Hyrox sequence structure: its stations, ends, and targets.
+def _is_station_sequence(request: dict[str, Any]) -> bool:
+    """Whether the request authors as a station sequence.
+
+    A station list under a sport that has the shape: a run hyrox request, or any hiit
+    request (issue #76).
+    """
+    return _is_hyrox_sequence(request) and (
+        request["sport"] == "hiit" or request["session_type"] == "hyrox"
+    )
+
+
+def _validate_station_structure(structure: dict[str, Any], sport: str) -> None:
+    """Check a station sequence structure: its stations, ends, and targets.
 
     Raises:
-        ValueError: If the structure has unknown keys, the station list is malformed,
-            an edge role sets both an end and a minutes alias, or an end or target is
-            malformed.
+        ValueError: If the structure has unknown keys or an exercises list beside the
+            stations, the station list is malformed, an edge role sets both an end and
+            a minutes alias, an end or target is malformed, or an end or target is one
+            the sport cannot measure.
     """
+    if "exercises" in structure:
+        raise ValueError("give structure.stations or structure.exercises, not both")
     unknown = set(structure) - _HYROX_STRUCTURE_KEYS
     if unknown:
-        raise ValueError(f"unknown structure keys for hyrox: {', '.join(sorted(unknown))}")
+        raise ValueError(
+            f"unknown structure keys for a station sequence: {', '.join(sorted(unknown))}"
+        )
     _validate_stations(structure["stations"])
     run_end = structure.get(_HYROX_RUN_ROLE.end_key)
     if run_end is not None:
@@ -580,6 +596,35 @@ def _validate_hyrox_structure(structure: dict[str, Any]) -> None:
         target = structure.get(key)
         if target is not None:
             _validate_target(target, key)
+    if sport == "hiit":
+        _validate_hiit_measures(structure)
+
+
+def _validate_hiit_measures(structure: dict[str, Any]) -> None:
+    """Refuse what a HIIT activity cannot measure: a distance end, a pace band.
+
+    The watch records a HIIT workout with no GPS distance and no pace, so either would
+    be a target it can never show. The refusal points at ``sport: run``, where both
+    are ordinary.
+
+    Raises:
+        ValueError: If any end is a distance or any target is a pace band.
+    """
+    end_keys = (_HYROX_RUN_ROLE.end_key, *(role.end_key for role in _EDGE_ROLES))
+    for key in end_keys:
+        end = structure.get(key)
+        if isinstance(end, dict) and "distance_m" in end:
+            raise ValueError(
+                f"{key} cannot be a distance under sport hiit (the watch measures none); "
+                'give "lap" or a time, or author a paced run as sport run'
+            )
+    for key in _HYROX_TARGET_KEYS:
+        target = structure.get(key)
+        if isinstance(target, dict) and "pace_band" in target:
+            raise ValueError(
+                f"{key} cannot be a pace band under sport hiit (the watch shows no pace); "
+                'give a zone, an hr_band, or "none", or author a paced run as sport run'
+            )
 
 
 def _validate_stations(stations: Any) -> None:
@@ -1028,18 +1073,19 @@ def _summoned_role(name: str) -> _Role:
     return _Role(name, f"{name}_min", _SUMMONED_DEFAULT_S[name])
 
 
-def _expand_hyrox(
+def _expand_stations(
     request: dict[str, Any], zones: dict[str, Any] | None, warnings: list[str]
 ) -> list[dict[str, Any]]:
-    """Expand a Hyrox sequence: optional warmup, run + station per entry, optional cooldown.
+    """Expand a station sequence: optional warmup, run + station per entry, optional cooldown.
 
     Every run shares one end and one target, and every station one target, so each
-    resolves once and the step dicts are copied per position rather than aliased.
+    resolves once and the step dicts are copied per position rather than aliased. No
+    rest steps: whatever passes between a station and the next run is inside the lap.
     """
     structure = request["structure"]
     targets = _Targets(request, zones, warnings)
     warmup, cooldown = (_edge_step(structure, role, targets) for role in _EDGE_ROLES)
-    run_end = _hyrox_run_end(structure)
+    run_end = _station_run_end(structure, request["sport"])
     run_target = targets.for_role(_HYROX_RUN_ROLE)
     station_target = targets.for_role(_HYROX_STATION_ROLE)
     steps: list[dict[str, Any]] = [warmup] if warmup else []
@@ -1063,11 +1109,17 @@ def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dic
     return _role_step(structure, role, targets)
 
 
-def _hyrox_run_end(structure: dict[str, Any]) -> dict[str, Any]:
-    """The end every Hyrox run shares: the explicit ``run_end``, else the race kilometre."""
+def _station_run_end(structure: dict[str, Any], sport: str) -> dict[str, Any]:
+    """The end every run in the sequence shares: the explicit ``run_end``, else a default.
+
+    The default is the race kilometre on a run and the lap button on a HIIT workout,
+    which measures no distance.
+    """
     end = structure.get(_HYROX_RUN_ROLE.end_key)
     if end is not None:
         return _end_descriptor(end)
+    if sport == "hiit":
+        return {"type": "lap"}
     return {"type": "distance", "metres": HYROX_RUN_DEFAULT_M}
 
 
@@ -1353,6 +1405,7 @@ _COOLDOWN_STEP_TYPE = {
 # What each exercise-sport spec step is on the watch; anything else is a rest.
 _EXERCISE_STEP_TYPES = {
     "work": _INTERVAL_STEP_TYPE,
+    "station": _INTERVAL_STEP_TYPE,
     "warmup": _WARMUP_STEP_TYPE,
     "cooldown": _COOLDOWN_STEP_TYPE,
 }

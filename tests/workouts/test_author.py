@@ -1632,7 +1632,7 @@ def test_hyrox_malformed_stations_are_refused(stations):
 
 
 def test_hyrox_structure_rejects_template_keys():
-    with pytest.raises(ValueError, match="unknown structure keys for hyrox: reps"):
+    with pytest.raises(ValueError, match="unknown structure keys for a station sequence: reps"):
         author(_hyrox_request({"reps": 4}), _context())
 
 
@@ -1939,3 +1939,133 @@ def test_a_copy_of_a_measured_spec_is_judged_on_what_it_measured():
             planned_intent="easy",
             today=_TODAY,
         )
+
+
+# --- station sequence under sport hiit (issue #76) ----------------------------
+
+
+_HIIT_STATIONS = ["EMOM 1: 14 kcal row, 20 WBS", "EMOM 2: 12 cal ski, 15 burpees", "Wall Balls 100"]
+
+
+def _hiit_stations_request(structure=None, session_type="hyrox", date="2026-07-17"):
+    return {
+        "sport": "hiit",
+        "origin": "athlete",
+        "date": date,
+        "session_type": session_type,
+        "structure": {"stations": list(_HIIT_STATIONS)} | (structure or {}),
+    }
+
+
+def test_hiit_stations_expand_to_a_run_before_every_station_with_no_rests():
+    spec = author(_hiit_stations_request(), _context())
+    assert spec["name"] == "GC 2026-07-17 hyrox"
+    assert _kinds(spec["steps"]) == ["work", "station"] * 3
+    assert spec["warnings"] == []
+
+
+def test_hiit_stations_author_under_crossfit_too():
+    spec = author(_hiit_stations_request(session_type="crossfit"), _context())
+    assert spec["name"] == "GC 2026-07-17 crossfit"
+    assert _kinds(spec["steps"]) == ["work", "station"] * 3
+
+
+def test_hiit_run_defaults_to_the_lap_button_and_no_target():
+    """A HIIT activity measures no distance: the run ends when the athlete says so."""
+    spec = author(_hiit_stations_request(), _context())
+    run = spec["steps"][0]
+    assert run["end"] == {"type": "lap"}
+    assert run["target"] == {"type": "none"}
+
+
+def test_hiit_run_may_end_on_a_clock():
+    spec = author(_hiit_stations_request({"run_end": {"min": 8}}), _context())
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 480}
+
+
+def test_hiit_station_defaults_to_the_lap_button_and_carries_its_label():
+    spec = author(_hiit_stations_request(), _context())
+    stations = [s for s in spec["steps"] if s["kind"] == "station"]
+    assert [s["label"] for s in stations] == _HIIT_STATIONS
+    assert all(s["end"] == {"type": "lap"} for s in stations)
+
+
+def test_hiit_station_target_zone_resolves_from_the_ladder():
+    spec = author(_hiit_stations_request({"station_target": "z4"}), _context())
+    stations = [s for s in spec["steps"] if s["kind"] == "station"]
+    assert all(
+        s["target"] == {"type": "hr_band", "low_bpm": 168, "high_bpm": 178} for s in stations
+    )
+
+
+def test_hiit_run_hr_band_is_on_every_run():
+    spec = author(_hiit_stations_request({"run_target": {"hr_band": [140, 160]}}), _context())
+    runs = [s for s in spec["steps"] if s["kind"] == "work"]
+    assert all(s["target"] == {"type": "hr_band", "low_bpm": 140, "high_bpm": 160} for s in runs)
+
+
+@pytest.mark.parametrize("key", ["run_end", "warmup_end", "cooldown_end"])
+def test_hiit_refuses_a_distance_end_and_points_to_sport_run(key):
+    with pytest.raises(ValueError, match=f"{key} cannot be a distance under sport hiit.*sport run"):
+        author(_hiit_stations_request({key: {"distance_m": 1000}}), _context())
+
+
+@pytest.mark.parametrize("key", ["run_target", "station_target", "warmup_target"])
+def test_hiit_refuses_a_pace_band(key):
+    with pytest.raises(ValueError, match=f"{key} cannot be a pace band under sport hiit"):
+        author(_hiit_stations_request({key: {"pace_band": [230, 250]}}), _context())
+
+
+def test_hiit_refuses_stations_and_exercises_together():
+    structure = {"exercises": [{"exercise": "wall balls", "sets": 1, "reps": 20}]}
+    with pytest.raises(ValueError, match="structure.stations or structure.exercises, not both"):
+        author(_hiit_stations_request(structure), _context())
+
+
+def test_strength_does_not_take_a_station_list():
+    request = _strength_request() | {"structure": {"stations": ["SkiErg"]}}
+    with pytest.raises(ValueError, match="unknown structure keys for an exercise sport: stations"):
+        author(request, _context())
+
+
+def test_hiit_station_sequence_rejects_template_keys():
+    with pytest.raises(ValueError, match="unknown structure keys for a station sequence: reps"):
+        author(_hiit_stations_request({"reps": 4}), _context())
+
+
+def test_a_hiit_station_sequence_carries_no_hardness_and_is_guarded_by_its_type():
+    assert "hardness" not in author(_hiit_stations_request(), _context())
+    with pytest.raises(ValueError, match="planned as easy"):
+        author(_hiit_stations_request(), _context(planned_intent="easy"))
+
+
+def test_to_garmin_hiit_station_sequence_is_lap_ended_labelled_intervals():
+    payload = to_garmin(author(_hiit_stations_request({"station_target": "z4"}), _context()))
+    assert payload["sportType"]["sportTypeKey"] == "hiit"
+    steps = _hyrox_steps(payload)
+    assert [s["stepType"]["stepTypeKey"] for s in steps] == ["interval"] * 6
+    assert all(s["endCondition"]["conditionTypeKey"] == "lap.button" for s in steps)
+    assert all(s["endConditionValue"] is None for s in steps)
+    station = steps[1]
+    assert station["description"] == _HIIT_STATIONS[0]
+    assert "exerciseName" not in station
+    assert station["targetType"]["workoutTargetTypeKey"] == "heart.rate.zone"
+    assert (station["targetValueOne"], station["targetValueTwo"]) == (168, 178)
+    assert payload["estimatedDurationInSecs"] == 0
+
+
+def test_the_2026_09_26_eight_wonders_session_authors_as_hiit(fixture):
+    """Eight stations, a run before each, indoors: 16 lap-ended steps, a note on every station."""
+    spec = author(fixture("hiit_stations_request"), _context(today="2026-09-24"))
+    assert spec["name"] == "GC 2026-09-26 8 Wonders + 8x1 km"
+    assert _kinds(spec["steps"]) == ["warmup", *["work", "station"] * 8]
+    assert all(s["end"] == {"type": "lap"} for s in spec["steps"])
+    payload = to_garmin(spec)
+    assert payload["sportType"]["sportTypeKey"] == "hiit"
+    steps = _hyrox_steps(payload)
+    assert len(steps) == 17
+    assert steps[0]["stepType"]["stepTypeKey"] == "warmup"
+    assert [s["description"] for s in steps[2::2]] == fixture("hiit_stations_request")["structure"][
+        "stations"
+    ]
+    assert not any(s["stepType"]["stepTypeKey"] == "rest" for s in steps)

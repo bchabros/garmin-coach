@@ -255,8 +255,15 @@ _EXERCISE_STRUCTURE_KEYS = {"exercises", *(key for role in _EDGE_ROLES for key i
 _HYROX_TARGET_KEYS = tuple(
     role.target_key for role in (*_EDGE_ROLES, _HYROX_RUN_ROLE, _HYROX_STATION_ROLE)
 )
+# Where the run sits in a station sequence: before each station (race order), after
+# each one (an EMOM block then its run), or nowhere - a pure labelled circuit, which
+# only a HIIT workout may be: a running activity with no running is refused (issue #76).
+_RUN_POSITION_KEY = "run_position"
+_RUN_POSITIONS = ("before", "after", "none")
+_DEFAULT_RUN_POSITION = "before"
+
 _HYROX_STRUCTURE_KEYS = frozenset(
-    {"stations", _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
+    {"stations", _RUN_POSITION_KEY, _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
     | {key for role in _EDGE_ROLES for key in (role.end_key, role.min_key)}
 )
 
@@ -596,8 +603,29 @@ def _validate_station_structure(structure: dict[str, Any], sport: str) -> None:
         target = structure.get(key)
         if target is not None:
             _validate_target(target, key)
+    _validate_run_position(structure, sport)
     if sport == "hiit":
         _validate_hiit_measures(structure)
+
+
+def _validate_run_position(structure: dict[str, Any], sport: str) -> None:
+    """Check ``run_position`` is one of its three words, and that a run sport runs.
+
+    Raises:
+        ValueError: If the value is not before/after/none, or is none under sport run.
+    """
+    if _RUN_POSITION_KEY not in structure:
+        return
+    position = structure[_RUN_POSITION_KEY]
+    if position not in _RUN_POSITIONS:
+        raise ValueError(
+            f'{_RUN_POSITION_KEY} must be "before", "after", or "none", not {position!r}'
+        )
+    if position == "none" and sport == "run":
+        raise ValueError(
+            f'{_RUN_POSITION_KEY} "none" leaves a running workout with no running; '
+            "author a circuit without runs as sport hiit"
+        )
 
 
 def _validate_hiit_measures(structure: dict[str, Any]) -> None:
@@ -1088,13 +1116,24 @@ def _expand_stations(
     run_end = _station_run_end(structure, request["sport"])
     run_target = targets.for_role(_HYROX_RUN_ROLE)
     station_target = targets.for_role(_HYROX_STATION_ROLE)
+    position = structure.get(_RUN_POSITION_KEY, _DEFAULT_RUN_POSITION)
     steps: list[dict[str, Any]] = [warmup] if warmup else []
     for station in structure["stations"]:
-        steps.append(_step("work", dict(run_end), dict(run_target)))
-        steps.append(_station_step(station, dict(station_target)))
+        run = _step("work", dict(run_end), dict(run_target))
+        station_step = _station_step(station, dict(station_target))
+        steps.extend(_place_run(position, run, station_step))
     if cooldown:
         steps.append(cooldown)
     return steps
+
+
+def _place_run(position: str, run: dict[str, Any], station: dict[str, Any]) -> list[dict[str, Any]]:
+    """One station's steps in run order: the run before it, after it, or not at all."""
+    if position == "before":
+        return [run, station]
+    if position == "after":
+        return [station, run]
+    return [station]
 
 
 def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dict[str, Any] | None:

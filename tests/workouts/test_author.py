@@ -2069,3 +2069,61 @@ def test_the_2026_09_26_eight_wonders_session_authors_as_hiit(fixture):
         "stations"
     ]
     assert not any(s["stepType"]["stepTypeKey"] == "rest" for s in steps)
+
+
+# --- run_position: before / after / none (issue #76) --------------------------
+
+
+def test_run_position_defaults_to_before_each_station():
+    spec = author(_hiit_stations_request({"run_position": "before"}), _context())
+    assert _kinds(spec["steps"]) == ["work", "station"] * 3
+
+
+def test_run_position_after_puts_the_run_behind_each_station():
+    spec = author(_hiit_stations_request({"run_position": "after"}), _context())
+    assert _kinds(spec["steps"]) == ["station", "work"] * 3
+    assert spec["steps"][0]["label"] == _HIIT_STATIONS[0]
+
+
+def test_run_position_none_authors_a_pure_labelled_circuit():
+    spec = author(_hiit_stations_request({"run_position": "none"}), _context())
+    assert _kinds(spec["steps"]) == ["station"] * 3
+    assert all(s["end"] == {"type": "lap"} for s in spec["steps"])
+
+
+def test_run_position_none_keeps_the_edges():
+    structure = {"run_position": "none", "warmup_end": "lap", "cooldown_min": 5}
+    spec = author(_hiit_stations_request(structure), _context())
+    assert _kinds(spec["steps"]) == ["warmup", "station", "station", "station", "cooldown"]
+
+
+def test_run_position_after_works_on_a_run_hyrox_request_too():
+    spec = author(_hyrox_request({"run_position": "after"}), _context())
+    assert _kinds(spec["steps"]) == ["station", "work"] * 3
+
+
+def test_run_position_none_is_refused_under_sport_run():
+    with pytest.raises(ValueError, match='run_position "none".*sport hiit'):
+        author(_hyrox_request({"run_position": "none"}), _context())
+
+
+@pytest.mark.parametrize("value", ["between", "", 1, None])
+def test_run_position_takes_only_its_three_words(value):
+    with pytest.raises(ValueError, match='run_position must be "before", "after", or "none"'):
+        author(_hiit_stations_request({"run_position": value}), _context())
+
+
+def test_the_2026_09_23_emom_session_authors_as_blocks_then_runs(fixture):
+    """Three EMOM blocks with a 2 km treadmill run after each, no rests (issue #76)."""
+    request = fixture("hiit_emom_request")
+    spec = author(request, _context(today="2026-09-22"))
+    assert spec["name"] == "GC 2026-09-23 3x EMOM + 2 km"
+    assert _kinds(spec["steps"]) == ["station", "work"] * 3
+    assert spec["steps"][0]["end"] == {"type": "time", "seconds": 720}
+    assert spec["steps"][1]["end"] == {"type": "time", "seconds": 600}
+    steps = _hyrox_steps(to_garmin(spec))
+    assert len(steps) == 6
+    assert [s.get("description") for s in steps[::2]] == [
+        e["label"] for e in request["structure"]["stations"]
+    ]
+    assert not any(s["stepType"]["stepTypeKey"] == "rest" for s in steps)

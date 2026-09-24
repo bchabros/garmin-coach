@@ -1,0 +1,16 @@
+{
+  "sport": "hiit",
+  "origin": "athlete",
+  "date": "2026-09-23",
+  "session_type": "crossfit",
+  "label": "3x EMOM + 2 km",
+  "structure": {
+    "run_position": "after",
+    "run_end": {"min": 10},
+    "stations": [
+      {"label": "EMOM 1: 14 kcal row, 20 WBS, 10 burpees", "end": {"min": 12}},
+      {"label": "EMOM 2: 12 cal ski, 15 KB swings, 10 box jumps", "end": {"min": 12}},
+      {"label": "EMOM 3: 10 cal bike, 20 lunges, 8 burpee broad jumps", "end": {"min": 12}}
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "sport": "run",
+  "origin": "athlete",
+  "date": "2026-07-17",
+  "session_type": "hyrox",
+  "structure": {
+    "warmup_end": "lap",
+    "run_target": {
+      "pace_band": [
+        235,
+        250
+      ]
+    },
+    "station_target": "none",
+    "stations": [
+      "SkiErg 1000 m",
+      "Sled Push 50 m",
+      "Wall Balls 100"
+    ]
+  }
+}

@@ -240,8 +240,8 @@ _DEFAULT_PAUSE_ROLE = "recovery"
 # in race order. Neither role has a default target - a Hyrox run is paced by
 # the athlete's own band, not the threshold chain, and a station by heart rate only
 # when asked - so both fall back to no target.
-_HYROX_RUN_ROLE = _Role("run", "run_min", 0)
-_HYROX_STATION_ROLE = _Role("station", "station_min", 0)
+_SEQUENCE_RUN_ROLE = _Role("run", "run_min", 0)
+_SEQUENCE_STATION_ROLE = _Role("station", "station_min", 0)
 # The optional warmup and cooldown a session may be given but never defaults: the
 # station sequence and the exercise sports both expand from a list rather
 # than the role table, so neither has a place for an edge until one is asked for
@@ -253,8 +253,8 @@ _EDGE_ROLES = (
 
 # What an exercise sport's structure may carry: its sets, plus the optional edges.
 _EXERCISE_STRUCTURE_KEYS = {"exercises", *(key for role in _EDGE_ROLES for key in role.keys)}
-_HYROX_TARGET_KEYS = tuple(
-    role.target_key for role in (*_EDGE_ROLES, _HYROX_RUN_ROLE, _HYROX_STATION_ROLE)
+_SEQUENCE_TARGET_KEYS = tuple(
+    role.target_key for role in (*_EDGE_ROLES, _SEQUENCE_RUN_ROLE, _SEQUENCE_STATION_ROLE)
 )
 # Where the run sits in a station sequence: before each station (race order), after
 # each one (an EMOM block then its run), or nowhere - a pure labelled circuit, which
@@ -263,10 +263,43 @@ _RUN_POSITION_KEY = "run_position"
 _RUN_POSITIONS = ("before", "after", "none")
 _DEFAULT_RUN_POSITION = "before"
 
-# A run in a HIIT station sequence with no ``run_label`` reads this, so it is not the
-# one blank step between labelled stations. A run-sport sequence stays unlabelled
-# unless asked, so what was pushed before issue #76 keeps its content.
-_HIIT_RUN_DEFAULT_LABEL = "Run"
+
+# The race run between stations, when the structure does not say otherwise.
+HYROX_RUN_DEFAULT_M = 1000
+
+
+class _SequenceSport(NamedTuple):
+    """What one sport lets a station sequence measure, and what its runs default to."""
+
+    run_end: dict[str, Any]
+    run_label: str | None
+    measures_distance: bool
+    shows_pace: bool
+    may_skip_runs: bool
+
+
+# The sport says how the watch measures a station sequence (issue #76). A run has GPS
+# distance and pace, so its runs end on the race kilometre and stay unlabelled unless
+# asked (what was pushed before #76 keeps its content). A HIIT workout measures no
+# distance and shows no pace, so its runs end on the lap button, a distance end or a
+# pace band is refused, an unlabelled run reads "Run" so it is not the one blank step
+# between labelled stations, and a circuit with no runs at all is allowed.
+_SEQUENCE_SPORTS = {
+    "run": _SequenceSport(
+        run_end={"type": "distance", "metres": HYROX_RUN_DEFAULT_M},
+        run_label=None,
+        measures_distance=True,
+        shows_pace=True,
+        may_skip_runs=False,
+    ),
+    "hiit": _SequenceSport(
+        run_end={"type": "lap"},
+        run_label="Run",
+        measures_distance=False,
+        shows_pace=False,
+        may_skip_runs=True,
+    ),
+}
 
 
 def _label_key(role: _Role) -> str:
@@ -274,16 +307,13 @@ def _label_key(role: _Role) -> str:
     return f"{role.name}_label"
 
 
-_STATION_LABEL_KEYS = tuple(_label_key(role) for role in (_HYROX_RUN_ROLE, *_EDGE_ROLES))
+_STATION_LABEL_KEYS = tuple(_label_key(role) for role in (_SEQUENCE_RUN_ROLE, *_EDGE_ROLES))
 
-_HYROX_STRUCTURE_KEYS = frozenset(
-    {"stations", _RUN_POSITION_KEY, _HYROX_RUN_ROLE.end_key, *_HYROX_TARGET_KEYS}
+_SEQUENCE_STRUCTURE_KEYS = frozenset(
+    {"stations", _RUN_POSITION_KEY, _SEQUENCE_RUN_ROLE.end_key, *_SEQUENCE_TARGET_KEYS}
     | set(_STATION_LABEL_KEYS)
     | {key for role in _EDGE_ROLES for key in (role.end_key, role.min_key)}
 )
-
-# The race run between stations, when the structure does not say otherwise.
-HYROX_RUN_DEFAULT_M = 1000
 
 # What an athlete writes in a ``<role>_target`` to ask for no target at all.
 _NO_TARGET_WORD = "none"
@@ -366,7 +396,7 @@ def author(request: dict[str, Any], context: dict[str, Any]) -> dict[str, Any] |
 
     session_type = request["session_type"]
     planned = context.get("planned_intent")
-    if request["sport"] == "run" and session_type == "hyrox" and not _is_hyrox_sequence(request):
+    if request["sport"] == "run" and session_type == "hyrox" and not _has_station_list(request):
         # A session with no steps to measure is guarded by its type, and the refusal
         # must not be reachable only after answering the run-vs-station question.
         _refuse_if_harder(_plan.guard_error(request["date"], session_type, planned))
@@ -568,8 +598,8 @@ def _validate_request(request: dict[str, Any]) -> None:
         raise ValueError(f"unknown session_type: {request['session_type']}")
 
 
-def _is_hyrox_sequence(request: dict[str, Any]) -> bool:
-    """Whether a run hyrox request carries the station list that makes it authorable."""
+def _has_station_list(request: dict[str, Any]) -> bool:
+    """Whether the request's structure carries a ``stations`` list."""
     structure = request.get("structure")
     return isinstance(structure, dict) and "stations" in structure
 
@@ -580,7 +610,7 @@ def _is_station_sequence(request: dict[str, Any]) -> bool:
     A station list under a sport that has the shape: a run hyrox request, or any hiit
     request (issue #76).
     """
-    return _is_hyrox_sequence(request) and (
+    return _has_station_list(request) and (
         request["sport"] == "hiit" or request["session_type"] == "hyrox"
     )
 
@@ -596,15 +626,32 @@ def _validate_station_structure(structure: dict[str, Any], sport: str) -> None:
     """
     if "exercises" in structure:
         raise ValueError("give structure.stations or structure.exercises, not both")
-    unknown = set(structure) - _HYROX_STRUCTURE_KEYS
+    unknown = set(structure) - _SEQUENCE_STRUCTURE_KEYS
     if unknown:
         raise ValueError(
             f"unknown structure keys for a station sequence: {', '.join(sorted(unknown))}"
         )
     _validate_stations(structure["stations"])
-    run_end = structure.get(_HYROX_RUN_ROLE.end_key)
+    _validate_sequence_ends(structure)
+    for key in _SEQUENCE_TARGET_KEYS:
+        target = structure.get(key)
+        if target is not None:
+            _validate_target(target, key)
+    _validate_run_position(structure, sport)
+    _validate_labels(structure)
+    _validate_sequence_measures(structure, sport)
+
+
+def _validate_sequence_ends(structure: dict[str, Any]) -> None:
+    """Check the run end and each edge end, and that an edge is not given two lengths.
+
+    Raises:
+        ValueError: If an end is malformed, or an edge sets both an end and a minutes
+            alias.
+    """
+    run_end = structure.get(_SEQUENCE_RUN_ROLE.end_key)
     if run_end is not None:
-        _validate_end(run_end, _HYROX_RUN_ROLE.end_key)
+        _validate_end(run_end, _SEQUENCE_RUN_ROLE.end_key)
     for role in _EDGE_ROLES:
         end = structure.get(role.end_key)
         if end is None:
@@ -614,14 +661,6 @@ def _validate_station_structure(structure: dict[str, Any], sport: str) -> None:
                 f"structure sets both {role.end_key} and {role.min_key}; give only one"
             )
         _validate_end(end, role.end_key)
-    for key in _HYROX_TARGET_KEYS:
-        target = structure.get(key)
-        if target is not None:
-            _validate_target(target, key)
-    _validate_run_position(structure, sport)
-    _validate_labels(structure)
-    if sport == "hiit":
-        _validate_hiit_measures(structure)
 
 
 def _validate_labels(structure: dict[str, Any]) -> None:
@@ -644,43 +683,45 @@ def _validate_run_position(structure: dict[str, Any], sport: str) -> None:
     Raises:
         ValueError: If the value is not before/after/none, or is none under sport run.
     """
-    if _RUN_POSITION_KEY not in structure:
+    position = structure.get(_RUN_POSITION_KEY)
+    if position is None:
         return
-    position = structure[_RUN_POSITION_KEY]
     if position not in _RUN_POSITIONS:
         raise ValueError(
             f'{_RUN_POSITION_KEY} must be "before", "after", or "none", not {position!r}'
         )
-    if position == "none" and sport == "run":
+    if position == "none" and not _SEQUENCE_SPORTS[sport].may_skip_runs:
         raise ValueError(
             f'{_RUN_POSITION_KEY} "none" leaves a running workout with no running; '
             "author a circuit without runs as sport hiit"
         )
 
 
-def _validate_hiit_measures(structure: dict[str, Any]) -> None:
-    """Refuse what a HIIT activity cannot measure: a distance end, a pace band.
+def _validate_sequence_measures(structure: dict[str, Any], sport: str) -> None:
+    """Refuse what the sport's watch activity cannot measure: a distance end, a pace band.
 
-    The watch records a HIIT workout with no GPS distance and no pace, so either would
-    be a target it can never show. The refusal points at ``sport: run``, where both
+    A HIIT workout records no GPS distance and shows no pace, so either would be a
+    target the watch can never show. The refusal points at ``sport: run``, where both
     are ordinary.
 
     Raises:
-        ValueError: If any end is a distance or any target is a pace band.
+        ValueError: If an end is a distance or a target is a pace band the sport
+            cannot measure.
     """
-    end_keys = (_HYROX_RUN_ROLE.end_key, *(role.end_key for role in _EDGE_ROLES))
+    rules = _SEQUENCE_SPORTS[sport]
+    end_keys = (_SEQUENCE_RUN_ROLE.end_key, *(role.end_key for role in _EDGE_ROLES))
     for key in end_keys:
         end = structure.get(key)
-        if isinstance(end, dict) and "distance_m" in end:
+        if not rules.measures_distance and isinstance(end, dict) and "distance_m" in end:
             raise ValueError(
-                f"{key} cannot be a distance under sport hiit (the watch measures none); "
+                f"{key} cannot be a distance under sport {sport} (the watch measures none); "
                 'give "lap" or a time, or author a paced run as sport run'
             )
-    for key in _HYROX_TARGET_KEYS:
+    for key in _SEQUENCE_TARGET_KEYS:
         target = structure.get(key)
-        if isinstance(target, dict) and "pace_band" in target:
+        if not rules.shows_pace and isinstance(target, dict) and "pace_band" in target:
             raise ValueError(
-                f"{key} cannot be a pace band under sport hiit (the watch shows no pace); "
+                f"{key} cannot be a pace band under sport {sport} (the watch shows no pace); "
                 'give a zone, an hr_band, or "none", or author a paced run as sport run'
             )
 
@@ -905,7 +946,7 @@ def _work_pace_band(structure: dict[str, Any]) -> Sequence[float] | None:
     Hyrox sequence's ``run_target`` - the latter never coexists with the other two,
     because no session type accepts both key sets.
     """
-    for key in ("work_target", _HYROX_RUN_ROLE.target_key):
+    for key in ("work_target", _SEQUENCE_RUN_ROLE.target_key):
         target = structure.get(key)
         if isinstance(target, dict) and "pace_band" in target:
             return target["pace_band"]
@@ -1144,9 +1185,9 @@ def _expand_stations(
     targets = _Targets(request, zones, warnings)
     warmup, cooldown = (_edge_step(structure, role, targets) for role in _EDGE_ROLES)
     run_end = _station_run_end(structure, request["sport"])
-    run_target = targets.for_role(_HYROX_RUN_ROLE)
-    station_target = targets.for_role(_HYROX_STATION_ROLE)
-    position = structure.get(_RUN_POSITION_KEY, _DEFAULT_RUN_POSITION)
+    run_target = targets.for_role(_SEQUENCE_RUN_ROLE)
+    station_target = targets.for_role(_SEQUENCE_STATION_ROLE)
+    position = structure.get(_RUN_POSITION_KEY) or _DEFAULT_RUN_POSITION
     run_label = _station_run_label(structure, request["sport"])
     steps: list[dict[str, Any]] = [warmup] if warmup else []
     for station in structure["stations"]:
@@ -1163,15 +1204,12 @@ def _expand_stations(
 def _station_run_label(structure: dict[str, Any], sport: str) -> str | None:
     """The notes every run in the sequence shares.
 
-    The given ``run_label``, else the HIIT default, else none at all on a run-sport
-    sequence.
+    The given ``run_label``, else what the sport defaults to (see ``_SEQUENCE_SPORTS``).
     """
-    label = structure.get(_label_key(_HYROX_RUN_ROLE))
+    label = structure.get(_label_key(_SEQUENCE_RUN_ROLE))
     if label is not None:
-        return str(label).strip()
-    if sport == "hiit":
-        return _HIIT_RUN_DEFAULT_LABEL
-    return None
+        return label.strip()
+    return _SEQUENCE_SPORTS[sport].run_label
 
 
 def _place_run(position: str, run: dict[str, Any], station: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1201,17 +1239,14 @@ def _edge_step(structure: dict[str, Any], role: _Role, targets: _Targets) -> dic
 
 
 def _station_run_end(structure: dict[str, Any], sport: str) -> dict[str, Any]:
-    """The end every run in the sequence shares: the explicit ``run_end``, else a default.
+    """The end every run in the sequence shares.
 
-    The default is the race kilometre on a run and the lap button on a HIIT workout,
-    which measures no distance.
+    The explicit ``run_end``, else the sport's default (see ``_SEQUENCE_SPORTS``).
     """
-    end = structure.get(_HYROX_RUN_ROLE.end_key)
+    end = structure.get(_SEQUENCE_RUN_ROLE.end_key)
     if end is not None:
         return _end_descriptor(end)
-    if sport == "hiit":
-        return {"type": "lap"}
-    return {"type": "distance", "metres": HYROX_RUN_DEFAULT_M}
+    return dict(_SEQUENCE_SPORTS[sport].run_end)
 
 
 def _station_step(station: str | dict[str, Any], target: dict[str, Any]) -> dict[str, Any]:

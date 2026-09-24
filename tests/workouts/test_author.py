@@ -2107,7 +2107,7 @@ def test_run_position_none_is_refused_under_sport_run():
         author(_hyrox_request({"run_position": "none"}), _context())
 
 
-@pytest.mark.parametrize("value", ["between", "", 1, None])
+@pytest.mark.parametrize("value", ["between", "", 1])
 def test_run_position_takes_only_its_three_words(value):
     with pytest.raises(ValueError, match='run_position must be "before", "after", or "none"'):
         author(_hiit_stations_request({"run_position": value}), _context())
@@ -2185,3 +2185,33 @@ def test_to_garmin_labels_ride_as_notes_on_runs_and_edges(fixture):
     assert "description" not in steps[0]
     run_spec = author(_hyrox_request({"run_label": "Run 1 km"}), _context())
     assert _hyrox_steps(to_garmin(run_spec))[0]["description"] == "Run 1 km"
+
+
+def test_a_null_run_position_means_absent_like_every_other_key():
+    spec = author(_hiit_stations_request({"run_position": None}), _context())
+    assert _kinds(spec["steps"]) == ["work", "station"] * 3
+
+
+def test_the_acceptance_shape_eight_stations_default_ends():
+    """Issue #76 acceptance: 16 labelled, lap-ended steps, no rests, a note on every step."""
+    stations = [f"Station {n}" for n in range(1, 9)]
+    spec = author(_hiit_stations_request({"stations": stations}), _context())
+    assert len(spec["steps"]) == 16
+    assert all(s["end"] == {"type": "lap"} for s in spec["steps"])
+    payload = to_garmin(spec)
+    steps = _hyrox_steps(payload)
+    assert payload["sportType"]["sportTypeKey"] == "hiit"
+    assert [s["description"] for s in steps[1::2]] == stations
+    assert all(s["description"] == "Run" for s in steps[::2])
+    assert not any(s["stepType"]["stepTypeKey"] == "rest" for s in steps)
+
+
+# --- what was pushed before issue #76 still goes up byte for byte ---------------
+
+
+@pytest.mark.parametrize("name", ["strength_request", "hiit_request", "hyrox_run_request"])
+def test_existing_requests_translate_exactly_as_before_issue_76(fixture, name):
+    """The golden payloads were written by the author on main before #76 landed."""
+    request = fixture(name)
+    context = {"zones": None, "today": "2026-07-15", "planned_intent": None}
+    assert to_garmin(author(request, context)) == fixture(f"{name}_payload")

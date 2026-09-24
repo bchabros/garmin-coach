@@ -369,21 +369,26 @@ code, docstrings, PRDs, and ADRs.
   beside each one - a Hyrox race simulation, EMOM blocks with runs between them, a
   labelled circuit - authored from a `structure.stations` list under `sport: run`
   (`session_type: hyrox`) or `sport: hiit` (`hyrox` / `crossfit`; issue #76). The
-  stations are named on their steps so the watch says what comes next; **no rest
-  steps** are inserted. Runs share one end, one target and one label (`run_end`,
-  `run_target`, `run_label`), stations share one target (`station_target`) and end on
-  the lap button unless an entry says otherwise; `run_position` puts the run before
-  each station (default, race order), after it, or nowhere. **The sport says how the
-  watch measures the session**: under `run` the runs end on a distance by default and
-  may carry a pace band; under `hiit` the watch measures no distance and shows no
-  pace, so runs end on the lap button by default, a distance end or a pace band is
-  refused, and an unlabelled run reads "Run". A distance-ended station is refused in
-  both, since the watch would measure an erg by GPS; `run_position: none` is refused
-  under `run`, a running workout with no running. Like the exercise sports it expands
-  from a **list**, not from the *step role* table (ADR 0023), so it carries no
-  *hardness* and the *plan guard* ranks its session type instead. Without `stations`,
-  a run hyrox request still asks whether the session is run-dominant or
-  station-based. Formerly *run-station sequence*, when only `run` had the shape.
+  stations are named on their steps so the watch says what comes next, and **no rest
+  steps** are inserted: whatever passes between a station and the next run is inside
+  the lap. Runs share one end, one target and one label (`run_end`, `run_target`,
+  `run_label`); stations share one target (`station_target`) and end on the lap button
+  unless an entry says otherwise, never on a distance (the watch would measure an erg
+  by GPS). Where the run sits is `run_position`: before each station (default, race
+  order), after it, or nowhere. Like the exercise sports it expands from a **list**,
+  not from the *step role* table (ADR 0023), so it carries no *hardness* and the *plan
+  guard* ranks its session type instead. Without `stations`, a run hyrox request still
+  asks whether the session is run-dominant or station-based. Formerly *run-station
+  sequence*, when only `run` had the shape.
+- **sequence sport (station sequence)** - which of the two sports a station sequence
+  is authored under, chosen by **how the watch measures the session**, not by the
+  word "Hyrox". Under `run` the watch has GPS: runs end on the race kilometre by
+  default, may carry a pace band, and stay unlabelled unless asked, so every sequence
+  pushed before issue #76 keeps its content. Under `hiit` the watch measures no
+  distance and shows no pace: runs end on the lap button by default, a distance end or
+  a pace band is refused with a message pointing at `sport: run`, an unlabelled run
+  reads "Run", and a circuit with no runs at all (`run_position: none`) is allowed -
+  under `run` it is refused, a running workout with no running.
 - **structure override (workout request)** - the optional `structure` block in an
   `athlete`/hybrid request that shapes the session type's defaults: for runs,
   `reps` plus, per *step role*, an end condition and an intensity target; for the

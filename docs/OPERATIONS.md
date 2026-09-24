@@ -311,6 +311,17 @@ by hand in Connect), so there the old version is taken off this date, kept, and 
 uploaded beside it; the preview says which will happen and warns when the library will then
 hold two workouts of the same name.
 
+**Taking a workout off a day (issue #74, ADR 0030).** Over MCP only, there is no CLI
+command: `unschedule_preview(date)` reads the day's push receipt and the account and shows
+what will leave the calendar; `unschedule_confirm(date, confirm_token)` removes that day's
+entries for the workout and nothing else. The library is never touched, whatever the
+name - a one-day workout left behind is a harmless stray, and pushing the same spec again
+resolves to `schedule` and puts it back without a second upload. The removal is appended
+to the receipt as `unscheduled_at` beside the push's own fields, so `get_pushed_workouts`
+shows the day as taken off and the plan-divergence read goes silent for it. A day with no
+receipt is refused before any login: the coach put nothing there, and a workout scheduled
+by hand is removed in Garmin Connect.
+
 **Custom run structure (Phase 11a).** An `athlete`/hybrid request may carry a `structure`
 block that shapes the run template (`warmup + reps x (work + recovery) + cooldown`, one
 homogeneous interval block) beyond its defaults. Keys:
@@ -505,10 +516,23 @@ Which clients pick it up and how is covered in "Registering the server" below �
   Both `author_workout` and the push pair **refuse a session harder than the plan of
   record** (issue #22, ADR 0021), and `replace` does not override that; change the plan
   for the date first.
+- **Taking a workout off a day** (`unschedule_preview` / `unschedule_confirm`,
+  ADR 0030) — for a session called off. The preview reads the day's push receipt for
+  the workout and the account for what it still holds, and returns the workout's name
+  (`renamed_to` when the athlete renamed it in Connect), its id, the calendar entries
+  it has on that day, and a `confirm_token`; the confirm removes exactly those entries
+  and **refuses any other token**. Nothing is deleted from the library, and the
+  workout stays on every other day it is on; a normal `push_preview` / `push_confirm`
+  puts it back (`schedule`, no second upload). `action: refuse` names the reason - the
+  workout is gone from the account, or already off that day - and a day with no
+  receipt comes back as `error` without a login. The outcome lands on the receipt
+  (`unscheduled_at`, and `reconciled` set to `unscheduled`), so the listing, an offline
+  status read, and the plan-divergence read all see the day as off the watch.
 - **`get_pushed_workouts(since?)`** — the push receipts on disk, newest first: date,
-  name, workout id, action, whether it applied, session type, and `last_state` (what the
-  last status read found on the account). Transport-free; it is how the coach resolves
-  "the FBB A from the 19th" to a date before repeating it.
+  name, workout id, action, whether it applied, session type, `unscheduled_at` when the
+  coach took it off that day again, and `last_state` (what the last status read found
+  on the account). Transport-free; it is how the coach resolves "the FBB A from the
+  19th" to a date before repeating it.
 - **`get_workout_status(date)`** — the authored spec, the push receipt, and
   `reconciled`: that receipt checked against the Garmin account (issue #41). Read
   `reconciled.state`, not `push.applied` — the receipt records what the push did,

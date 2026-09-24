@@ -466,6 +466,15 @@ code, docstrings, PRDs, and ADRs.
   is taken off that date and kept, because it may be on days no receipt knows about -
   including days scheduled by hand in Connect. The preview says which, and warns when
   the library will then hold two workouts of the same name (ADR 0029).
+- **unschedule** - taking a pushed workout off one day's calendar from chat
+  (`unschedule_preview` / `unschedule_confirm`, issue #74, ADR 0030). The day's calendar
+  entries go - every one the workout holds there - and nothing else: the library is
+  never touched, and the workout stays on every other day it is on. Refused with a plain
+  reason when the day has no receipt, when the account no longer holds the workout, or
+  when it is already off that day; the preview reads the account so no token is handed
+  over for a removal that cannot happen. Recorded on the receipt as `unscheduled_at`
+  beside the untouched push fields. Putting the workout back is an ordinary push, which
+  schedules it without a second upload.
 - **plan guard** - the refusal of any session harder than the plan of record for its
   date, measured by the spec's *hardness* where it has one and by its session type
   where it does not (issue #22, ADR 0021; issue #62, ADR 0024). It runs twice:
@@ -477,7 +486,8 @@ code, docstrings, PRDs, and ADRs.
   of record now says for its date, reported (never repaired) as `{pushed_type,
   planned_intent, pushed_at}`. It can only arise from a plan revised after the push,
   since both guards refuse it at write time. Read from the DB and the receipt, so it
-  is answered even when the account is unreachable.
+  is answered even when the account is unreachable. Silent for a day whose workout the
+  coach took off (`unscheduled_at` on the receipt): off the calendar is off the watch.
 - **invalidated push** - the same divergence found at plan-ingestion time: `plan
   import` and `plan_confirm` check the imported week's dates against their receipts
   and name the days that now need re-authoring. Revising a week is when a divergence
@@ -492,10 +502,10 @@ code, docstrings, PRDs, and ADRs.
 ## Coach MCP terms (mcp/tools.py -> mcp/server.py, epic #18)
 
 - **coach MCP** - the local `coach` stdio server (`mcp__coach__*`, registered in the
-  repo's `.mcp.json`): 24 tools in four groups (read / local write / transport /
+  repo's `.mcp.json`): 26 tools in four groups (read / local write / transport /
   workout push), each a thin wrapper over a seam the CLI already uses. Distinct from
-  the exploratory `mcp__garmin__*` server. See ADR 0014, and ADR 0028 for the second
-  transport tool.
+  the exploratory `mcp__garmin__*` server. See ADR 0014, ADR 0028 for the second
+  transport tool, and ADR 0030 for the pair that takes a pushed workout off a day.
 - **same-day refresh** - the opt-in pull of *today's* (partial) data plus a mart
   rebuild through today: `garmin-coach refresh-today` on the CLI, `refresh_today`
   over MCP. Never advances watermarks, so the nightly run re-pulls the day complete.
@@ -536,11 +546,15 @@ code, docstrings, PRDs, and ADRs.
   reconciliation is for. `session_type` and `planned_intent` are what went up and the
   plan it was measured against, so a spec re-authored later cannot be mistaken for what
   is on the watch (ADR 0021); receipts written before them fall back to the local spec.
+  `unscheduled_at` is appended when the coach later takes the workout off that day
+  (ADR 0030) - a second event beside the first, never a rewrite of it - and a new push
+  rewrites the receipt and drops it.
 - **reconciled block** - the finding appended to the receipt under `reconciled`, so a
   later read (offline included) is not thrown back on the stale claim. The receipt's own
   fields are never mutated: the file ends up saying both what was done and what became
-  of it. Written only on a state change, never by an `unverified` read, and dropped
-  wholesale when a new push rewrites the receipt - a new push is a new event. In a
+  of it. Written only on a state change, never by an `unverified` read, and by a
+  removal from chat (an `unscheduled` finding, ADR 0030); dropped wholesale when a new
+  push rewrites the receipt - a new push is a new event. In a
   `get_workout_status` response the receipt is returned without this key: the finding is
   reported once, under `reconciled`, because two copies in one response invite reading
   the stale one.

@@ -617,6 +617,17 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
   invokes the `garmin-coach-mcp` console script by name, so code changes -- including
   moving the module -- never require re-running it. `task claude:check` reports
   whether the entry is present and current without writing anything.
+
+  **The approval prompt.** Desktop asks before every call of a tool that does not
+  declare itself read-only, and only a read-only tool can be allowed for good
+  ("Always allow"; for the others the choice does not outlast the conversation). The
+  server marks every read as such - the snapshot, digest, activities, weekly, zones,
+  plan, recommendation, events and pushed-workout reads, the three previews, the
+  same-day refresh and the workout status check (issue #79) - so allowing each once is
+  enough, and a status question then runs without a click. Every log, plan write,
+  authoring call and confirm is marked as a write on purpose: the prompt is the
+  athlete's last look before something changes, in the DB or on the account, and
+  `tests/mcp/test_server.py` pins the split so a new tool cannot land unmarked.
 - **Claude Cowork** — **works, via the device bridge** (verified 2026-07-16: Cowork
   listed the `coach` tools and reported them as reaching this machine by bridge).
   Cowork does not read `claude_desktop_config.json` itself; it relays tool calls to

@@ -21,9 +21,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 from collections import Counter
@@ -32,6 +34,7 @@ from dataclasses import dataclass
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 HOME = pathlib.Path.home()
 INDEX_NAME = "MEMORY.md"
+BACKUPS_NAME = "memory-backups"
 _INDEX_LINK = re.compile(r"^\s*-\s*\[[^\]]*\]\(([^)\s]+)\)")
 
 
@@ -113,13 +116,45 @@ def check(directory: pathlib.Path) -> int:
     return 1
 
 
+def backup(directory: pathlib.Path, backups: pathlib.Path, now: dt.datetime) -> int:
+    """Copy ``directory`` into a new ``backups/<date>T<HHMM>`` folder, then report drift.
+
+    Args:
+        directory: The agent-notes directory to back up.
+        backups: The folder that holds one subfolder per backup.
+        now: The local time that names the new subfolder.
+
+    Returns:
+        0 once the copy exists (drift is reported but does not fail it), 1 when no copy
+        was made: the notes are missing or the target folder already exists.
+    """
+    if not directory.is_dir():
+        print(f"agent notes: {directory} not found; no backup made")
+        return 1
+    target = backups / now.strftime("%Y-%m-%dT%H%M")
+    if target.exists():
+        print(f"agent notes: {target} already exists; refusing to overwrite it")
+        return 1
+    shutil.copytree(directory, target)
+    print(f"agent notes: backed up to {target}")
+    problems = index_drift(directory).lines()
+    if problems:
+        print("agent notes: index drift (for the pass to fix)")
+        print("\n".join(problems))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Dispatch the ``check`` / ``backup`` subcommands; return the process exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="Report index drift in the agent notes; never writes.")
-    parser.parse_args(argv)
-    return check(notes_dir())
+    sub.add_parser("backup", help="Copy the agent notes to a new folder beside them.")
+    args = parser.parse_args(argv)
+    directory = notes_dir()
+    if args.command == "backup":
+        return backup(directory, directory.parent / BACKUPS_NAME, dt.datetime.now())
+    return check(directory)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ against temp directories and asserts on files on disk and on exit codes.
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import os
 import pathlib
@@ -132,3 +133,56 @@ def test_main_check_runs_against_the_resolved_notes(mod, tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "notes_dir", lambda: notes)
 
     assert mod.main(["check"]) == 1
+
+
+_NOW = datetime.datetime(2026, 9, 29, 23, 15, 42)
+
+
+def test_backup_copies_every_note_into_a_minute_stamped_folder(mod, tmp_path, capsys):
+    notes = _notes(tmp_path / "memory", ["a.md", "b.md"], ["a.md", "b.md"])
+    backups = tmp_path / "memory-backups"
+
+    assert mod.backup(notes, backups, _NOW) == 0
+
+    target = backups / "2026-09-29T2315"
+    assert _snapshot(target) == _snapshot(notes)
+    assert str(target) in capsys.readouterr().out
+
+
+def test_backup_refuses_an_existing_folder_and_leaves_it_untouched(mod, tmp_path, capsys):
+    """An earlier 'before' state is the only way back from a wrong merge."""
+    notes = _notes(tmp_path / "memory", ["a.md"], ["a.md"])
+    backups = tmp_path / "memory-backups"
+    earlier = backups / "2026-09-29T2315"
+    earlier.mkdir(parents=True)
+    (earlier / "a.md").write_text("the earlier state")
+
+    assert mod.backup(notes, backups, _NOW) == 1
+
+    assert (earlier / "a.md").read_text() == "the earlier state"
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_backup_with_drift_still_succeeds_and_names_the_drift(mod, tmp_path, capsys):
+    """Drift is what the pass is about to fix, so it must not block the backup."""
+    notes = _notes(tmp_path / "memory", ["orphan.md"], [])
+
+    assert mod.backup(notes, tmp_path / "memory-backups", _NOW) == 0
+
+    assert "orphan.md: no index line" in capsys.readouterr().out
+
+
+def test_backup_fails_when_the_notes_directory_is_missing(mod, tmp_path):
+    backups = tmp_path / "memory-backups"
+
+    assert mod.backup(tmp_path / "nowhere", backups, _NOW) == 1
+    assert not backups.exists()
+
+
+def test_main_backup_writes_beside_the_resolved_notes(mod, tmp_path, monkeypatch):
+    notes = _notes(tmp_path / "memory", ["a.md"], ["a.md"])
+    monkeypatch.setattr(mod, "notes_dir", lambda: notes)
+
+    assert mod.main(["backup"]) == 0
+    (made,) = (tmp_path / "memory-backups").iterdir()
+    assert (made / "a.md").exists()

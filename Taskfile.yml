@@ -109,6 +109,11 @@ tasks:
     cmds:
       - python3 scripts/agent_memory.py check
 
+  claude:memory-backup:
+    desc: Copy the agent notes to a new minute-stamped folder beside them; never overwrites one.
+    cmds:
+      - python3 scripts/agent_memory.py backup
+
   clean:
     desc: Remove local Python and tool caches.
     cmds:

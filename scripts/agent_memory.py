@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Back up and check the agent notes: Claude Code's per-project memory for this repo.
+
+The notes live outside the repo, under ``~/.claude/projects/<key>/memory/``: one
+Markdown file per fact plus a ``MEMORY.md`` index whose lines are loaded at the
+start of every session. The monthly consolidation pass rewrites them unattended
+(``docs/agents/consolidation-pass.md``), so this script supplies the two
+deterministic parts it must not leave to a model:
+
+- ``backup`` copies the whole notes directory to a new folder under the sibling
+  ``memory-backups/``, named to the minute, and never overwrites an earlier one.
+- ``check`` reports index drift -- a note with no index line, an index line with no
+  note, a note indexed twice -- and exits non-zero on any. It never writes.
+
+Usage::
+
+    python3 scripts/agent_memory.py check
+    python3 scripts/agent_memory.py backup
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
+import re
+import subprocess
+import sys
+from collections import Counter
+from dataclasses import dataclass
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+HOME = pathlib.Path.home()
+INDEX_NAME = "MEMORY.md"
+_INDEX_LINK = re.compile(r"^\s*-\s*\[[^\]]*\]\(([^)\s]+)\)")
+
+
+def project_key(path: pathlib.Path) -> str:
+    """Encode an absolute path the way Claude Code names its project directories."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+def main_checkout(repo: pathlib.Path) -> pathlib.Path:
+    """Return the main checkout of ``repo``, so a worktree resolves like its origin."""
+    # Drop GIT_DIR and friends (set inside git hooks) so git answers for ``repo`` itself.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    common = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout.strip()
+    return pathlib.Path(common).resolve().parent
+
+
+def notes_dir(repo: pathlib.Path = REPO_ROOT, home: pathlib.Path = HOME) -> pathlib.Path:
+    """Return the agent-notes directory Claude Code uses for this repo's main checkout."""
+    return home / ".claude" / "projects" / project_key(main_checkout(repo)) / "memory"
+
+
+@dataclass(frozen=True)
+class Drift:
+    """Ways the index and the note files disagree; empty on every field means in sync."""
+
+    orphans: list[str]
+    dangling: list[str]
+    duplicated: dict[str, int]
+
+    def lines(self) -> list[str]:
+        """Render one human-readable line per problem."""
+        return (
+            [f"  {name}: no index line" for name in self.orphans]
+            + [f"  {name}: indexed, but no such file" for name in self.dangling]
+            + [f"  {name}: indexed {n} times" for name, n in self.duplicated.items()]
+        )
+
+
+def index_drift(directory: pathlib.Path) -> Drift:
+    """Compare the note files in ``directory`` with the link targets in its index."""
+    index = directory / INDEX_NAME
+    text = index.read_text(encoding="utf-8") if index.exists() else ""
+    targets = Counter(
+        match.group(1) for line in text.splitlines() if (match := _INDEX_LINK.match(line))
+    )
+    files = {p.name for p in directory.glob("*.md") if p.name != INDEX_NAME}
+    return Drift(
+        orphans=sorted(files - targets.keys()),
+        dangling=sorted(targets.keys() - files),
+        duplicated={name: n for name, n in sorted(targets.items()) if n > 1},
+    )
+
+
+def check(directory: pathlib.Path) -> int:
+    """Print the index drift of ``directory``; return 1 on any drift, never write.
+
+    Args:
+        directory: The agent-notes directory to inspect.
+
+    Returns:
+        0 when every note has exactly one index line and every line has a note, else 1.
+    """
+    if not directory.is_dir():
+        print(f"agent notes: {directory} not found")
+        return 1
+    problems = index_drift(directory).lines()
+    if not problems:
+        print(f"agent notes: index in sync ({directory})")
+        return 0
+    print(f"agent notes: index drift in {directory}")
+    print("\n".join(problems))
+    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Dispatch the ``check`` / ``backup`` subcommands; return the process exit code."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("check", help="Report index drift in the agent notes; never writes.")
+    parser.parse_args(argv)
+    return check(notes_dir())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

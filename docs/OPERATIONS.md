@@ -239,6 +239,22 @@ with what it observed -- the two copies differ, the file is missing from the acc
 is left over on the account after a local delete. Run it after changing anything under
 `skills/coach/`.
 
+### Consolidating the agent notes
+
+Claude Code's own notes about this repo (the **agent notes**, outside the repo under
+`~/.claude/projects/<key>/memory/`) get a monthly **consolidation pass** from a Claude Desktop
+scheduled task (`consolidate-agent-notes`, 1st of the month, 08:00; it runs on next launch if
+the app was closed). The steps, rules and restore procedure are in
+`docs/agents/consolidation-pass.md`. Two commands work on their own too:
+
+```bash
+task claude:memory-check    # index drift: notes with no index line, lines with no note
+task claude:memory-backup   # copy the notes to memory-backups/<date>T<HHMM>/ beside them
+```
+
+Every pass leaves its backup folder with a `SUMMARY.md` of what it merged, corrected or
+dropped, and why.
+
 ## Authoring and pushing a workout (Phase 11)
 
 Turning a recommendation (or your own session) into a structured Garmin workout is a
@@ -660,7 +676,7 @@ PYTHONPATH=src python3 -m garmin_coach.mcp.server
 (`matplotlib` is needed because the server's import chain reaches `report` ->
 `charts`, even though the MCP tools never render a chart.)
 
-## Cowork agent notes
+## Notes for Claude in Cowork
 
 **Prefer the `mcp__coach__*` tools if they are present.** When the device bridge is up
 (see "Registering the server in a client"), Cowork reaches the coach server on the

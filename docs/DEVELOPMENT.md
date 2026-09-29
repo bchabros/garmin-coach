@@ -127,6 +127,13 @@ Operational gotchas (rate limits, backfill window, idempotency) live in
   normalizers against **both** onboarding and post-onboarding fixtures.
 - **Device-keyed maps** in training-status payloads: pick the single device value, never
   hardcode a device ID.
+- **Agent notes are not in the repo.** Claude Code's per-project memory lives under
+  `~/.claude/projects/<key>/memory/`, and a worktree session gets a different `<key>` from
+  the main checkout. `scripts/agent_memory.py` always resolves the main checkout's notes, and
+  its tests never touch the real `~/.claude`. Inside a git hook, `GIT_DIR` / `GIT_INDEX_FILE`
+  are exported: any test that shells out to `git` in a temp repo must drop `GIT_*` from the
+  environment, or it acts on this repo. The monthly pass is in
+  `docs/agents/consolidation-pass.md`.
 
 ## Deferred / TODO
 

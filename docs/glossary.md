@@ -630,3 +630,14 @@ code, docstrings, PRDs, and ADRs.
   boundary.
 - **golden regression** - a test that reproduces the reference hand-analysis
   (2026-06-09..07-04) from frozen real anonymized core data.
+- **agent notes** - the coding agent's own per-project memory, kept outside the repo
+  (`~/.claude/projects/<project>/memory/`): one Markdown file per fact plus a `MEMORY.md`
+  index whose lines are loaded at the start of every session. They describe the repo and
+  the tooling, never the athlete; the athlete's qualitative context is the **athlete
+  profile**, a different store with different rules (issue #56).
+- **consolidation pass** - the monthly, unattended pass over the agent notes: a dated
+  backup of the whole directory first, then merge duplicates, correct or drop notes that
+  are false against the current repo, and bring `MEMORY.md` back to one line per file.
+  Falsity deletes, age only flags a note for checking. Distinct from the athlete
+  profile's **consolidation proposal**, which is consent-gated and never runs on its own
+  (issue #56).

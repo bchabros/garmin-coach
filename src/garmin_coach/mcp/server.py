@@ -18,6 +18,7 @@ import sqlite3
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from . import tools
 from ..core import db, manual_sets
@@ -26,6 +27,18 @@ from ..etl import client
 from ..workouts import publish
 
 server = FastMCP("coach")
+
+# Claude Desktop asks before every call unless the tool says it only reads, and only a
+# tool that says so can be allowed for good (issue #79). "Reads" is meant in the
+# athlete's sense - nothing they logged, planned or pushed changes - so the same-day
+# refresh (fills the DB from the account) and the status check (caches its finding on
+# the receipt) count as reads; every log, every plan write and every confirm keeps
+# asking. ``openWorldHint`` marks the tools that reach the Garmin account at all.
+_READS_DB = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+_READS_GARMIN = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+_WRITES_LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+_REPULLS_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
+_WRITES_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
 
 _REPORTS_DIR = "./reports"
 _PLANS_DIR = "./plans"
@@ -39,7 +52,7 @@ def _open() -> sqlite3.Connection:
     return conn
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_snapshot() -> dict[str, Any]:
     """Current athlete snapshot (athlete_status): where the athlete stands right now."""
     conn = _open()
@@ -49,7 +62,7 @@ def get_snapshot() -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_digest(to_date: str | None = None) -> dict[str, Any]:
     """The cited coach digest (signals, weekly, zones, recommendation) for a horizon."""
     conn = _open()
@@ -59,7 +72,7 @@ def get_digest(to_date: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_recent_activities(n: int = 10) -> dict[str, Any]:
     """The n most recent activities, newest first, as a compact projection."""
     conn = _open()
@@ -69,7 +82,7 @@ def get_recent_activities(n: int = 10) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""
     conn = _open()
@@ -79,7 +92,7 @@ def get_weekly(week_start: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_zones() -> dict[str, Any]:
     """Current HR/pace zones: the LTHR anchor, bounds, threshold pace, staleness."""
     conn = _open()
@@ -89,7 +102,7 @@ def get_zones() -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_plan(week_start: str | None = None) -> dict[str, Any]:
     """The plan of record for a week (default: this week), per-day source included.
 
@@ -104,7 +117,7 @@ def get_plan(week_start: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def plan_preview(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
     """Validate a proposed week of training and show it back; nothing is written.
 
@@ -120,7 +133,7 @@ def plan_preview(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
     """Write the previewed week to plans/<monday>_week.md and cache it in the DB.
 
@@ -145,7 +158,7 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def plan_import(week: str | None = None) -> dict[str, Any]:
     """Re-read the authored plan files into the plan of record, then rebuild the marts.
 
@@ -168,7 +181,7 @@ def plan_import(week: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def event_add(
     date: str,
     type: str,  # noqa: A002 - mirrors the goal_event column and the CLI flag
@@ -204,7 +217,7 @@ def event_add(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def event_update(
     event_id: int,
     date: str | None = None,
@@ -240,7 +253,7 @@ def event_update(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_recommendation(date: str | None = None) -> dict[str, Any]:
     """The deterministic session recommendation targeting a date (default tomorrow)."""
     conn = _open()
@@ -250,7 +263,7 @@ def get_recommendation(date: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_events(today: str | None = None) -> dict[str, Any]:
     """Goal races with countdowns and the anchor flag."""
     conn = _open()
@@ -260,7 +273,7 @@ def get_events(today: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_GARMIN)
 def get_workout_status(date: str) -> dict[str, Any]:
     """The authored spec, the push receipt, and that receipt checked against Garmin.
 
@@ -297,7 +310,7 @@ def get_workout_status(date: str) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def log_rpe(
     activity_id: int,
     rpe: int,
@@ -322,7 +335,7 @@ def log_rpe(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def log_niggle(
     body_part: str,
     severity: int,
@@ -337,7 +350,7 @@ def log_niggle(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def log_sets(
     activity_id: int, stations: list[str | manual_sets.ManualStationDetails]
 ) -> dict[str, Any]:
@@ -363,7 +376,7 @@ def log_sets(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_GARMIN)
 def refresh_today() -> dict[str, Any]:
     """Pull today's (partial) Garmin data and rebuild the mart through today.
 
@@ -380,7 +393,7 @@ def refresh_today() -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
     """Show what the DB holds for each day of a range; nothing is fetched.
 
@@ -403,7 +416,7 @@ def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_REPULLS_GARMIN)
 def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str, Any]:
     """Re-pull a previewed range from Garmin and rebuild the marts over it.
 
@@ -437,7 +450,7 @@ def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_LOCAL)
 def author_workout(
     date: str,
     request: dict[str, Any] | None = None,
@@ -475,7 +488,7 @@ def author_workout(
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_DB)
 def get_pushed_workouts(since: str | None = None) -> dict[str, Any]:
     """The workouts already pushed, newest first (date, name, id, last known state).
 
@@ -489,7 +502,7 @@ def get_pushed_workouts(since: str | None = None) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_GARMIN)
 def push_preview(date: str) -> dict[str, Any]:
     """Dry-run the push for a date: resolved action, Garmin payload, and confirm token.
 
@@ -511,7 +524,7 @@ def push_preview(date: str) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_GARMIN)
 def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[str, Any]:
     """Write the previewed workout to the Garmin account (upload + schedule).
 
@@ -536,7 +549,7 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_READS_GARMIN)
 def unschedule_preview(date: str) -> dict[str, Any]:
     """Show what taking the coach's workout off a day would remove; nothing changes.
 
@@ -562,7 +575,7 @@ def unschedule_preview(date: str) -> dict[str, Any]:
         conn.close()
 
 
-@server.tool()
+@server.tool(annotations=_WRITES_GARMIN)
 def unschedule_confirm(date: str, confirm_token: str) -> dict[str, Any]:
     """Take the previewed workout off the day's calendar; the library is never touched.
 

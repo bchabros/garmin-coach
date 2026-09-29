@@ -191,3 +191,60 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(tmp_path, monkeypatc
     assert "no push receipt" in out["data"]["error"]
     assert out["data"]["confirm_token"] is None
     assert logins == []
+
+
+# The tools that change nothing: the DB, the report artifacts, and the account are
+# only read. Claude Desktop asks before every call unless the tool says so, and only a
+# tool that says so can be allowed for good (issue #79).
+READ_ONLY_TOOLS = {
+    "get_snapshot",
+    "get_digest",
+    "get_recent_activities",
+    "get_weekly",
+    "get_zones",
+    "get_plan",
+    "get_recommendation",
+    "get_events",
+    "get_pushed_workouts",
+    "get_workout_status",
+    "plan_preview",
+    "repair_preview",
+    "push_preview",
+    "unschedule_preview",
+    "refresh_today",
+}
+
+# The tools that reach the Garmin account, reading or writing.
+GARMIN_TOOLS = {
+    "get_workout_status",
+    "push_preview",
+    "push_confirm",
+    "unschedule_preview",
+    "unschedule_confirm",
+    "refresh_today",
+    "repair_confirm",
+}
+
+
+def test_every_read_says_it_only_reads_so_desktop_can_stop_asking():
+    tools = asyncio.run(server.server.list_tools())
+
+    read_only = {t.name for t in tools if t.annotations and t.annotations.readOnlyHint}
+    assert read_only == READ_ONLY_TOOLS
+
+
+def test_every_write_says_it_writes_so_desktop_keeps_asking():
+    tools = asyncio.run(server.server.list_tools())
+
+    for tool in tools:
+        if tool.name in READ_ONLY_TOOLS:
+            continue
+        assert tool.annotations is not None, tool.name
+        assert tool.annotations.readOnlyHint is False, tool.name
+
+
+def test_every_tool_says_whether_it_reaches_the_account():
+    tools = asyncio.run(server.server.list_tools())
+
+    open_world = {t.name for t in tools if t.annotations and t.annotations.openWorldHint}
+    assert open_world == GARMIN_TOOLS

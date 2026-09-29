@@ -244,7 +244,7 @@ is left over on the account after a local delete. Run it after changing anything
 Claude Code's own notes about this repo (the **agent notes**, outside the repo under
 `~/.claude/projects/<key>/memory/`) get a monthly **consolidation pass** from a Claude Desktop
 scheduled task (`consolidate-agent-notes`, 1st of the month, 08:00; it runs on next launch if
-the app was closed). The steps, rules and restore procedure are in
+the app was closed, and notifies when it finishes). The steps, rules and restore procedure are in
 `docs/agents/consolidation-pass.md`. Two commands work on their own too:
 
 ```bash

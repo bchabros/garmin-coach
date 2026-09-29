@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime
 import importlib.util
-import os
 import pathlib
 import subprocess
 import sys
@@ -35,10 +34,9 @@ def mod():
     return _load_module()
 
 
-def _git(cwd: pathlib.Path, *args: str) -> None:
-    # A pre-commit hook exports GIT_DIR / GIT_INDEX_FILE; left in place they would aim these
-    # commands at the real repo instead of the temp one.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+def _git(mod, cwd: pathlib.Path, *args: str) -> None:
+    # Run inside the pre-commit hook, a plain call would act on this repo, not the temp one.
+    env = mod.clean_git_env()
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
 
 
@@ -54,8 +52,9 @@ def test_worktree_resolves_to_the_main_checkout_notes(mod, tmp_path):
     """A session in a worktree must consolidate the notes of the main checkout."""
     main = tmp_path / "repo"
     main.mkdir()
-    _git(main, "init", "-q")
+    _git(mod, main, "init", "-q")
     _git(
+        mod,
         main,
         "-c",
         "user.name=t",
@@ -67,7 +66,7 @@ def test_worktree_resolves_to_the_main_checkout_notes(mod, tmp_path):
         "-m",
         "init",
     )
-    _git(main, "worktree", "add", "-q", str(tmp_path / "wt"))
+    _git(mod, main, "worktree", "add", "-q", str(tmp_path / "wt"))
     home = tmp_path / "home"
 
     from_main = mod.notes_dir(main, home)

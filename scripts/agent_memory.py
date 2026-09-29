@@ -43,17 +43,24 @@ def project_key(path: pathlib.Path) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", str(path))
 
 
+def clean_git_env() -> dict[str, str]:
+    """Return the environment minus ``GIT_*``, which git hooks export.
+
+    Left in place, ``GIT_DIR`` / ``GIT_INDEX_FILE`` aim a ``git`` call at the repo whose hook
+    is running instead of the directory it was run in.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 def main_checkout(repo: pathlib.Path) -> pathlib.Path:
     """Return the main checkout of ``repo``, so a worktree resolves like its origin."""
-    # Drop GIT_DIR and friends (set inside git hooks) so git answers for ``repo`` itself.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     common = subprocess.run(
         ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
         cwd=repo,
         check=True,
         capture_output=True,
         text=True,
-        env=env,
+        env=clean_git_env(),
     ).stdout.strip()
     return pathlib.Path(common).resolve().parent
 
@@ -95,6 +102,15 @@ def index_drift(directory: pathlib.Path) -> Drift:
     )
 
 
+def _print_drift(directory: pathlib.Path, header: str) -> bool:
+    """Print ``header`` and one line per drift problem; return whether there were any."""
+    problems = index_drift(directory).lines()
+    if problems:
+        print(f"agent-notes: {header}")
+        print("\n".join(problems))
+    return bool(problems)
+
+
 def check(directory: pathlib.Path) -> int:
     """Print the index drift of ``directory``; return 1 on any drift, never write.
 
@@ -105,14 +121,11 @@ def check(directory: pathlib.Path) -> int:
         0 when every note has exactly one index line and every line has a note, else 1.
     """
     if not directory.is_dir():
-        print(f"agent notes: {directory} not found")
+        print(f"agent-notes: {directory} not found")
         return 1
-    problems = index_drift(directory).lines()
-    if not problems:
-        print(f"agent notes: index in sync ({directory})")
+    if not _print_drift(directory, f"index drift in {directory}"):
+        print(f"agent-notes: index in sync ({directory})")
         return 0
-    print(f"agent notes: index drift in {directory}")
-    print("\n".join(problems))
     return 1
 
 
@@ -129,18 +142,15 @@ def backup(directory: pathlib.Path, backups: pathlib.Path, now: dt.datetime) -> 
         was made: the notes are missing or the target folder already exists.
     """
     if not directory.is_dir():
-        print(f"agent notes: {directory} not found; no backup made")
+        print(f"agent-notes: {directory} not found; no backup made")
         return 1
     target = backups / now.strftime("%Y-%m-%dT%H%M")
     if target.exists():
-        print(f"agent notes: {target} already exists; refusing to overwrite it")
+        print(f"agent-notes: {target} already exists; refusing to overwrite it")
         return 1
     shutil.copytree(directory, target)
-    print(f"agent notes: backed up to {target}")
-    problems = index_drift(directory).lines()
-    if problems:
-        print("agent notes: index drift (for the pass to fix)")
-        print("\n".join(problems))
+    print(f"agent-notes: backed up to {target}")
+    _print_drift(directory, "index drift (for the pass to fix)")
     return 0
 
 

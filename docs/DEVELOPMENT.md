@@ -51,10 +51,21 @@ endpoint->method map, the only garminconnect importer; `sync.py`
 `features.py`/`weekly.py`/`zones.py`/`overlap.py`/`periodize.py`/`snapshot.py` +
 the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 `thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
-(`author.py`/`exercises.py`/`hardness.py`/`publish.py`, the only Garmin write) - `mcp/`
+(`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
+`publish.py` for account policy and the only Garmin write) - `mcp/`
 (`server.py`/`tools.py`)
-- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), and `retention.py`
-  (manual report-file retention, with no DB or transport access).
+- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `plan_changes.py`
+  (the complete plan import outcome shared by CLI, MCP and the nightly run), and
+  `retention.py` (manual report-file retention, with no DB or transport access).
+
+`plan_changes.import_plans()` owns the plan import outcome and its consequences:
+accepted weeks, the first file error, conflicts with pushed workouts, and immediate
+mart refresh. Only `daily` defers that refresh until after sync, using its existing
+single complete mart pass. The core parser remains independent of marts and transport.
+
+Coach thresholds are read directly through `coach.thresholds.read()`. The report
+loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
+not initialize Matplotlib even when the CLI imports the report module.
 
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess
 without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
@@ -74,6 +85,12 @@ ones sparingly:
 - Test normalizers through pure model functions (`core/models.py`).
 - Test persistence through `core/db.py` helpers and observable SQLite state.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
+- Test the complete workout push through `workouts.push.push_for_date` with real
+  SQLite, temporary specs/receipts, and a factory returning `FakePublisher`. CLI and
+  MCP only adapt confirmation and output; date and token refusals precede connection.
+- Test plan import consequences through CLI/MCP and `daily.run_daily`, with real
+  SQLite and temporary plans/receipts. Partial imports retain accepted weeks, and
+  nightly conflicts warn without another mart pass or an outbound account call.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
 - Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --
@@ -141,9 +158,6 @@ Not-yet-done work carried forward. The finished build is recorded in
 `docs/PROJECT.md` plus each feature's PRD (`docs/prd/`) and ADR (`docs/adr/`); new
 work is tracked as GitHub issues (`docs/agents/issue-tracker.md`).
 
-- Plan divergence on the **nightly** path: `daily`'s plans stage imports plan files but
-  does not check them against already-pushed workouts, so a revision landing overnight
-  surfaces only on the next `plan import` or `get_workout_status` (issue #22, ADR 0021).
 - Multi-sport / `discipline` weighting in weekly rollups (deferred from Phase 5, BUILD
   section 12).
 - VO2max / threshold **trend charts** (deferred from Phase 5, BUILD section 12).

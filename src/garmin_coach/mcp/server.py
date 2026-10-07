@@ -518,8 +518,12 @@ def push_preview(date: str) -> dict[str, Any]:
     settings = get_settings()
     conn = _open()
     try:
-        publisher = publish.connect_publisher(settings)
-        return tools.push_preview(conn, date=date, publisher=publisher, reports_dir=_REPORTS_DIR)
+        return tools.push_preview(
+            conn,
+            date=date,
+            connect=lambda: publish.connect_publisher(settings),
+            reports_dir=_REPORTS_DIR,
+        )
     finally:
         conn.close()
 
@@ -536,12 +540,11 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
     settings = get_settings()
     conn = _open()
     try:
-        publisher = publish.connect_publisher(settings)
         return tools.push_confirm(
             conn,
             date=date,
             confirm_token=confirm_token,
-            publisher=publisher,
+            connect=lambda: publish.connect_publisher(settings),
             replace=replace,
             reports_dir=_REPORTS_DIR,
         )

@@ -9,6 +9,7 @@ test_features.py (seed core -> run -> observe).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from garmin_coach import daily
@@ -160,6 +161,7 @@ def test_daily_run_imports_plans_before_the_pipeline(conn, fake_client, tmp_path
         data_start_date="2026-06-08",
         to_date="2026-06-10",
         plans_dir=tmp_path,
+        reports_dir=tmp_path / "reports",
     )
 
     assert result.plans_imported == ["2026-06-08"]
@@ -178,6 +180,7 @@ def test_daily_run_degrades_loudly_on_a_bad_plan_file(conn, fake_client, tmp_pat
         data_start_date="2026-06-08",
         to_date="2026-06-10",
         plans_dir=tmp_path,
+        reports_dir=tmp_path / "reports",
     )
 
     assert result.plans_imported == []
@@ -193,6 +196,76 @@ def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client):
     )
     assert result.plans_imported == []
     assert result.status == "ok"
+
+
+def test_nightly_partial_import_reports_saved_weeks_and_continues_sync(conn, fake_client, tmp_path):
+    (tmp_path / "2026-06-08_week.md").write_text(_plan_file_text(), encoding="utf-8")
+    (tmp_path / "2026-06-15_week.md").write_text("invalid plan", encoding="utf-8")
+
+    result = daily.run_daily(
+        fake_client(),
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-10",
+        plans_dir=tmp_path,
+        reports_dir=tmp_path / "reports",
+    )
+
+    assert result.plans_imported == ["2026-06-08"]
+    assert result.features_ok is True
+    assert result.status == "degraded"
+    assert any("2026-06-15_week.md" in error for error in result.errors)
+
+
+def test_nightly_plan_conflict_warns_without_degrading_or_rebuilding_before_sync(
+    conn, fake_client, tmp_path, caplog
+):
+    plans, reports = tmp_path / "plans", tmp_path / "reports"
+    plans.mkdir()
+    (plans / "2026-06-08_week.md").write_text(_plan_file_text(), encoding="utf-8")
+    day = reports / "2026-06-10"
+    day.mkdir(parents=True)
+    receipt_path = day / "push.json"
+    receipt_path.write_text(
+        json.dumps({"workout_id": 1000, "session_type": "tempo", "pushed_at": "2026-06-09"})
+    )
+    receipt_before = receipt_path.read_bytes()
+    queries = []
+    conn.set_trace_callback(queries.append)
+    client = fake_client()
+    get_activities = client.get_activities
+
+    def activities(start_date, end_date):
+        assert not any("INSERT INTO daily_metrics" in sql for sql in queries)
+        return get_activities(start_date, end_date)
+
+    client.get_activities = activities
+    try:
+        result = daily.run_daily(
+            client,
+            conn,
+            data_start_date="2026-06-08",
+            to_date="2026-06-10",
+            plans_dir=plans,
+            reports_dir=reports,
+        )
+    finally:
+        conn.set_trace_callback(None)
+
+    assert result.invalidated_pushes == [
+        {
+            "date": "2026-06-10",
+            "pushed_type": "tempo",
+            "planned_intent": "easy",
+            "pushed_at": "2026-06-09",
+        }
+    ]
+    assert result.status == "ok"
+    assert result.exit_code == 0
+    assert "2026-06-10" in caplog.text and "plan now says easy" in caplog.text
+    assert receipt_path.read_bytes() == receipt_before
+    inserts = [sql for sql in queries if "INSERT INTO daily_metrics" in sql]
+    assert len(inserts) == 3  # June 8-10, one complete mart pass
 
 
 # --- the nightly log says how far our load split is from Garmin's (issue #70) ---

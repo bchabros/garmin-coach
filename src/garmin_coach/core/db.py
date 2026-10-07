@@ -136,6 +136,12 @@ def count_activities(conn: sqlite3.Connection, from_date: str, to_date: str | No
     )
 
 
+def has_activity_on(conn: sqlite3.Connection, date: str) -> bool:
+    """Whether any stored activity falls on a calendar date."""
+    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
+    return row is not None
+
+
 def has_daily_row(conn: sqlite3.Connection, table: str, date: str) -> bool:
     """Whether a daily stream's core table holds a row for a date.
 

@@ -76,7 +76,15 @@ def intent_class(intent: str | None) -> str | None:
 
 
 class PlanParseError(ValueError):
-    """A plan file violates the contract; the import must fail loudly."""
+    """A plan file could not be parsed or imported.
+
+    ``imported_weeks`` lists the weeks a directory import had already accepted
+    before this file failed, so callers can keep reporting them.
+    """
+
+    def __init__(self, message: str, *, imported_weeks: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.imported_weeks = list(imported_weeks or [])
 
 
 def parse_week(text: str, week_start: str) -> list[dict]:
@@ -149,23 +157,33 @@ def import_dir(
         The week_start of every imported week, sorted.
 
     Raises:
-        PlanParseError: The first file that violates the contract aborts the import.
+        PlanParseError: The first invalid or unreadable file aborts the import;
+            ``imported_weeks`` names weeks already committed before it.
     """
     directory = pathlib.Path(plans_dir)
     if not directory.is_dir():
         return []
     imported: list[str] = []
     for path in sorted(directory.glob("*_week.md")):
-        match = _FILENAME_RE.match(path.name)
-        if match is None:
-            raise PlanParseError(f"{path.name}: plan filename must be <YYYY-MM-DD>_week.md")
-        week_start = match.group(1)
-        _monday_or_raise(week_start, context=path.name)
-        if week is not None and week_start != week:
-            continue
-        upsert_week(conn, parse_week(path.read_text(encoding="utf-8"), week_start))
+        try:
+            week_start = _file_week(path)
+            if week is not None and week_start != week:
+                continue
+            upsert_week(conn, parse_week(path.read_text(encoding="utf-8"), week_start))
+        except (PlanParseError, OSError, UnicodeError) as exc:
+            raise PlanParseError(f"{path.name}: {exc}", imported_weeks=imported) from exc
         imported.append(week_start)
     return sorted(imported)
+
+
+def _file_week(path: pathlib.Path) -> str:
+    """Resolve and validate the Monday named by one authored plan file."""
+    match = _FILENAME_RE.match(path.name)
+    if match is None:
+        raise PlanParseError("plan filename must be <YYYY-MM-DD>_week.md")
+    week_start = match.group(1)
+    _monday_or_raise(week_start)
+    return week_start
 
 
 def resolve_day(conn: sqlite3.Connection, date: str) -> dict | None:
@@ -493,14 +511,13 @@ def write_week_file(
     return path
 
 
-def _monday_or_raise(week_start: str, context: str | None = None) -> _dt.date:
-    where = f"{context}: " if context else ""
+def _monday_or_raise(week_start: str) -> _dt.date:
     try:
         day = _dt.date.fromisoformat(week_start)
     except ValueError as exc:
-        raise PlanParseError(f"{where}invalid week_start {week_start!r}") from exc
+        raise PlanParseError(f"invalid week_start {week_start!r}") from exc
     if day.weekday() != 0:
-        raise PlanParseError(f"{where}week_start {week_start} is not a Monday")
+        raise PlanParseError(f"week_start {week_start} is not a Monday")
     return day
 
 

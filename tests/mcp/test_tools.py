@@ -721,7 +721,7 @@ def test_a_successful_push_replaces_the_receipt_and_drops_the_stale_finding(
         conn,
         date=FUTURE,
         confirm_token=_token(conn, spec),
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
     )
 
@@ -919,7 +919,7 @@ def test_push_preview_returns_action_hash_and_payload(conn, tmp_path, fixture, f
     tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
     pub = fake_publisher()
 
-    out = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    out = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     assert out["data"]["action"] == "create"
     assert out["data"]["spec_hash"]
@@ -933,7 +933,7 @@ def test_push_confirm_refuses_a_stale_token(conn, tmp_path, fixture, fake_publis
     pub = fake_publisher()
 
     out = tools.push_confirm(
-        conn, date=FUTURE, confirm_token="deadbeef", publisher=pub, reports_dir=str(tmp_path)
+        conn, date=FUTURE, confirm_token="deadbeef", connect=lambda: pub, reports_dir=str(tmp_path)
     )
 
     assert out["data"]["error"] is not None
@@ -947,13 +947,13 @@ def test_push_confirm_with_matching_token_uploads_and_schedules(
     request = fixture("tempo_request")
     tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
     pub = fake_publisher()
-    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    preview = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     out = tools.push_confirm(
         conn,
         date=FUTURE,
         confirm_token=preview["data"]["confirm_token"],
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
     )
 
@@ -981,7 +981,7 @@ def _confirm(conn, tmp_path, pub, spec, **kw):
         conn,
         date=spec["date"],
         confirm_token=_token(conn, spec),
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
         **kw,
     )
@@ -1016,9 +1016,7 @@ def test_push_confirm_resolves_a_renamed_workout_by_the_receipts_id(conn, tmp_pa
 
 
 def test_push_preview_without_a_spec_is_explicit(conn, tmp_path, fake_publisher):
-    out = tools.push_preview(
-        conn, date=FUTURE, publisher=fake_publisher(), reports_dir=str(tmp_path)
-    )
+    out = tools.push_preview(conn, date=FUTURE, connect=fake_publisher, reports_dir=str(tmp_path))
 
     assert out["data"]["error"] is not None
     assert "workout.json" in out["data"]["error"]
@@ -1265,13 +1263,13 @@ def test_push_confirm_refuses_a_token_from_before_a_date_change(
     assert publish.spec_hash(spec) == publish.spec_hash(retargeted)
 
     pub = fake_publisher()
-    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    preview = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     out = tools.push_confirm(
         conn,
         date=LATER,
         confirm_token=preview["data"]["confirm_token"],
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
     )
 
@@ -1286,9 +1284,7 @@ def test_a_spec_filed_under_another_date_is_refused(conn, tmp_path, fixture, fak
     tools.author_workout(conn, date=FUTURE, request=request, reports_dir=str(tmp_path))
     _retarget_spec(tmp_path, FUTURE, LATER)
 
-    out = tools.push_preview(
-        conn, date=FUTURE, publisher=fake_publisher(), reports_dir=str(tmp_path)
-    )
+    out = tools.push_preview(conn, date=FUTURE, connect=fake_publisher, reports_dir=str(tmp_path))
 
     assert out["data"]["error"] is not None
     assert LATER in out["data"]["error"]
@@ -1330,7 +1326,7 @@ def test_push_preview_refuses_a_spec_the_revised_plan_no_longer_allows(
     _seed_plan(conn, FUTURE, "easy")
     pub = fake_publisher()
 
-    out = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    out = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     assert out["data"]["action"] == "refuse"
     assert "planned as easy" in out["data"]["message"]
@@ -1344,14 +1340,14 @@ def test_push_confirm_refuses_a_spec_the_revised_plan_no_longer_allows(
         conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
     )
     pub = fake_publisher()
-    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    preview = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
     _seed_plan(conn, FUTURE, "easy")
 
     out = tools.push_confirm(
         conn,
         date=FUTURE,
         confirm_token=preview["data"]["confirm_token"],
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
     )
 
@@ -1373,7 +1369,7 @@ def test_push_confirm_names_the_plan_among_the_things_a_stale_token_means(
         conn,
         date=FUTURE,
         confirm_token="deadbeef",
-        publisher=fake_publisher(),
+        connect=fake_publisher,
         reports_dir=str(tmp_path),
     )
 
@@ -1387,13 +1383,13 @@ def test_the_push_receipt_records_the_plan_it_was_measured_against(
         conn, date=FUTURE, request=fixture("tempo_request"), reports_dir=str(tmp_path)
     )
     pub = fake_publisher()
-    preview = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    preview = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     tools.push_confirm(
         conn,
         date=FUTURE,
         confirm_token=preview["data"]["confirm_token"],
-        publisher=pub,
+        connect=lambda: pub,
         reports_dir=str(tmp_path),
     )
 
@@ -1643,6 +1639,32 @@ def test_plan_import_reports_a_push_the_edited_plan_invalidates(conn, tmp_path):
     )["data"]
 
     assert [c["date"] for c in out["invalidated_pushes"]] == [PUSH_DATE]
+
+
+def test_partial_plan_import_reports_accepted_weeks_conflicts_and_fresh_metrics(conn, tmp_path):
+    plans, reports = tmp_path / "plans", tmp_path / "reports"
+    plans.mkdir()
+    reports.mkdir()
+    _plan_file(plans)
+    _plan_file(plans, week_start="2026-07-20", intents=["luz"] * 7)
+    _seed_pushed(reports, session_type="tempo")
+    for i in range(7):
+        _seed_core_day(
+            conn,
+            (dt.date.fromisoformat(WEEK) + dt.timedelta(days=i)).isoformat(),
+            activity_id=900 + i,
+        )
+
+    out = tools.plan_import(
+        conn, plans_dir=str(plans), reports_dir=str(reports), data_start_date=DATA_START
+    )["data"]
+
+    assert out["weeks"] == [WEEK]
+    assert "2026-07-20_week.md" in out["error"]
+    assert [c["date"] for c in out["invalidated_pushes"]] == [PUSH_DATE]
+    grid = tools.get_weekly(conn, week_start=WEEK)["data"]["plan_actual"]
+    assert len(grid) == 7
+    assert grid[4]["planned"] == "easy"
 
 
 def test_plan_import_without_a_plan_file_says_so(conn, tmp_path):
@@ -2315,7 +2337,7 @@ def test_a_push_after_a_removal_schedules_the_workout_back(conn, tmp_path):
     _taken_off(conn, tmp_path, pub, date=FUTURE)
     pub.calls.clear()
 
-    out = tools.push_preview(conn, date=FUTURE, publisher=pub, reports_dir=str(tmp_path))
+    out = tools.push_preview(conn, date=FUTURE, connect=lambda: pub, reports_dir=str(tmp_path))
 
     assert out["data"]["action"] == "schedule"
     assert len(pub.workouts) == 1

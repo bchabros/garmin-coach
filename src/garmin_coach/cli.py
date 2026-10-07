@@ -10,13 +10,13 @@ import pathlib
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import daily, retention
-from .coach import digest, report
+from . import daily, plan_changes, retention
+from .coach import digest, report, thresholds as _thresholds
 from .core import db, events as _events, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
-from .workouts import author as _author, publish
+from .workouts import author as _author, publish, push
 
 if TYPE_CHECKING:
     from .core.config import Settings
@@ -40,21 +40,6 @@ def _check_range(name: str, value: int | None, lo: int, hi: int) -> None:
     """Raise ValueError when an optional integer input falls outside [lo, hi]."""
     if value is not None and not (lo <= value <= hi):
         raise ValueError(f"{name} must be between {lo} and {hi} (got {value})")
-
-
-def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
-    """Recompute every mart after a write that changed what they are built from.
-
-    A race date, a revised plan or a repaired day changes derived rows far from the
-    one it touched - the block calendar, plan-vs-actual - so the write is only half
-    done until the marts agree with it, and waiting for the nightly run would mean a
-    day of stale reads (issue #72).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        data_start_date: First real-data date, passed to the recompute.
-    """
-    features.features(conn, data_start_date=data_start_date)
 
 
 def log_session_rpe(
@@ -285,7 +270,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     db.bootstrap(conn)
 
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
-    thresholds = report.read_thresholds(conn)
+    thresholds = _thresholds.read(conn)
     dg = digest.build_digest(
         conn, to_date=to_date, thresholds=thresholds, recheck_days=settings.sync_recheck_days
     )
@@ -337,67 +322,43 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0
 
 
-def _activity_dates(conn: sqlite3.Connection, date: str) -> set[str]:
-    """The target date, when it already carries a logged activity in core."""
-    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
-    return {date} if row else set()
-
-
 def _cmd_push(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
-
-    spec_path = pathlib.Path(args.reports_dir) / args.date / "workout.json"
-    if not spec_path.exists():
-        conn.close()
-        print(f"push: no workout.json for {args.date}; run `garmin-coach author` first")
-        return 1
-    spec = json.loads(spec_path.read_text())
-    activity_dates = _activity_dates(conn, args.date)
-    planned = _plan.planned_intent(conn, args.date)
-    conn.close()
-
+    conn = _bootstrap_db(settings)
     try:
-        publisher = publish.connect_publisher(settings)
-    except Exception as exc:  # noqa: BLE001 - surface Garmin login failures as a failed push
-        print(f"push failed: login error: {exc}")
+        outcome = push.push_for_date(
+            conn,
+            date=args.date,
+            connect=lambda: publish.connect_publisher(settings),
+            reports_dir=args.reports_dir,
+            confirm=args.confirm,
+            replace=args.replace,
+        )
+    except push.PushRefused as exc:
+        print(f"push: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - a connection or receipt failure is observable
+        print(f"push failed: {exc}")
         return 2
-
-    result = publish.publish(
-        spec,
-        publisher,
-        confirm=args.confirm,
-        replace=args.replace,
-        activity_dates=activity_dates,
-        known_workout_id=publish.receipt_workout_id(spec_path.parent),
-        planned_intent=planned,
-    )
+    finally:
+        conn.close()
+    result = outcome.result
     for warning in result.warnings:
         print(f"  warning: {warning}")
     print(f"push [{result.action}]: {result.message}")
 
     if result.error is not None:
-        _write_receipt(result, spec_path.parent)
         print(f"push failed: {result.error}")
         return 2
     if result.applied:
-        _write_receipt(result, spec_path.parent)
-        print(f"push complete: {spec_path.parent / 'push.json'}")
+        if args.confirm:
+            print(f"push complete: {outcome.receipt_path}")
         return 0
     if args.confirm and result.action == "refuse":
         return 1
     if not args.confirm:
         print("push: dry-run (re-run with --confirm to write to your Garmin account)")
     return 0
-
-
-def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None:
-    """Write the push.json receipt, stamped with the push time."""
-    receipt = result.as_receipt()
-    receipt["pushed_at"] = _dt.datetime.now().isoformat(timespec="seconds")
-    (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
@@ -419,53 +380,40 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
-def invalidated_by_import(
-    conn: sqlite3.Connection, weeks: list[str], reports_dir: str
-) -> list[dict[str, Any]]:
-    """The days of the imported weeks whose pushed workout the new plan no longer allows.
-
-    Args:
-        conn: Open SQLite connection with the imported weeks cached.
-        weeks: The week starts that were just imported.
-        reports_dir: Root of the dated report folders holding the push receipts.
-
-    Returns:
-        One conflict per offending day (issue #22), oldest week first.
-    """
-    return [
-        conflict
-        for week in weeks
-        for conflict in publish.invalidated_pushes(reports_dir, _plan.planned_by_date(conn, week))
-    ]
-
-
 def _cmd_plan(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = _bootstrap_db(settings)
     plans_dir = args.plans_dir or settings.plans_dir
 
     try:
-        imported = _plan.import_dir(conn, plans_dir, week=args.week)
-    except _plan.PlanParseError as exc:
+        result = plan_changes.import_plans(
+            conn,
+            plans_dir=plans_dir,
+            reports_dir=args.reports_dir,
+            week=args.week,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
         conn.close()
-        print(f"plan import failed: {exc}")
-        return 1
-    if imported:
-        rebuild_marts(conn, data_start_date=settings.data_start_date)
-    conflicts = invalidated_by_import(conn, imported, args.reports_dir)
-    conn.close()
-
-    if not imported:
+    if result.error is not None:
+        print(f"plan import failed: {result.error}")
+    if not result.weeks:
+        if result.error is not None:
+            return 1
         target = args.week or "any week"
         print(f"plan import: no plan file for {target} in {plans_dir}")
         return 1
-    print(f"plan import complete: {', '.join(imported)} ({len(imported)} week(s) from {plans_dir})")
-    for conflict in conflicts:
+    status = "partial" if result.error else "complete"
+    print(
+        f"plan import {status}: {', '.join(result.weeks)} "
+        f"({len(result.weeks)} week(s) from {plans_dir})"
+    )
+    for conflict in result.invalidated_pushes:
         print(
             f"  conflict: {conflict['date']} has a pushed {conflict['pushed_type']} workout, "
             f"but the plan now says {conflict['planned_intent']}; re-author and re-push it"
         )
-    return 0
+    return 1 if result.error else 0
 
 
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
@@ -578,7 +526,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
-            rebuild_marts(conn, data_start_date=settings.data_start_date)
+            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event add complete: {args.type} on {args.date} ({args.status})"
         elif args.event_command == "update":
             _events.update_goal_event(
@@ -592,7 +540,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
-            rebuild_marts(conn, data_start_date=settings.data_start_date)
+            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event update complete: id={args.event_id}"
         else:
             exit_code = _list_events(conn)
@@ -633,6 +581,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         data_start_date=settings.data_start_date,
         to_date=args.to_date,
         plans_dir=settings.plans_dir,
+        reports_dir=args.reports_dir,
         recheck_days=settings.sync_recheck_days,
     )
     conn.close()
@@ -911,6 +860,9 @@ def build_parser() -> argparse.ArgumentParser:
     dl = sub.add_parser("daily", help="Nightly run: sync -> features -> alerts (for cron/launchd).")
     dl.add_argument(
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
+    )
+    dl.add_argument(
+        "--reports-dir", default="./reports", help="Root of push receipts for plan conflicts."
     )
     dl.set_defaults(func=_cmd_daily)
 

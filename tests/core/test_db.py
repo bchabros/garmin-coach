@@ -76,6 +76,16 @@ def test_upsert_activity_idempotent(conn, fixture):
     assert stored[1] == "Bieganie"
 
 
+def test_has_activity_on_sees_only_days_with_a_stored_activity(conn, fixture):
+    row = models.normalize_activity(fixture("activities_range")[0])
+    assert db.has_activity_on(conn, row["date"]) is False
+
+    db.upsert_activity(conn, row)
+
+    assert db.has_activity_on(conn, row["date"]) is True
+    assert db.has_activity_on(conn, "1999-01-01") is False
+
+
 def test_upsert_daily_idempotent(conn, fixture):
     row = models.normalize_sleep("2026-06-10", fixture("sleep_day"))
     db.upsert_daily(conn, "sleep", row)

@@ -186,6 +186,21 @@ def features(
     conn.commit()
 
 
+def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
+    """Recompute every mart after a local write changed what they are built from.
+
+    A race date, a revised plan or a repaired day changes derived rows far from the
+    one it touched - the block calendar, plan-vs-actual - so the write is only half
+    done until the marts agree with it, and waiting for the nightly run would mean a
+    day of stale reads (issue #72).
+
+    Args:
+        conn: Open SQLite connection with the schema bootstrapped.
+        data_start_date: First real-data date, passed to the recompute.
+    """
+    features(conn, data_start_date=data_start_date)
+
+
 def _tail_rollups(
     conn: sqlite3.Connection, *, data_start_date: str, to_date: str | None, end: str
 ) -> None:

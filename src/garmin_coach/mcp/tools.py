@@ -31,7 +31,7 @@ from ..core.config import get_settings
 from ..etl import sync
 from ..etl.sync import GarminClient
 from ..marts import periodize, snapshot
-from ..workouts import author, publish
+from ..workouts import author, publish, push
 
 # Mart fields that accumulate during the day; they are only final after the
 # nightly run. Morning-complete streams (sleep, HRV, readiness) never appear.
@@ -938,7 +938,7 @@ def push_preview(
     conn: sqlite3.Connection,
     *,
     date: str,
-    publisher: publish.WorkoutPublisher,
+    connect: Callable[[], publish.WorkoutPublisher],
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
     """Dry-run the push for a date: the resolved action, payload, and confirm token.
@@ -952,23 +952,15 @@ def push_preview(
     confirm time: a plan revised after the spec was authored is exactly the case the
     author-time guard cannot see (issue #22).
     """
-    spec, error = _load_spec(date, reports_dir)
-    if spec is None:
-        return _wrap(conn, {"error": error})
-
-    planned = plan.planned_intent(conn, date)
-    result = publish.publish(
-        spec,
-        publisher,
-        confirm=False,
-        activity_dates=_dates_with_activity(conn, date),
-        known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
-        planned_intent=planned,
-    )
+    try:
+        outcome = push.push_for_date(conn, date=date, connect=connect, reports_dir=reports_dir)
+    except push.PushRefused as exc:
+        return _wrap(conn, {"error": str(exc)})
+    result = outcome.result
     data = {
         "date": date,
         "action": result.action,
-        "confirm_token": publish.confirm_token(spec, planned),
+        "confirm_token": outcome.confirm_token,
         "spec_hash": result.spec_hash,
         "payload": result.payload,
         "message": result.message,
@@ -983,7 +975,7 @@ def push_confirm(
     *,
     date: str,
     confirm_token: str,
-    publisher: publish.WorkoutPublisher,
+    connect: Callable[[], publish.WorkoutPublisher],
     replace: bool = False,
     reports_dir: str = "reports",
 ) -> dict[str, Any]:
@@ -993,32 +985,19 @@ def push_confirm(
     or the plan of record for it changed since the preview (or no preview happened),
     so preview again.
     """
-    spec, error = _load_spec(date, reports_dir)
-    if spec is None:
-        return _wrap(conn, {"error": error, "applied": False})
-
-    planned = plan.planned_intent(conn, date)
-    if confirm_token != publish.confirm_token(spec, planned):
-        return _wrap(
+    try:
+        outcome = push.push_for_date(
             conn,
-            {
-                "error": "stale confirm_token: the spec, its date, or the plan of record "
-                "for it changed since the preview; run push_preview again",
-                "applied": False,
-            },
+            date=date,
+            connect=connect,
+            reports_dir=reports_dir,
+            confirm=True,
+            expected_token=confirm_token,
+            replace=replace,
         )
-
-    result = publish.publish(
-        spec,
-        publisher,
-        confirm=True,
-        replace=replace,
-        activity_dates=_dates_with_activity(conn, date),
-        known_workout_id=publish.receipt_workout_id(_day_dir(reports_dir, date)),
-        planned_intent=planned,
-    )
-    if result.applied or result.error is not None:
-        _write_receipt(result, _day_dir(reports_dir, date))
+    except push.PushRefused as exc:
+        return _wrap(conn, {"error": str(exc), "applied": False})
+    result = outcome.result
     data = {
         "date": date,
         "action": result.action,
@@ -1033,35 +1012,11 @@ def push_confirm(
 
 
 def _load_spec(date: str, reports_dir: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Read the authored spec for a date, or explain why there is none.
-
-    The folder names the target day, while ``publish`` schedules on the spec's own
-    ``date``; a disagreement would push a different day than the one whose activity
-    collision was checked, so it is refused rather than silently preferred.
-    """
-    path = _day_dir(reports_dir, date) / "workout.json"
-    if not path.exists():
-        return None, f"no workout.json for {date}; run author_workout first"
-    spec = json.loads(path.read_text())
-    if spec.get("date") != date:
-        return None, (
-            f"workout.json under {date} targets {spec.get('date')}; "
-            "re-author it for the date you mean to push"
-        )
-    return spec, None
-
-
-def _dates_with_activity(conn: sqlite3.Connection, date: str) -> set[str]:
-    """The target date, when it already carries a logged activity in core."""
-    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
-    return {date} if row else set()
-
-
-def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None:
-    """Write the push.json receipt, stamped with the push time."""
-    receipt = result.as_receipt()
-    receipt["pushed_at"] = dt.datetime.now().isoformat(timespec="seconds")
-    (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))
+    """Adapt the shared spec reader to the repeat-workout tool's error response."""
+    try:
+        return push.load_spec(date, reports_dir), None
+    except push.PushRefused as exc:
+        return None, str(exc)
 
 
 # --- taking a pushed workout off a day (issue #74) --------------------------

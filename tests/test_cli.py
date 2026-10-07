@@ -86,6 +86,31 @@ def test_cli_push_refuses_a_spec_harder_than_the_plan_of_record(tmp_path, monkey
     assert not (day_dir / "push.json").exists()
 
 
+def test_cli_push_refuses_a_different_date_before_login(tmp_path, monkeypatch, capsys):
+    day_dir = tmp_path / PUSH_DATE
+    day_dir.mkdir()
+    (day_dir / "workout.json").write_text(json.dumps(run_spec(date="2026-07-18")))
+    monkeypatch.setattr(
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+    )
+    connections = []
+    pub = FakePublisher()
+
+    def connect(settings):
+        connections.append(settings)
+        return pub
+
+    monkeypatch.setattr(publish, "connect_publisher", connect)
+
+    code = cli.main(["push", "--date", PUSH_DATE, "--reports-dir", str(tmp_path), "--confirm"])
+
+    assert code == 1
+    assert connections == []
+    assert pub.workouts == {}
+    assert not (day_dir / "push.json").exists()
+    assert "targets 2026-07-18" in capsys.readouterr().out
+
+
 def test_parser_accepts_sync_command_with_optional_to_date():
     args = build_parser().parse_args(["sync", "--to", "2026-06-11"])
 

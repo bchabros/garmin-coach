@@ -51,7 +51,8 @@ endpoint->method map, the only garminconnect importer; `sync.py`
 `features.py`/`weekly.py`/`zones.py`/`overlap.py`/`periodize.py`/`snapshot.py` +
 the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 `thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
-(`author.py`/`exercises.py`/`hardness.py`/`publish.py`, the only Garmin write) - `mcp/`
+(`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
+`publish.py` for account policy and the only Garmin write) - `mcp/`
 (`server.py`/`tools.py`)
 - top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), and `retention.py`
   (manual report-file retention, with no DB or transport access).
@@ -74,6 +75,9 @@ ones sparingly:
 - Test normalizers through pure model functions (`core/models.py`).
 - Test persistence through `core/db.py` helpers and observable SQLite state.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
+- Test the complete workout push through `workouts.push.push_for_date` with real
+  SQLite, temporary specs/receipts, and a factory returning `FakePublisher`. CLI and
+  MCP only adapt confirmation and output; date and token refusals precede connection.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
 - Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --

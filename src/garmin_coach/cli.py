@@ -16,7 +16,7 @@ from .core import db, events as _events, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
-from .workouts import author as _author, publish
+from .workouts import author as _author, publish, push
 
 if TYPE_CHECKING:
     from .core.config import Settings
@@ -337,67 +337,43 @@ def _cmd_author(args: argparse.Namespace) -> int:
     return 0
 
 
-def _activity_dates(conn: sqlite3.Connection, date: str) -> set[str]:
-    """The target date, when it already carries a logged activity in core."""
-    row = conn.execute("SELECT 1 FROM activities WHERE date = ? LIMIT 1", (date,)).fetchone()
-    return {date} if row else set()
-
-
 def _cmd_push(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
-
-    spec_path = pathlib.Path(args.reports_dir) / args.date / "workout.json"
-    if not spec_path.exists():
-        conn.close()
-        print(f"push: no workout.json for {args.date}; run `garmin-coach author` first")
-        return 1
-    spec = json.loads(spec_path.read_text())
-    activity_dates = _activity_dates(conn, args.date)
-    planned = _plan.planned_intent(conn, args.date)
-    conn.close()
-
+    conn = _bootstrap_db(settings)
     try:
-        publisher = publish.connect_publisher(settings)
-    except Exception as exc:  # noqa: BLE001 - surface Garmin login failures as a failed push
-        print(f"push failed: login error: {exc}")
+        outcome = push.push_for_date(
+            conn,
+            date=args.date,
+            connect=lambda: publish.connect_publisher(settings),
+            reports_dir=args.reports_dir,
+            confirm=args.confirm,
+            replace=args.replace,
+        )
+    except push.PushRefused as exc:
+        print(f"push: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - a connection or receipt failure is observable
+        print(f"push failed: {exc}")
         return 2
-
-    result = publish.publish(
-        spec,
-        publisher,
-        confirm=args.confirm,
-        replace=args.replace,
-        activity_dates=activity_dates,
-        known_workout_id=publish.receipt_workout_id(spec_path.parent),
-        planned_intent=planned,
-    )
+    finally:
+        conn.close()
+    result = outcome.result
     for warning in result.warnings:
         print(f"  warning: {warning}")
     print(f"push [{result.action}]: {result.message}")
 
     if result.error is not None:
-        _write_receipt(result, spec_path.parent)
         print(f"push failed: {result.error}")
         return 2
     if result.applied:
-        _write_receipt(result, spec_path.parent)
-        print(f"push complete: {spec_path.parent / 'push.json'}")
+        if args.confirm:
+            print(f"push complete: {pathlib.Path(args.reports_dir) / args.date / 'push.json'}")
         return 0
     if args.confirm and result.action == "refuse":
         return 1
     if not args.confirm:
         print("push: dry-run (re-run with --confirm to write to your Garmin account)")
     return 0
-
-
-def _write_receipt(result: publish.PublishResult, out_dir: pathlib.Path) -> None:
-    """Write the push.json receipt, stamped with the push time."""
-    receipt = result.as_receipt()
-    receipt["pushed_at"] = _dt.datetime.now().isoformat(timespec="seconds")
-    (out_dir / "push.json").write_text(json.dumps(receipt, indent=2))
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:

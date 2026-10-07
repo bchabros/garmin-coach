@@ -12,14 +12,9 @@ import json
 import pathlib
 import sqlite3
 
-from . import charts, digest, thresholds as _thresholds
+from . import digest, thresholds as _thresholds
 from ..core.config import DEFAULT_RECHECK_DAYS
 from ..marts import snapshot
-
-
-def read_thresholds(conn: sqlite3.Connection) -> dict[str, float]:
-    """Read effective coach thresholds from defaults plus DB seed rows."""
-    return _thresholds.read(conn)
 
 
 def generate_report(
@@ -46,7 +41,10 @@ def generate_report(
     Returns:
         The path to the created report folder.
     """
-    thresholds = read_thresholds(conn)
+    # Chart initialization belongs to report generation, not module startup.
+    from . import charts
+
+    thresholds = _thresholds.read(conn)
     dg = digest.build_digest(
         conn,
         from_date=from_date,

@@ -62,6 +62,10 @@ accepted weeks, the first file error, conflicts with pushed workouts, and immedi
 mart refresh. Only `daily` defers that refresh until after sync, using its existing
 single complete mart pass. The core parser remains independent of marts and transport.
 
+Coach thresholds are read directly through `coach.thresholds.read()`. The report
+loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
+not initialize Matplotlib even when the CLI imports the report module.
+
 Data is medallion: **raw** `raw_payloads` (append-only, never overwrite -- reprocess
 without re-hitting Garmin) -> **core** (normalized, upserted by PK) -> **mart**
 `daily_metrics`/`weekly_metrics`/`athlete_zones` (recomputed, never edited). Derived values

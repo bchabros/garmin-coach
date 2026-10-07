@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import cli, daily, plan_changes
-from ..coach import digest, report
+from ..coach import digest, thresholds as _thresholds
 from ..core import db, events, manual_sets, plan
 from ..core.config import get_settings
 from ..etl import sync
@@ -108,7 +108,7 @@ def _rows(cur: sqlite3.Cursor) -> list[dict[str, Any]]:
 
 def _digest_for(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
     """Build the cited digest for a horizon with the stored thresholds."""
-    thresholds = report.read_thresholds(conn)
+    thresholds = _thresholds.read(conn)
     return digest.build_digest(
         conn, to_date=to_date, thresholds=thresholds, recheck_days=_recheck_days()
     )

@@ -11,7 +11,7 @@ import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from . import daily, plan_changes, retention
-from .coach import digest, report
+from .coach import digest, report, thresholds as _thresholds
 from .core import db, events as _events, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
@@ -285,7 +285,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
     db.bootstrap(conn)
 
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
-    thresholds = report.read_thresholds(conn)
+    thresholds = _thresholds.read(conn)
     dg = digest.build_digest(
         conn, to_date=to_date, thresholds=thresholds, recheck_days=settings.sync_recheck_days
     )

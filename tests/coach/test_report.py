@@ -63,6 +63,15 @@ def test_generate_report_without_status_row_skips_snapshot(conn, tmp_path):
     assert not (out / "snapshot.json").exists()  # nothing to emit, no crash
 
 
+def test_generate_report_writes_both_png_charts(conn, tmp_path):
+    _seed_daily(conn, "2026-07-08")
+
+    out = report.generate_report(conn, reports_dir=str(tmp_path))
+
+    for name in ("hrv_band.png", "acwr.png"):
+        assert (out / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 # --- Issue #36: the emitted standing states which horizon it belongs to ---
 
 

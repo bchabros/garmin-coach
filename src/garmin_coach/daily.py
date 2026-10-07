@@ -17,7 +17,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import plan_changes
-from .coach import digest, report
+from .coach import digest, thresholds as _thresholds
 from .core.config import DEFAULT_RECHECK_DAYS
 from .etl import sync
 from .marts import features
@@ -214,7 +214,7 @@ def run_daily(
 
     logger.info("daily: alert stage starting")
     try:
-        thr = thresholds if thresholds is not None else report.read_thresholds(conn)
+        thr = thresholds if thresholds is not None else _thresholds.read(conn)
         dg = digest.build_digest(conn, to_date=to_date, thresholds=thr, recheck_days=recheck_days)
         result.alerts = [s for s in dg["signals"] if s["severity"] in ALERT_SEVERITIES]
     except Exception as exc:  # noqa: BLE001 - non-fatal: data is already persisted

@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from . import plan_changes
 from .coach import digest, report
-from .core import plan
 from .core.config import DEFAULT_RECHECK_DAYS
 from .etl import sync
 from .marts import features
@@ -41,6 +41,8 @@ class DailyResult:
         errors: Human-readable messages for any stage that errored.
         fatal: Whether a core stage (sync or features) crashed.
         plans_imported: week_start of every plan file cached by the plans stage.
+        invalidated_pushes: Workouts the imported plans no longer allow; warnings
+            only, with no effect on the run's status or the Garmin account.
     """
 
     sync: sync.SyncResult | None = None
@@ -49,6 +51,7 @@ class DailyResult:
     errors: list[str] = field(default_factory=list)
     fatal: bool = False
     plans_imported: list[str] = field(default_factory=list)
+    invalidated_pushes: list[dict] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -71,7 +74,12 @@ class DailyResult:
 
 
 def _run_plans_stage(
-    conn: sqlite3.Connection, result: DailyResult, plans_dir: str | Path | None
+    conn: sqlite3.Connection,
+    result: DailyResult,
+    *,
+    plans_dir: str | Path | None,
+    reports_dir: str | Path,
+    data_start_date: str,
 ) -> None:
     """Cache every authored plan file into ``plan_week`` before the mart is rebuilt.
 
@@ -83,12 +91,26 @@ def _run_plans_stage(
     if plans_dir is None:
         return
     logger.info("daily: plans stage starting (dir=%s)", plans_dir)
-    try:
-        result.plans_imported = plan.import_dir(conn, plans_dir)
-    except plan.PlanParseError as exc:
-        logger.error("daily: plan import failed: %s", exc)
-        result.errors.append(f"plan import failed: {exc}")
-        return
+    imported = plan_changes.import_plans(
+        conn,
+        plans_dir=plans_dir,
+        reports_dir=reports_dir,
+        data_start_date=data_start_date,
+        rebuild=False,
+    )
+    result.plans_imported = imported.weeks
+    result.invalidated_pushes = imported.invalidated_pushes
+    if imported.error is not None:
+        logger.error("daily: plan import failed: %s", imported.error)
+        result.errors.append(f"plan import failed: {imported.error}")
+    for conflict in imported.invalidated_pushes:
+        logger.warning(
+            "daily: plan conflict: %s has a pushed %s workout, but the plan now says %s; "
+            "re-author and re-push it",
+            conflict["date"],
+            conflict["pushed_type"],
+            conflict["planned_intent"],
+        )
     logger.info("daily: plans stage done (imported=%d)", len(result.plans_imported))
 
 
@@ -113,6 +135,7 @@ def run_daily(
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
     plans_dir: str | Path | None = None,
+    reports_dir: str | Path = "reports",
     recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> DailyResult:
     """Run the nightly pipeline: plans -> sync -> features -> alert extraction.
@@ -134,13 +157,21 @@ def run_daily(
         plans_dir: Directory of authored ``<monday>_week.md`` plans; skipped when
             omitted. A parse error degrades the run rather than falling back
             silently to the template (issue #21).
+        reports_dir: Root of push receipts checked against accepted plans. Conflicts
+            are returned and logged without changing a successful run's status.
         recheck_days: Width of the sync stage's re-check window (issue #69).
 
     Returns:
         A :class:`DailyResult` with the sync outcome, alerts, and derived status.
     """
     result = DailyResult()
-    _run_plans_stage(conn, result, plans_dir)
+    _run_plans_stage(
+        conn,
+        result,
+        plans_dir=plans_dir,
+        reports_dir=reports_dir,
+        data_start_date=data_start_date,
+    )
 
     logger.info("daily: sync stage starting (to_date=%s)", to_date or "yesterday")
     try:

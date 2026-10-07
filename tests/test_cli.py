@@ -447,6 +447,38 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
     assert "quality" in out and "easy" in out
 
 
+def test_cli_partial_plan_import_names_the_saved_week_and_rebuilds_it(
+    tmp_path, monkeypatch, capsys
+):
+    path = _seeded_db(tmp_path, dates=("2026-07-13", "2026-07-19"))
+    plans = tmp_path / "plans"
+    plans.mkdir()
+    (plans / "2026-07-13_week.md").write_text(_week_file(["easy"] * 7), encoding="utf-8")
+    (plans / "2026-07-20_week.md").write_text("invalid plan", encoding="utf-8")
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
+    )
+
+    code = cli.main(
+        ["plan", "import", "--plans-dir", str(plans), "--reports-dir", str(tmp_path / "reports")]
+    )
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "plan import partial: 2026-07-13" in out
+    assert "2026-07-20_week.md" in out
+    conn = db.connect(str(path))
+    try:
+        rows = conn.execute(
+            "SELECT planned FROM weekly_plan_actual WHERE week_start = '2026-07-13'"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["easy"] * 7
+    finally:
+        conn.close()
+
+
 def test_parser_accepts_plan_import_with_week_and_dir():
     args = build_parser().parse_args(
         ["plan", "import", "--week", "2026-07-13", "--plans-dir", "/tmp/plans"]

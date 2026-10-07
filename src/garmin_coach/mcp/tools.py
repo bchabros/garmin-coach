@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from .. import cli, daily
+from .. import cli, daily, plan_changes
 from ..coach import digest, report
 from ..core import db, events, manual_sets, plan
 from ..core.config import get_settings
@@ -759,16 +759,16 @@ def plan_import(
     from it. ``invalidated_pushes`` names the days whose already-pushed workout the
     edited plan no longer allows (issue #22).
     """
-    try:
-        imported = plan.import_dir(conn, plans_dir, week=week)
-    except plan.PlanParseError as exc:
-        return _wrap(conn, _import_error(str(exc)))
-    if not imported:
+    result = plan_changes.import_plans(
+        conn,
+        plans_dir=plans_dir,
+        reports_dir=reports_dir,
+        week=week,
+        data_start_date=data_start_date,
+    )
+    if not result.weeks and result.error is None:
         return _wrap(conn, _import_error(f"no plan file for {week or 'any week'} in {plans_dir}"))
-
-    cli.rebuild_marts(conn, data_start_date=data_start_date)
-    conflicts = cli.invalidated_by_import(conn, imported, reports_dir)
-    return _wrap(conn, {"weeks": imported, "invalidated_pushes": conflicts, "error": None})
+    return _wrap(conn, result.as_data())
 
 
 def _import_error(message: str) -> dict[str, Any]:
@@ -822,21 +822,23 @@ def plan_confirm(
 
     try:
         path = plan.write_week_file(plans_dir, week_start, days)
-        plan.import_dir(conn, plans_dir, week=week_start)
-    except (FileExistsError, plan.PlanParseError) as exc:
+    except FileExistsError as exc:
         # A tool reports; it never raises out of the MCP call. Validation already
         # ran, so reaching here means the plans/ directory changed under us.
         return _wrap(conn, {"week_start": week_start, "written": False, "error": str(exc)})
-    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    result = plan_changes.import_plans(
+        conn,
+        plans_dir=plans_dir,
+        reports_dir=reports_dir,
+        week=week_start,
+        data_start_date=data_start_date,
+    )
     data = {
         "week_start": week_start,
         "written": True,
         "path": str(path),
         "days": resolved,
-        "invalidated_pushes": publish.invalidated_pushes(
-            reports_dir, plan.planned_by_date(conn, week_start)
-        ),
-        "error": None,
+        **result.as_data(),
     }
     return _wrap(conn, data)
 

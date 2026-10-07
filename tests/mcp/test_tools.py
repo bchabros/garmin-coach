@@ -1641,6 +1641,32 @@ def test_plan_import_reports_a_push_the_edited_plan_invalidates(conn, tmp_path):
     assert [c["date"] for c in out["invalidated_pushes"]] == [PUSH_DATE]
 
 
+def test_partial_plan_import_reports_accepted_weeks_conflicts_and_fresh_metrics(conn, tmp_path):
+    plans, reports = tmp_path / "plans", tmp_path / "reports"
+    plans.mkdir()
+    reports.mkdir()
+    _plan_file(plans)
+    _plan_file(plans, week_start="2026-07-20", intents=["luz"] * 7)
+    _seed_pushed(reports, session_type="tempo")
+    for i in range(7):
+        _seed_core_day(
+            conn,
+            (dt.date.fromisoformat(WEEK) + dt.timedelta(days=i)).isoformat(),
+            activity_id=900 + i,
+        )
+
+    out = tools.plan_import(
+        conn, plans_dir=str(plans), reports_dir=str(reports), data_start_date=DATA_START
+    )["data"]
+
+    assert out["weeks"] == [WEEK]
+    assert "2026-07-20_week.md" in out["error"]
+    assert [c["date"] for c in out["invalidated_pushes"]] == [PUSH_DATE]
+    grid = tools.get_weekly(conn, week_start=WEEK)["data"]["plan_actual"]
+    assert len(grid) == 7
+    assert grid[4]["planned"] == "easy"
+
+
 def test_plan_import_without_a_plan_file_says_so(conn, tmp_path):
     out = tools.plan_import(conn, plans_dir=str(tmp_path), data_start_date=DATA_START)["data"]
 

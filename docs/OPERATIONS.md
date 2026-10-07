@@ -52,12 +52,16 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   so an edit takes effect by morning at the latest. A revision that leaves an
   already-pushed workout harder than the new plan prints a `conflict:` line naming that
   date (issue #22) -- the import still succeeds; re-author and re-push that day. It reads
-  the receipts under `--reports-dir` (default `./reports`); the nightly scan does not
-  perform this check.
+  the receipts under `--reports-dir` (default `./reports`), as does the nightly scan.
+  If a later file is malformed, earlier accepted weeks stay saved and their metrics
+  are rebuilt; the command names those weeks and the failing file and exits 1.
 - **Nightly:** `daily` (or `scripts/daily.sh`) chains plans -> sync -> features -> alerts.
   Alerts are the digest's `warn`/`alert` signals, logged; **no charts** on the nightly path.
   A malformed plan file **degrades** the run (exit 1) and names the file -- it never falls
-  back silently to the template.
+  back silently to the template. Accepted weeks remain visible in `plans_imported`.
+  Plan conflicts appear in `invalidated_pushes` and warning logs; they leave an otherwise
+  successful run `ok` (exit 0) and never modify Garmin. Use `daily --reports-dir` for
+  receipts outside the default report directory. The marts are rebuilt once, after sync.
 - **Logging a circuit's stations:** a Hyrox / group-HIIT session reaches the DB as one
   nameless `UNKNOWN` set, so the movement-overlap read cannot see what it loaded.
   `poetry run garmin-coach log-sets --activity <id> SLED_PULL SANDBAG_CARRY ...` writes

@@ -10,7 +10,7 @@ import pathlib
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
-from . import daily, retention
+from . import daily, plan_changes, retention
 from .coach import digest, report
 from .core import db, events as _events, manual_sets, plan as _plan
 from .core.config import get_settings
@@ -395,53 +395,40 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
-def invalidated_by_import(
-    conn: sqlite3.Connection, weeks: list[str], reports_dir: str
-) -> list[dict[str, Any]]:
-    """The days of the imported weeks whose pushed workout the new plan no longer allows.
-
-    Args:
-        conn: Open SQLite connection with the imported weeks cached.
-        weeks: The week starts that were just imported.
-        reports_dir: Root of the dated report folders holding the push receipts.
-
-    Returns:
-        One conflict per offending day (issue #22), oldest week first.
-    """
-    return [
-        conflict
-        for week in weeks
-        for conflict in publish.invalidated_pushes(reports_dir, _plan.planned_by_date(conn, week))
-    ]
-
-
 def _cmd_plan(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = _bootstrap_db(settings)
     plans_dir = args.plans_dir or settings.plans_dir
 
     try:
-        imported = _plan.import_dir(conn, plans_dir, week=args.week)
-    except _plan.PlanParseError as exc:
+        result = plan_changes.import_plans(
+            conn,
+            plans_dir=plans_dir,
+            reports_dir=args.reports_dir,
+            week=args.week,
+            data_start_date=settings.data_start_date,
+        )
+    finally:
         conn.close()
-        print(f"plan import failed: {exc}")
-        return 1
-    if imported:
-        rebuild_marts(conn, data_start_date=settings.data_start_date)
-    conflicts = invalidated_by_import(conn, imported, args.reports_dir)
-    conn.close()
-
-    if not imported:
+    if result.error is not None:
+        print(f"plan import failed: {result.error}")
+    if not result.weeks:
+        if result.error is not None:
+            return 1
         target = args.week or "any week"
         print(f"plan import: no plan file for {target} in {plans_dir}")
         return 1
-    print(f"plan import complete: {', '.join(imported)} ({len(imported)} week(s) from {plans_dir})")
-    for conflict in conflicts:
+    status = "partial" if result.error else "complete"
+    print(
+        f"plan import {status}: {', '.join(result.weeks)} "
+        f"({len(result.weeks)} week(s) from {plans_dir})"
+    )
+    for conflict in result.invalidated_pushes:
         print(
             f"  conflict: {conflict['date']} has a pushed {conflict['pushed_type']} workout, "
             f"but the plan now says {conflict['planned_intent']}; re-author and re-push it"
         )
-    return 0
+    return 1 if result.error else 0
 
 
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
@@ -609,6 +596,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         data_start_date=settings.data_start_date,
         to_date=args.to_date,
         plans_dir=settings.plans_dir,
+        reports_dir=args.reports_dir,
         recheck_days=settings.sync_recheck_days,
     )
     conn.close()
@@ -887,6 +875,9 @@ def build_parser() -> argparse.ArgumentParser:
     dl = sub.add_parser("daily", help="Nightly run: sync -> features -> alerts (for cron/launchd).")
     dl.add_argument(
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
+    )
+    dl.add_argument(
+        "--reports-dir", default="./reports", help="Root of push receipts for plan conflicts."
     )
     dl.set_defaults(func=_cmd_daily)
 

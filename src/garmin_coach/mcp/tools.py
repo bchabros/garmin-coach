@@ -30,7 +30,7 @@ from ..core import db, events, manual_sets, plan
 from ..core.config import get_settings
 from ..etl import sync
 from ..etl.sync import GarminClient
-from ..marts import periodize, snapshot
+from ..marts import features, periodize, snapshot
 from ..workouts import author, publish, push
 
 # Mart fields that accumulate during the day; they are only final after the
@@ -571,7 +571,7 @@ def repair_confirm(
         "error": None,
     }
     try:
-        cli.rebuild_marts(conn, data_start_date=data_start_date)
+        features.rebuild_marts(conn, data_start_date=data_start_date)
         data["features_ok"] = True
     except Exception as exc:  # noqa: BLE001 - the pull landed; say the rebuild did not
         data["error"] = f"data pulled, but the mart rebuild failed: {exc}"
@@ -692,7 +692,7 @@ def event_add(
         )
     except ValueError as exc:
         return _wrap(conn, _event_error(str(exc)))
-    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    features.rebuild_marts(conn, data_start_date=data_start_date)
     return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
 
 
@@ -729,7 +729,7 @@ def event_update(
         )
     except ValueError as exc:
         return _wrap(conn, _event_error(str(exc)))
-    cli.rebuild_marts(conn, data_start_date=data_start_date)
+    features.rebuild_marts(conn, data_start_date=data_start_date)
     return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
 
 
@@ -873,9 +873,10 @@ def _repeat_spec(
     conn: sqlite3.Connection, date: str, reuse_from: str, reports_dir: str
 ) -> dict[str, Any]:
     """Copy the spec authored for one day onto another, then write it there."""
-    source, error = _load_spec(reuse_from, reports_dir)
-    if source is None:
-        return {"spec": None, "error": error}
+    try:
+        source = push.load_spec(reuse_from, reports_dir)
+    except push.PushRefused as exc:
+        return {"spec": None, "error": str(exc)}
     try:
         spec = author.copy_to_date(
             source,
@@ -1011,14 +1012,6 @@ def push_confirm(
         "error": result.error,
     }
     return _wrap(conn, data)
-
-
-def _load_spec(date: str, reports_dir: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Adapt the shared spec reader to the repeat-workout tool's error response."""
-    try:
-        return push.load_spec(date, reports_dir), None
-    except push.PushRefused as exc:
-        return None, str(exc)
 
 
 # --- taking a pushed workout off a day (issue #74) --------------------------

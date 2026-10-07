@@ -42,21 +42,6 @@ def _check_range(name: str, value: int | None, lo: int, hi: int) -> None:
         raise ValueError(f"{name} must be between {lo} and {hi} (got {value})")
 
 
-def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
-    """Recompute every mart after a write that changed what they are built from.
-
-    A race date, a revised plan or a repaired day changes derived rows far from the
-    one it touched - the block calendar, plan-vs-actual - so the write is only half
-    done until the marts agree with it, and waiting for the nightly run would mean a
-    day of stale reads (issue #72).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        data_start_date: First real-data date, passed to the recompute.
-    """
-    features.features(conn, data_start_date=data_start_date)
-
-
 def log_session_rpe(
     conn: sqlite3.Connection,
     *,
@@ -367,7 +352,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
         return 2
     if result.applied:
         if args.confirm:
-            print(f"push complete: {pathlib.Path(args.reports_dir) / args.date / 'push.json'}")
+            print(f"push complete: {outcome.receipt_path}")
         return 0
     if args.confirm and result.action == "refuse":
         return 1
@@ -541,7 +526,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
-            rebuild_marts(conn, data_start_date=settings.data_start_date)
+            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event add complete: {args.type} on {args.date} ({args.status})"
         elif args.event_command == "update":
             _events.update_goal_event(
@@ -555,7 +540,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
                 target=args.target,
                 note=args.note,
             )
-            rebuild_marts(conn, data_start_date=settings.data_start_date)
+            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
             message = f"event update complete: id={args.event_id}"
         else:
             exit_code = _list_events(conn)

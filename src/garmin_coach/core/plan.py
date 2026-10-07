@@ -76,7 +76,11 @@ def intent_class(intent: str | None) -> str | None:
 
 
 class PlanParseError(ValueError):
-    """A plan file failed, with the weeks accepted before it when importing."""
+    """A plan file could not be parsed or imported.
+
+    ``imported_weeks`` lists the weeks a directory import had already accepted
+    before this file failed, so callers can keep reporting them.
+    """
 
     def __init__(self, message: str, *, imported_weeks: list[str] | None = None) -> None:
         super().__init__(message)
@@ -507,14 +511,13 @@ def write_week_file(
     return path
 
 
-def _monday_or_raise(week_start: str, context: str | None = None) -> _dt.date:
-    where = f"{context}: " if context else ""
+def _monday_or_raise(week_start: str) -> _dt.date:
     try:
         day = _dt.date.fromisoformat(week_start)
     except ValueError as exc:
-        raise PlanParseError(f"{where}invalid week_start {week_start!r}") from exc
+        raise PlanParseError(f"invalid week_start {week_start!r}") from exc
     if day.weekday() != 0:
-        raise PlanParseError(f"{where}week_start {week_start} is not a Monday")
+        raise PlanParseError(f"week_start {week_start} is not a Monday")
     return day
 
 

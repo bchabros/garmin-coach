@@ -74,5 +74,5 @@ def import_plans(
         )
     ]
     if weeks and rebuild:
-        features.features(conn, data_start_date=data_start_date)
+        features.rebuild_marts(conn, data_start_date=data_start_date)
     return PlanImportResult(weeks=weeks, invalidated_pushes=conflicts, error=error)

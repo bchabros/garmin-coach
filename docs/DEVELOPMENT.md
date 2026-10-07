@@ -54,8 +54,9 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 (`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
 `publish.py` for account policy and the only Garmin write) - `mcp/`
 (`server.py`/`tools.py`)
-- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), and `retention.py`
-  (manual report-file retention, with no DB or transport access).
+- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `plan_changes.py`
+  (the complete plan import outcome shared by CLI, MCP and the nightly run), and
+  `retention.py` (manual report-file retention, with no DB or transport access).
 
 `plan_changes.import_plans()` owns the plan import outcome and its consequences:
 accepted weeks, the first file error, conflicts with pushed workouts, and immediate

@@ -86,6 +86,16 @@ def test_cli_push_refuses_a_spec_harder_than_the_plan_of_record(tmp_path, monkey
     assert not (day_dir / "push.json").exists()
 
 
+def test_cli_push_prints_the_receipt_it_wrote(tmp_path, monkeypatch, capsys):
+    pub = FakePublisher()
+
+    code, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
+
+    assert code == 0
+    assert (day_dir / "push.json").exists()
+    assert f"push complete: {day_dir / 'push.json'}" in capsys.readouterr().out
+
+
 def test_cli_push_refuses_a_different_date_before_login(tmp_path, monkeypatch, capsys):
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir()

@@ -72,6 +72,7 @@ def test_partial_push_is_recorded_and_retry_finishes_without_another_upload(conn
     )
 
     receipt = json.loads((day / "push.json").read_text())
+    assert first.receipt_path == day / "push.json"
     assert first.result.applied is False
     assert receipt["workout_id"] == 1000
     assert receipt["date"] == DATE
@@ -104,4 +105,5 @@ def test_preview_of_an_existing_push_preserves_its_receipt(conn, tmp_path):
     preview = push.push_for_date(conn, date=DATE, connect=lambda: pub, reports_dir=tmp_path)
 
     assert preview.result.action == "noop"
+    assert preview.receipt_path is None
     assert path.read_bytes() == before

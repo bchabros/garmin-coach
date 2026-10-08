@@ -14,11 +14,13 @@ identifies version 26.930.61225, build 13232; Claude Code's transcript identifie
 omitted the report's required final disclaimer. Plan/profile previews stopping
 before writes are verified in all three clients; Claude's explicit rerun corrected
 its initial profile/operation explanation. The final Work read from the existing
-athlete installation has demonstrated natural coach activation and actual tool
-reads, but its trace also contains a local plan import. A strictly read-only rerun
-remains pending.
-Record results and limitations in [the validation record](WORK_VALIDATION.md); #82
-stays incomplete until the remaining workflow and personal-read results exist.
+athlete installation passed an explicit read-only rerun: the app trace confirms
+only digest/snapshot MCP calls, correct project/branch, profile access, freshness
+handling and the final disclaimer. The earlier natural-activation turn included a
+local plan import and is recorded separately.
+See [the validation record](WORK_VALIDATION.md) for observed results and limitations.
+Implementation/client acceptance is complete; #82 remains open for code review
+and the PR/merge workflow.
 
 ## Prepare the runtime
 

@@ -33,7 +33,7 @@ regression run passed 182 tests with the same profile skip.
 | Fresh local Work development | Passed, user-reported and diff verified | Isolated checkout; guidance/rules/development guide read; schema mirror test explained; documentation-only diff; relevant offline test passed before and after. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fixture plan/profile previews in Work and desktop Codex | Passed, user-reported; files checked | Both report a successful plan_preview, show all seven days and exact profile diffs, describe confirmation/token rails, and stop before writes. |
 | Fixture plan/profile preview in Claude Code | Passed on explicit rerun, user-reported | Actual coach call, complete result/table, exact profile diff with final Decyzje section, corrected preview/confirm explanation; stopped before writes. Original deviations remain documented. |
-| Fresh local Work personal-data read | Natural routing/read observed; read-only rerun pending | User-supplied answer and app trace confirm coach/profile/report reads and real MCP digest/snapshot calls. The trace also contains plan_import, so the no-write acceptance is not established. |
+| Fresh local Work personal-data read | Passed on explicit read-only rerun; trace verified | Correct original checkout/feature branch, canonical router/report/profile read, only real get_digest/get_snapshot calls, freshness/profile-age explanation and verbatim disclaimer; no write or Garmin call in the accepted turn. |
 
 Computer Use refused access to the target bundle: "Computer Use is not allowed to
 use the app 'com.openai.codex' for safety reasons." The implementation does not work
@@ -190,7 +190,9 @@ diffs stopping before confirmation; Claude's explicit rerun supplies the missing
 evidence and corrects its explanation. T3 is complete. Keep
 push/removal transport and accepted/rejected token behavior at the existing offline
 fake-publisher seam; no real Garmin preview or account write is required. The final
-personal-installation read in fresh local Work (T5) remains pending.
+personal-installation read in local Work (T5) passed on the explicit read-only
+rerun recorded below. T1-T5 implementation acceptance is complete; code review
+and PR stages remain separate.
 
 ## Personal-installation acceptance preparation
 
@@ -217,8 +219,8 @@ is excluded from acceptance documentation commits.
 
 Start a fresh local Work conversation with `/Users/Chabi/garmin-coach` primary,
 verify `feat/work-coach-integration`, read the canonical router/report reference
-and existing profile, and call only `get_digest` / `get_snapshot`. T5 remains
-pending until that actual client result is supplied. This original checkout holds
+and existing profile, and call only `get_digest` / `get_snapshot`. The accepted
+read-only turn described below exercised this setup. This original checkout holds
 personal data; do not use it as an isolated fixture development environment.
 
 ## First personal-installation Work observation (2026-10-08)
@@ -244,7 +246,7 @@ again omits the report reference's required final verbatim disclaimer. No full
 freshness envelope or explicit prohibition of local writes was supplied in the
 short user prompt.
 
-**T5 is not yet complete.** `plan_import` writes the local plan cache and may
+**That first turn did not complete T5.** `plan_import` writes the local plan cache and may
 recompute marts. Its completed invocation means this conversation cannot establish
 an acceptance run limited to reads; the trace does not prove whether particular
 cache values changed. The normal report procedure explains why import was selected,
@@ -253,6 +255,36 @@ only `get_digest` and `get_snapshot` allowed, expressly excluding `plan_import`,
 all other writes and Garmin contact. Request the project/branch identity, profile
 access, freshness fields and final disclaimer in that read-only response. Do not
 publish private athlete values or profile content in the issue.
+
+## Accepted personal-installation Work read-only rerun (2026-10-08)
+
+The user supplied the explicit read-only rerun from local Work in
+`/Users/Chabi/garmin-coach`, reporting `feat/work-coach-integration`. The supported
+app thread reader independently verified the latest completed turn of the same
+freshly opened conversation, "Sprawdź moją formę". This was a new read-only turn
+within that conversation, not a claim that its earlier import never happened.
+
+The actual trace shows a successful shell command limited to `pwd`,
+`git branch --show-current` and reads of the canonical coach router, reporting
+reference and existing profile. The only MCP calls in this accepted turn are
+completed `coach.get_digest({})` and `coach.get_snapshot({})`. There is no
+`plan_import`, report generation, write tool or Garmin contact in that turn.
+The coordinating checkout also remains on the stated feature branch.
+
+The answer identifies both read horizons as 2026-10-08, explicitly explains the
+included current day's partial fields, distinguishes the empty unconfirmed-day
+list from a guarantee of completeness, and compares the profile's actual date
+with the data horizon against the three-week threshold. It says that a local
+read does not confirm a fresh Garmin synchronization. The final digest disclaimer
+is reproduced verbatim. Private athlete values and profile content are omitted
+from this validation record and the issue.
+
+**Implementation acceptance:** T1-T5 are complete. Project discovery and fixture
+reads work in all three clients, plan/profile previews preserve their approval
+stops, Work development was demonstrated in an isolated checkout, and the
+personal-installation read is verified in Work. Prior narrative deviations remain
+visible above rather than being erased by the rerun. The issue remains open until
+the requested review and PR/merge workflow is complete; no PR has been created.
 
 ## Record application acceptance
 
@@ -265,5 +297,6 @@ For Work development, also record the isolated checkout, inspected files,
 reviewable test-only change, command and exit result. Keep personal records,
 credentials and profile contents out of this document.
 
-**Completion:** #82 remains open until its fresh Work coaching and development
-acceptance and the other client compatibility checks have been completed.
+**Completion:** implementation and client acceptance are complete. #82 remains
+open for the requested code-review and PR/merge stages. Stop after implementation
+with the user-facing summary before starting the next stage.

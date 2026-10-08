@@ -29,6 +29,9 @@ poetry.lock.bak
 # Claude Code per-machine settings (grows with every approved command)
 .claude/settings.local.json
 
+# Machine-specific project MCP configuration generated for local clients.
+.codex/config.toml
+
 # IDEs
 .idea/
 *.diff

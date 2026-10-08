@@ -593,6 +593,11 @@ whether the session happened, and offer gap repair when it did.
 
 ### Registering the server in a client
 
+For the local Work/Codex/Claude Code project setup, use
+[the guarded launch and validation instructions](CHATGPT_WORK.md). They verify an
+existing installation before launching and separate local protocol success from
+fresh-client acceptance. The legacy registrations below retain their prior behavior.
+
 The `.mcp.json` in the repo root is a **Claude Code** convention; other clients need
 their own setup. In all cases the `garmin-coach-mcp` script must exist first
 (`poetry install` registers it).

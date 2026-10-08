@@ -54,9 +54,17 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 (`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
 `publish.py` for account policy and the only Garmin write) - `mcp/`
 (`server.py`/`tools.py`)
-- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `plan_changes.py`
+- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `project.py`
+  (guarded local coach launch, configuration, diagnostics and synthetic fixtures), `plan_changes.py`
   (the complete plan import outcome shared by CLI, MCP and the nightly run), and
   `retention.py` (manual report-file retention, with no DB or transport access).
+
+`scripts/coach_project.py` selects the source checkout's Poetry interpreter before
+entering `project.py`, including from GUI clients or an unrelated working directory.
+The guarded launch rejects conflicting database/plan environment paths and uses
+`core.db.validate_schema()` to compare the existing installation's tables, views,
+columns and primary keys with the packaged schema in memory. It never migrates
+the installation; recovery uses the explicit offline `garmin-coach features` command.
 
 `plan_changes.import_plans()` owns the plan import outcome and its consequences:
 accepted weeks, the first file error, conflicts with pushed workouts, and immediate
@@ -84,6 +92,11 @@ ones sparingly:
 
 - Test normalizers through pure model functions (`core/models.py`).
 - Test persistence through `core/db.py` helpers and observable SQLite state.
+- Test project setup through `scripts/coach_project.py` and real stdio MCP on
+  temporary installations (`tests/test_coach_project.py`): selected configuration,
+  environment-path conflicts, schema compatibility and preservation, client config
+  round-trips, and actionable prerequisite failures. Inherited operational settings
+  are removed; conflict tests inject only explicit temporary installation paths.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
 - Test the complete workout push through `workouts.push.push_for_date` with real
   SQLite, temporary specs/receipts, and a factory returning `FakePublisher`. CLI and

@@ -43,13 +43,20 @@ runtime version and data dates; it omits athlete numbers, profile text and secre
 `client_acceptance: not_run` means only the local protocol was checked.
 
 The guarded `serve` launch selects the project before reading configuration and
-requires an existing database and schema. It does not bootstrap or migrate it.
+requires an existing database compatible with the packaged tables, views, columns
+and primary keys. Pending schema migrations are refused before serving tools, with
+an instruction to run `poetry run garmin-coach features` offline from the intended
+project. The launcher does not bootstrap or migrate the installation.
 The legacy bare `garmin-coach-mcp` entry point retains its previous behavior.
 Use the guarded configuration below for this setup.
 
-Explicit runtime environment overrides still take precedence over the selected
-project's configuration. Review any deliberately set `DB_PATH` before running a
-check; the launcher does not change an operator's overrides.
+The guarded launcher refuses inherited `DB_PATH` or `PLANS_DIR` values that resolve
+to paths different from the selected project's `.env` configuration (or defaults
+when absent). Unset the conflicting variable or intentionally configure the desired
+paths in that project's `.env`; paths outside the project are allowed when explicitly
+configured there. Equivalent absolute, relative and symlink paths are accepted.
+Other runtime environment overrides and the legacy bare entry point retain their
+existing precedence. The launcher does not overwrite these path overrides or configuration files.
 
 ## Connect a client manually
 
@@ -187,7 +194,8 @@ are required before #82 is complete.
 | Project guidance missing | Select the actual project/fixture folder, not an unrelated launch directory. |
 | Skill or references missing | Restore/install the complete canonical coach directory and regenerate an uploaded copy after changes. |
 | Database missing | Select the existing installation; a new installation requires its separately documented import. The check does not create one. |
-| Schema or coach data missing | Run the documented offline `poetry run garmin-coach features` from the intended installation after import; repeat the check. |
+| Installation conflict | Unset the named `DB_PATH` or `PLANS_DIR` override, or intentionally configure that same path in the selected project's `.env`; repeat the check. |
+| Schema unavailable/incompatible or coach data missing | From the intended project, explicitly run offline `poetry run garmin-coach features` after import; repeat the check. If incompatibility persists, inspect the schema or restore a compatible backup. The launcher never migrates it. |
 | MCP connection failed | Check the generated command, selected folder, installed dependencies and client trust/activation; repeat local check before the fresh-chat test. |
 | Local check passes, Work cannot use it | Record the application version and unavailable capability; verify the Work-specific supported route. |
 

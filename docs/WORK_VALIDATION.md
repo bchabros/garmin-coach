@@ -310,6 +310,33 @@ Both P2 findings and the duplication have been corrected.
 The user's pre-existing glossary edit is excluded from the feature and correction
 commits. The pull request closes #82 when merged.
 
+## Follow-up review hardening (2026-10-08)
+
+PR #90's follow-up review identified incomplete schema validation and the risk of
+inherited database/plan paths selecting another installation. The earlier setup
+intentionally preserved environment precedence; the guarded route now rejects
+conflicting `DB_PATH` and `PLANS_DIR` values instead. Equivalent resolved paths
+are accepted, including symlinks. Custom paths outside the folder remain supported
+when explicitly configured in the selected project's `.env`. Other settings and
+the bare MCP entry point retain their existing behavior.
+
+The guard compares packaged tables, views, column definitions and primary keys
+with the installation through a read-only connection. Its reference schema is
+created only in memory. Missing migration columns or the legacy raw identity are
+refused before either `check` or `serve` starts tool use, with explicit offline
+recovery instructions. It never migrates the checked installation. The development
+module map and setup/recovery instructions now describe these responsibilities.
+
+Before the corrections, checks succeeded while reading a conflicting temporary
+database and while a snapshot migration column was absent. Regression tests now
+verify refusal, unchanged database bytes, equivalent/custom paths, compatible schema
+extensions, and successful connection after an explicit fixture migration.
+The project tests pass: **30 passed**. Full isolated `PYTHONPATH=src task check`
+passes: **1037 passed, 1 skipped**, lint, docstrings and mypy. Formatting and lint
+also pass. All follow-up validation used temporary installations without personal
+records or live Garmin transport. Earlier in-client observations above predate this
+hardening; they have not been rerun or presented as new client observations.
+
 ## Record application acceptance
 
 For each client, record the date, application/version, product mode, execution

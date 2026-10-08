@@ -49,15 +49,16 @@ def external_installation(project, monkeypatch):
     before = database.read_bytes()
     monkeypatch.setenv("DB_PATH", str(database))
     monkeypatch.setenv("PLANS_DIR", str(project.parent / "unrelated plans"))
-    yield
+    yield {"DB_PATH": str(database), "PLANS_DIR": str(project.parent / "unrelated plans")}
     assert database.read_bytes() == before
 
 
-def run_command(project, args):
+def run_command(project, args, *, env_overrides=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GARMIN")}
     env.pop("DB_PATH", None)
     env.pop("PLANS_DIR", None)
     env["PYTHONPATH"] = str(ROOT / "src")
+    env.update(env_overrides or {})
     return subprocess.run(
         args,
         cwd=project.parent,
@@ -68,9 +69,11 @@ def run_command(project, args):
     )
 
 
-def run_launcher(project, command, *args):
+def run_launcher(project, command, *args, env_overrides=None):
     return run_command(
-        project, ["python3", str(LAUNCHER), command, "--project", str(project), *args]
+        project,
+        ["python3", str(LAUNCHER), command, "--project", str(project), *args],
+        env_overrides=env_overrides,
     )
 
 
@@ -89,6 +92,47 @@ def test_check_reads_the_selected_installation_over_stdio_from_another_directory
     assert "hrv" not in output
     assert (project / "data" / "garmin.db").read_bytes() == before
     assert not (project.parent / "data").exists()
+
+
+@pytest.mark.parametrize("setting", ["DB_PATH", "PLANS_DIR"])
+@pytest.mark.parametrize("command", ["check", "serve"])
+def test_guarded_launch_refuses_conflicting_installation_paths(
+    project, external_installation, setting, command
+):
+    before = (project / "data" / "garmin.db").read_bytes()
+    result = run_launcher(project, command, env_overrides={setting: external_installation[setting]})
+    assert result.returncode == 1
+    assert "Installation conflict" in result.stderr
+    assert setting in result.stderr
+    assert "unset" in result.stderr
+    assert result.stdout == ""
+    assert (project / "data" / "garmin.db").read_bytes() == before
+
+
+def test_guarded_launch_accepts_equivalent_environment_paths(project):
+    alias = project.parent / "project alias"
+    alias.symlink_to(project, target_is_directory=True)
+    result = run_launcher(
+        project,
+        "check",
+        env_overrides={
+            "DB_PATH": str(alias / "data" / "garmin.db"),
+            "PLANS_DIR": str(alias / "plans"),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data_through"] == "2026-07-03"
+
+
+def test_guarded_launch_uses_custom_paths_explicitly_configured_in_project(
+    project, external_installation
+):
+    (project / ".env").write_text(
+        f"DB_PATH={external_installation['DB_PATH']}\nPLANS_DIR={external_installation['PLANS_DIR']}\n"
+    )
+    result = run_launcher(project, "check", env_overrides=external_installation)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data_through"] == "2026-07-04"
 
 
 def test_project_clients_discover_the_canonical_skill_and_all_its_resources():
@@ -199,6 +243,59 @@ def test_uninitialized_database_is_preserved_instead_of_seeded(project):
     assert result.returncode == 1
     assert "schema unavailable" in result.stderr
     assert database.read_bytes() == b""
+
+
+@pytest.mark.parametrize("command", ["check", "serve"])
+@pytest.mark.parametrize(
+    "legacy_sql",
+    [
+        "ALTER TABLE athlete_status DROP COLUMN plan_source_today",
+        "ALTER TABLE daily_metrics DROP COLUMN load_strength",
+        "DROP TABLE raw_payloads; CREATE TABLE raw_payloads ("
+        "fetched_at TEXT NOT NULL, endpoint TEXT NOT NULL, ref_date TEXT NOT NULL, "
+        "payload TEXT NOT NULL, PRIMARY KEY (endpoint, ref_date, fetched_at)); "
+        "INSERT INTO raw_payloads VALUES ('2026-07-03T12:00:00', 'fixture', '2026-07-03', '{}')",
+    ],
+    ids=["snapshot-column", "strength-column", "raw-identity"],
+)
+def test_guarded_launch_refuses_a_pending_schema_migration_without_writing(
+    project, command, legacy_sql
+):
+    database = project / "data" / "garmin.db"
+    conn = db.connect(str(database))
+    conn.executescript(legacy_sql)
+    conn.commit()
+    conn.close()
+    before = database.read_bytes()
+    result = run_launcher(project, command)
+    assert result.returncode == 1
+    assert "schema" in result.stderr and "incompatible" in result.stderr
+    assert "poetry run garmin-coach features" in result.stderr
+    assert result.stdout == ""
+    assert database.read_bytes() == before
+
+
+def test_guarded_launch_accepts_an_explicitly_migrated_database(project):
+    conn = db.connect(str(project / "data" / "garmin.db"))
+    conn.execute("ALTER TABLE athlete_status DROP COLUMN plan_source_today")
+    conn.commit()
+    db.bootstrap(conn)
+    conn.close()
+    result = run_launcher(project, "check")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data_through"] == "2026-07-03"
+
+
+def test_guarded_launch_preserves_compatible_schema_extensions(project):
+    database = project / "data" / "garmin.db"
+    conn = db.connect(str(database))
+    conn.execute("ALTER TABLE daily_metrics ADD COLUMN local_note TEXT")
+    conn.commit()
+    conn.close()
+    before = database.read_bytes()
+    result = run_launcher(project, "check")
+    assert result.returncode == 0, result.stderr
+    assert database.read_bytes() == before
 
 
 def test_sparse_installation_reports_missing_coach_data(project):

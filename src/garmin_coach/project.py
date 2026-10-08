@@ -16,8 +16,31 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from pydantic_settings import DotEnvSettingsSource
 
-from .core.config import get_settings
+from .core import db
+from .core.config import Settings, get_settings
+
+
+def _installation_settings(root: pathlib.Path) -> Settings:
+    try:
+        settings = get_settings()
+        configured = DotEnvSettingsSource(Settings, env_file=root / ".env")()
+    except Exception:
+        raise ValueError(
+            "Invalid runtime settings; review the selected project's configuration."
+        ) from None
+    for name in ("db_path", "plans_dir"):
+        expected = configured.get(name, Settings.model_fields[name].default)
+        configured_path = pathlib.Path(expected).expanduser().resolve()
+        runtime_path = pathlib.Path(getattr(settings, name)).expanduser().resolve()
+        if runtime_path != configured_path:
+            variable = name.upper()
+            raise ValueError(
+                f"Installation conflict: {variable} differs from the selected project's "
+                f"configuration; unset {variable} or intentionally update that project's .env."
+            )
+    return settings
 
 
 def _prepare(root: pathlib.Path) -> None:
@@ -31,12 +54,7 @@ def _prepare(root: pathlib.Path) -> None:
     if not references or any(not (skill / name).is_file() for name in references):
         raise ValueError("Coach references missing; install the complete canonical skill.")
     os.chdir(root)
-    try:
-        settings = get_settings()
-    except Exception:
-        raise ValueError(
-            "Invalid runtime settings; review the selected project's configuration."
-        ) from None
+    settings = _installation_settings(root)
     path = pathlib.Path(settings.db_path).expanduser().resolve()
     if not path.is_file():
         raise ValueError(
@@ -44,13 +62,15 @@ def _prepare(root: pathlib.Path) -> None:
         )
     try:
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+            db.validate_schema(conn)
             horizon = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
             snapshot = conn.execute(
                 "SELECT computed_at FROM athlete_status WHERE id = 1"
             ).fetchone()
     except sqlite3.Error:
         raise ValueError(
-            "Database schema unavailable; run the documented offline features command."
+            "Database schema unavailable or incompatible; from the selected project run "
+            "poetry run garmin-coach features offline, then repeat check."
         ) from None
     if horizon is None or not snapshot or snapshot[0] is None:
         raise ValueError(
@@ -134,7 +154,6 @@ def _fixture(root: pathlib.Path) -> None:
     )
     (root / ".env").write_text("DB_PATH=./data/garmin.db\nDATA_START_DATE=2026-06-08\n")
     (root / "data").mkdir()
-    from .core import db
     from .marts import snapshot
 
     conn = db.connect(str(root / "data" / "garmin.db"))

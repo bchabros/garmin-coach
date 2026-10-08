@@ -12,6 +12,7 @@ import datetime as _dt
 import hashlib
 import importlib.resources
 import sqlite3
+from contextlib import closing
 from typing import Any
 
 
@@ -24,6 +25,43 @@ def connect(path: str) -> sqlite3.Connection:
 
 def _schema_sql() -> str:
     return importlib.resources.files("garmin_coach.core").joinpath("schema.sql").read_text()
+
+
+def validate_schema(conn: sqlite3.Connection) -> None:
+    """Require the packaged tables, views, columns and primary keys without writing.
+
+    Args:
+        conn: Connection to the installation being checked, which may be read-only.
+
+    Raises:
+        sqlite3.DatabaseError: The installation needs migration or has an incompatible schema.
+    """
+    objects_sql = "SELECT name, type FROM sqlite_schema WHERE type IN ('table', 'view')"
+    with closing(sqlite3.connect(":memory:")) as expected:
+        expected.executescript(_schema_sql())
+        installed_objects = dict(conn.execute(objects_sql))
+        for name, kind in expected.execute(objects_sql):
+            if installed_objects.get(name) != kind:
+                raise sqlite3.DatabaseError(f"Incompatible schema: missing {kind} {name}.")
+            required = _schema_columns(expected, name)
+            installed = _schema_columns(conn, name)
+            if any(installed.get(column) != definition for column, definition in required.items()):
+                raise sqlite3.DatabaseError(f"Incompatible schema: columns of {name} differ.")
+            required_key = {
+                column: definition[2] for column, definition in required.items() if definition[2]
+            }
+            installed_key = {
+                column: definition[2] for column, definition in installed.items() if definition[2]
+            }
+            if installed_key != required_key:
+                raise sqlite3.DatabaseError(f"Incompatible schema: primary key of {name} differs.")
+
+
+def _schema_columns(conn: sqlite3.Connection, name: str) -> dict[str, tuple[str, int, int]]:
+    return {
+        row[1]: (row[2].upper(), row[3], row[5])
+        for row in conn.execute(f'PRAGMA table_info("{name}")')
+    }
 
 
 # Columns added to pre-existing core tables after their first release. CREATE ...

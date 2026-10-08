@@ -194,22 +194,32 @@ personal-installation read in fresh local Work (T5) remains pending.
 
 ## Personal-installation acceptance preparation
 
-The guarded source-worktree launcher was checked against
-`/Users/Chabi/garmin-coach` from `/private/tmp`. The actual stdio digest/snapshot
-read succeeded with 26 tools; the database and profile checksums were unchanged.
-No private values or profile content were recorded. This is preparation, not Work
-acceptance. The absent local `.codex/config.toml` was created using the generated
-coach entry anchored to that existing installation. A local Git exclude keeps the
-machine-specific config out of the pre-implementation main checkout; no tracked
-file or existing client entry was overwritten. The user's existing glossary
-modification remains untouched. This temporary acceptance config uses the guarded
-launcher in the implementation worktree; keep that worktree until the source path
-is moved to the merged checkout and configuration regenerated.
+The initial guarded stdio check addressed `/Users/Chabi/garmin-coach` through the
+implementation worktree's launcher. It succeeded with 26 tools and unchanged
+database/profile checksums, but the primary checkout was still on `main`. The user
+correctly noted that this would combine branch runtime code with main's guidance,
+so that arrangement was not treated as a complete branch acceptance.
 
-Open the personal installation as the primary folder in a fresh local Work chat,
-read the canonical coach router/report reference and existing profile, and call
-`get_digest` / `get_snapshot` only. T5 requires that actual client result before
-implementation acceptance can complete.
+At the user's request, the existing implementation worktree was detached at
+`20ed959fcb58bc0a662e8f130509533dd87c7c2d`, then the original checkout was switched
+to `feat/work-coach-integration`. The user's pre-existing `docs/glossary.md` edit
+was preserved byte-for-byte, as were the personal database and profile. Temporary
+personal-data links/settings prepared in the worktree were removed; fixture client
+configurations can still use its preserved runtime and source. No personal data
+was copied to a new installation.
+
+The original checkout's local `.codex/config.toml` now invokes its own guarded
+`scripts/coach_project.py` with `/Users/Chabi/garmin-coach` as the selected project.
+Thus branch code, primary guidance, canonical skills and existing personal data
+are all addressed from the same checkout. Machine-specific configuration stays
+untracked; no previous client entry was overwritten. The user's glossary change
+is excluded from acceptance documentation commits.
+
+Start a fresh local Work conversation with `/Users/Chabi/garmin-coach` primary,
+verify `feat/work-coach-integration`, read the canonical router/report reference
+and existing profile, and call only `get_digest` / `get_snapshot`. T5 remains
+pending until that actual client result is supplied. This original checkout holds
+personal data; do not use it as an isolated fixture development environment.
 
 ## Record application acceptance
 

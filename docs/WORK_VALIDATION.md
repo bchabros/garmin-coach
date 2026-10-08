@@ -32,7 +32,7 @@ regression run passed 182 tests with the same profile skip.
 | Fresh local Work fixture read | Passed, user-reported | Fresh local Work chat read guidance, router, all three references and the synthetic profile; listed 26 actual tools and executed digest/snapshot with the expected 2026-07-03 horizon. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fresh local Work development | Passed, user-reported and diff verified | Isolated checkout; guidance/rules/development guide read; schema mirror test explained; documentation-only diff; relevant offline test passed before and after. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fixture plan/profile previews in Work and desktop Codex | Passed, user-reported; files checked | Both report a successful plan_preview, show all seven days and exact profile diffs, describe confirmation/token rails, and stop before writes. |
-| Fixture plan/profile preview in Claude Code | Incomplete evidence | The supplied follow-up is truncated before the tool result and table; visible profile/operation descriptions contain deviations. |
+| Fixture plan/profile preview in Claude Code | Passed on explicit rerun, user-reported | Actual coach call, complete result/table, exact profile diff with final Decyzje section, corrected preview/confirm explanation; stopped before writes. Original deviations remain documented. |
 | Fresh local Work personal-data read | Pending | Needs the final locally sourced coaching answer |
 
 Computer Use refused access to the target bundle: "Computer Use is not allowed to
@@ -162,22 +162,54 @@ file outcomes, not the absence of every possible database or account operation.
 The supplied Claude Code follow-up identifies the same fixture and version
 2.1.284, but the pasted text is truncated between the announced planning read and
 the later explanation. It does not preserve the actual tool result or seven-day
-table, so that preview is not marked passed. The visible profile proposal omits the
+table, so that original preview was not marked passed. The visible profile proposal omits the
 README's required final `Decyzje` section, and the text incorrectly attributes
 rescheduling to `push_preview` alone; the documented operation requires the
-subsequent approved `push_confirm` with the preview token. Request the missing
-result/table and correction without initiating any write or Garmin preview.
+subsequent approved `push_confirm` with the preview token.
+
+The user then supplied an explicit Claude Code rerun with a visible `Called coach`
+entry, full `plan_preview` JSON (`data.error: null`), and a complete seven-day
+table matching the requested 2026-07-06 week. The freshness envelope still identifies
+the 2026-07-03 horizon and treats recent unconfirmed days as unknown. The exact
+proposed profile diff now includes the empty final `Decyzje` section, preserves the
+date and original content, and remains pending approval. Claude explicitly corrects
+its prior explanation: `push_preview` only shows an operation; rescheduling needs
+the approved `push_confirm` with the returned token/date and still obeys the plan
+guard. It reports no write or Garmin contact and inspected the confirmation tool's
+description without calling it. A subsequent fixture file check again found the
+original profile unchanged and no proposed week file. T3's preview/profile stop
+behavior is now observed in all three clients; accepted/rejected account-write
+behavior remains verified through the existing offline fake-publisher tests.
 
 ## Remaining workflow acceptance
 
 Project setup and fixture read have now been demonstrated in Work, desktop Codex
 and Claude Code, complementing the guarded-launch and preservation tests (T2).
 Work and desktop Codex now demonstrate seven-day plan previews and exact profile
-diffs stopping before confirmation. T3 remains pending for the missing Claude
-preview evidence and correction of its visible workflow explanation. Keep
+diffs stopping before confirmation; Claude's explicit rerun supplies the missing
+evidence and corrects its explanation. T3 is complete. Keep
 push/removal transport and accepted/rejected token behavior at the existing offline
 fake-publisher seam; no real Garmin preview or account write is required. The final
 personal-installation read in fresh local Work (T5) remains pending.
+
+## Personal-installation acceptance preparation
+
+The guarded source-worktree launcher was checked against
+`/Users/Chabi/garmin-coach` from `/private/tmp`. The actual stdio digest/snapshot
+read succeeded with 26 tools; the database and profile checksums were unchanged.
+No private values or profile content were recorded. This is preparation, not Work
+acceptance. The absent local `.codex/config.toml` was created using the generated
+coach entry anchored to that existing installation. A local Git exclude keeps the
+machine-specific config out of the pre-implementation main checkout; no tracked
+file or existing client entry was overwritten. The user's existing glossary
+modification remains untouched. This temporary acceptance config uses the guarded
+launcher in the implementation worktree; keep that worktree until the source path
+is moved to the merged checkout and configuration regenerated.
+
+Open the personal installation as the primary folder in a fresh local Work chat,
+read the canonical coach router/report reference and existing profile, and call
+`get_digest` / `get_snapshot` only. T5 requires that actual client result before
+implementation acceptance can complete.
 
 ## Record application acceptance
 

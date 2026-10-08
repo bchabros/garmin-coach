@@ -12,9 +12,9 @@ development demonstration. Work used local Mac execution; the desktop host tool
 identifies version 26.930.61225, build 13232; Claude Code's transcript identifies
 2.1.284. Full response adherence is separate: the Codex and Claude pasted answers
 omitted the report's required final disclaimer. Plan/profile previews stopping
-before writes are verified in Work and desktop Codex; Claude's follow-up evidence
-is incomplete. Its preview check and the final Work read from the existing athlete
-installation remain pending.
+before writes are verified in all three clients; Claude's explicit rerun corrected
+its initial profile/operation explanation. The final Work read from the existing
+athlete installation remains pending.
 Record results and limitations in [the validation record](WORK_VALIDATION.md); #82
 stays incomplete until the remaining workflow and personal-read results exist.
 

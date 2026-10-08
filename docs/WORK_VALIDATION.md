@@ -14,7 +14,7 @@ Date: 2026-10-08. Target: local macOS and the existing Poetry checkout.
 
 ## Evidence
 
-Offline verification: **1020 passed, 1 skipped** (the absent gitignored personal
+Implementation baseline verification: **1020 passed, 1 skipped** (the absent gitignored personal
 profile in the isolated checkout). Ruff formatting, lint, docstrings and mypy
 passed. The new project boundary contributes 13 tests; the targeted coach/routing
 regression run passed 182 tests with the same profile skip.
@@ -284,7 +284,31 @@ reads work in all three clients, plan/profile previews preserve their approval
 stops, Work development was demonstrated in an isolated checkout, and the
 personal-installation read is verified in Work. Prior narrative deviations remain
 visible above rather than being erased by the rerun. The issue remains open until
-the requested review and PR/merge workflow is complete; no PR has been created.
+the pull request is merged.
+
+## Code review and corrections (2026-10-08)
+
+The branch was reviewed against `main` on separate Standards and Spec axes.
+Standards found inherited installation settings in two configuration tests and
+duplicated subprocess setup; Spec found invalid Codex TOML for non-BMP path characters.
+Both P2 findings and the duplication have been corrected.
+
+- Before the test correction, both generated-configuration checks read a second
+  temporary database supplied through `DB_PATH`, returning its different horizon.
+  They now share the launcher's sanitized subprocess helper, select the intended
+  fixture, and preserve the unrelated temporary database.
+- Before the configuration correction, a non-BMP project path generated TOML that
+  `tomllib` rejected. TOML strings now preserve Unicode and escape control characters.
+  Configuration round-trip and real stdio reads pass for non-BMP characters,
+  quotes, backslashes, DEL and a newline in temporary project paths.
+- The project tests pass: **16 passed**. Full isolated verification with
+  `PYTHONPATH=src task check` passes: **1023 passed, 1 skipped**, lint, docstrings
+  and mypy. `task format` left all Python files unchanged. The skipped test needs
+  the absent gitignored personal profile; validation used no personal installation
+  or live Garmin transport.
+
+The user's pre-existing glossary edit is excluded from the feature and correction
+commits. The pull request closes #82 when merged.
 
 ## Record application acceptance
 
@@ -297,6 +321,5 @@ For Work development, also record the isolated checkout, inspected files,
 reviewable test-only change, command and exit result. Keep personal records,
 credentials and profile contents out of this document.
 
-**Completion:** implementation and client acceptance are complete. #82 remains
-open for the requested code-review and PR/merge stages. Stop after implementation
-with the user-facing summary before starting the next stage.
+**Completion:** implementation, client acceptance and review corrections are complete.
+#82 remains open until the pull request is merged.

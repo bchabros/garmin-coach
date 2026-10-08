@@ -88,6 +88,11 @@ async def _probe(root: pathlib.Path) -> dict[str, Any]:
     }
 
 
+def _toml_string(value: str) -> str:
+    """Quote Unicode with shared JSON/TOML escapes and TOML's required DEL escape."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
 def _configuration(root: pathlib.Path, client: str) -> str:
     launcher = pathlib.Path(__file__).resolve().parents[2] / "scripts" / "coach_project.py"
     args = [str(launcher), "serve", "--project", str(root)]
@@ -97,9 +102,9 @@ def _configuration(root: pathlib.Path, client: str) -> str:
         )
     return (
         "[mcp_servers.coach]\n"
-        f"command = {json.dumps(sys.executable)}\n"
-        f"args = {json.dumps(args)}\n"
-        f"cwd = {json.dumps(str(root))}\n"
+        f"command = {_toml_string(sys.executable)}\n"
+        f"args = [{', '.join(_toml_string(arg) for arg in args)}]\n"
+        f"cwd = {_toml_string(str(root))}\n"
     )
 
 

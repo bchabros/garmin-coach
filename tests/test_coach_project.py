@@ -37,18 +37,40 @@ def project(tmp_path):
     return root
 
 
-def run_launcher(project, command, *args):
+@pytest.fixture
+def external_installation(project, monkeypatch):
+    database = project.parent / "unrelated.db"
+    conn = db.connect(str(database))
+    db.bootstrap(conn)
+    db.upsert_daily(conn, "daily_metrics", {"date": "2026-07-04", "load_day": 20})
+    snapshot.rollup(conn)
+    conn.commit()
+    conn.close()
+    before = database.read_bytes()
+    monkeypatch.setenv("DB_PATH", str(database))
+    monkeypatch.setenv("PLANS_DIR", str(project.parent / "unrelated plans"))
+    yield
+    assert database.read_bytes() == before
+
+
+def run_command(project, args):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GARMIN")}
     env.pop("DB_PATH", None)
     env.pop("PLANS_DIR", None)
     env["PYTHONPATH"] = str(ROOT / "src")
     return subprocess.run(
-        ["python3", str(LAUNCHER), command, "--project", str(project), *args],
+        args,
         cwd=project.parent,
         env=env,
         capture_output=True,
         text=True,
         timeout=30,
+    )
+
+
+def run_launcher(project, command, *args):
+    return run_command(
+        project, ["python3", str(LAUNCHER), command, "--project", str(project), *args]
     )
 
 
@@ -78,7 +100,9 @@ def test_project_clients_discover_the_canonical_skill_and_all_its_resources():
             assert (discovery / "references" / resource.name).read_bytes() == resource.read_bytes()
 
 
-def test_manual_config_connects_without_changing_existing_client_settings(project):
+def test_manual_config_connects_without_changing_existing_client_settings(
+    project, external_installation
+):
     config_dir = project / ".codex"
     config_dir.mkdir()
     config = config_dir / "config.toml"
@@ -88,16 +112,28 @@ def test_manual_config_connects_without_changing_existing_client_settings(projec
     assert result.returncode == 0, result.stderr
     entry = tomllib.loads(result.stdout)["mcp_servers"]["coach"]
     entry["args"][entry["args"].index("serve")] = "check"
-    result = subprocess.run(
-        [entry["command"], *entry["args"]],
-        cwd=project.parent,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = run_command(project, [entry["command"], *entry["args"]])
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["data_through"] == "2026-07-03"
     assert config.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "name", ["athlete \U0001f6b4", 'athlete "quoted"\\folder', "athlete \x7f\nfolder"]
+)
+def test_codex_config_preserves_special_path_characters_and_connects(project, name):
+    project = project.rename(project.with_name(name))
+    before = (project / "data" / "garmin.db").read_bytes()
+    result = run_launcher(project, "config", "--client", "codex")
+    assert result.returncode == 0, result.stderr
+    entry = tomllib.loads(result.stdout)["mcp_servers"]["coach"]
+    assert entry["cwd"] == str(project)
+    assert entry["args"][-1] == str(project)
+    entry["args"][entry["args"].index("serve")] = "check"
+    result = run_command(project, [entry["command"], *entry["args"]])
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data_through"] == "2026-07-03"
+    assert (project / "data" / "garmin.db").read_bytes() == before
 
 
 def test_fixture_is_readable_without_touching_an_existing_installation(tmp_path):
@@ -175,18 +211,12 @@ def test_sparse_installation_reports_missing_coach_data(project):
     assert "Coach data missing" in result.stderr
 
 
-def test_claude_config_runs_the_same_guarded_launcher(project):
+def test_claude_config_runs_the_same_guarded_launcher(project, external_installation):
     result = run_launcher(project, "config", "--client", "claude")
     assert result.returncode == 0, result.stderr
     entry = json.loads(result.stdout)["mcpServers"]["coach"]
     entry["args"][entry["args"].index("serve")] = "check"
-    result = subprocess.run(
-        [entry["command"], *entry["args"]],
-        cwd=project.parent,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = run_command(project, [entry["command"], *entry["args"]])
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["snapshot_computed_at"] == "2026-07-03"
 

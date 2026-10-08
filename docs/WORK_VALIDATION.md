@@ -5,7 +5,9 @@ Date: 2026-10-08. Target: local macOS and the existing Poetry checkout.
 ## Environment observed
 
 - Target application: 26.930.61225, build 13232, bundle identifier `com.openai.codex`.
-  This identifies the installed bundle, not a completed Work acceptance.
+  The desktop host update tool confirmed this running version/build after the
+  user explicitly confirmed both acceptance conversations ran in Work locally
+  on the Mac. The application check is version evidence, not tool-call evidence.
 - Existing Poetry runtime: Python 3.13.3.
 - Working implementation: project-scoped skill discovery, guarded project launcher,
   printable manual MCP configuration and a synthetic installation.
@@ -27,8 +29,8 @@ regression run passed 182 tests with the same profile skip.
 | Existing athlete installation local read | Passed through guarded stdio MCP | 26 tools available; digest/snapshot calls completed; database file checksum unchanged. This is not Work acceptance. |
 | Fresh Codex conversation | Pending | Needs actual discovery, routing and fixture read in the client |
 | Fresh Claude Code conversation | Pending | Needs actual discovery, routing and fixture read in the client |
-| Fresh local Work fixture read | Passed, user-reported | Fresh local Work chat read guidance, router, all three references and the synthetic profile; listed 26 actual tools and executed digest/snapshot with the expected 2026-07-03 horizon. Exact session version remains to be confirmed. |
-| Fresh local Work development | Pending | Needs isolated-checkout investigation, reviewable change and offline test |
+| Fresh local Work fixture read | Passed, user-reported | Fresh local Work chat read guidance, router, all three references and the synthetic profile; listed 26 actual tools and executed digest/snapshot with the expected 2026-07-03 horizon. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
+| Fresh local Work development | Passed, user-reported and diff verified | Isolated checkout; guidance/rules/development guide read; schema mirror test explained; documentation-only diff; relevant offline test passed before and after. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fresh local Work personal-data read | Pending | Needs the final locally sourced coaching answer |
 
 Computer Use refused access to the target bundle: "Computer Use is not allowed to
@@ -62,9 +64,35 @@ The prior instructions for adding a folder via a generic plus menu did not match
 the user's UI. The documented desktop route is Work mode, `Cmd+O`, then `Cmd+Shift+G`
 in the folder chooser. The user subsequently supplied successful fixture evidence;
 that confirms folder access, but does not prove which opening action was used.
-Confirm the actual session application/version and opening/trust steps before
-marking the full T1 record complete. The previously observed bundle version is not
-silently substituted for this session's version.
+The user confirmed local desktop Work for both tests; the desktop host tool
+confirmed version 26.930.61225, build 13232. The exact opening/trust clicks were
+not supplied. Fixture-root access, canonical skill resources, configured local
+coach tools, tool execution and freshness were demonstrated in the supplied chat.
+
+## Work development observation (2026-10-08)
+
+The user supplied a second Work result from the disposable local checkout
+`/private/tmp/garmin-coach-work-development.7_5a2kla`, cloned at
+`2247a0c6afea3a2b6cc0900be04cc22ea9985f6d`. The checkout reused the existing
+Poetry runtime; no personal configuration, database or athlete profile was copied.
+
+The chat reported reading `AGENTS.md`, the project rules and `docs/DEVELOPMENT.md`.
+It inspected `tests/test_schema_sync.py` and correctly explained that the test
+compares the package resource `src/garmin_coach/core/schema.sql` with the docs
+snapshot as text; it neither validates SQL syntax nor opens the database.
+
+It ran `PYTHONPATH=src poetry run pytest tests/test_schema_sync.py -q`, added a
+short command example beside the schema convention in `docs/DEVELOPMENT.md`, and
+reran the test. Both reported runs passed: `1 passed in 0.01s`. The coordinating
+agent independently inspected the disposable checkout: only the stated
+six-line documentation addition was modified, `git diff --check` passed, and HEAD
+remained unchanged. The development example stays in the disposable checkout.
+
+The chat reported no Garmin access, personal-data use, commit or push. Together
+with the observed reviewable diff and offline results, this demonstrates Work's
+development path separately from the fixture coaching conversation. Application
+version 26.930.61225/build 13232 is identified by the desktop host tool; the user
+explicitly confirmed Work mode and local Mac execution for both conversations.
 
 ## Record application acceptance
 

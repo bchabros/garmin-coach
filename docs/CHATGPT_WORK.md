@@ -14,7 +14,9 @@ identifies version 26.930.61225, build 13232; Claude Code's transcript identifie
 omitted the report's required final disclaimer. Plan/profile previews stopping
 before writes are verified in all three clients; Claude's explicit rerun corrected
 its initial profile/operation explanation. The final Work read from the existing
-athlete installation remains pending.
+athlete installation has demonstrated natural coach activation and actual tool
+reads, but its trace also contains a local plan import. A strictly read-only rerun
+remains pending.
 Record results and limitations in [the validation record](WORK_VALIDATION.md); #82
 stays incomplete until the remaining workflow and personal-read results exist.
 
@@ -162,9 +164,12 @@ checkout. A coaching request alone is not authorization for a source change.
 Reconnect the intended real project and its generated guarded coach configuration.
 In a fresh local Work chat, send:
 
-> Jaka mam forme? Przeczytaj instrukcje coacha, referencje raportu i moj dostepny
-> profil. Uzyj get_digest i get_snapshot z tej instalacji i wyjasnij aktualnosc
-> danych. Bez odswiezania Garmin i bez zapisywania planu, profilu lub treningu.
+> Jaka mam forme? To test tylko do odczytu. Przeczytaj instrukcje coacha, referencje
+> raportu i moj dostepny profil. Podaj katalog i branch projektu. Wywolaj wylacznie
+> get_digest i get_snapshot; wyjasnij data_through, today_included, partial_fields
+> i unconfirmed_days oraz wiek profilu. Bez plan_import, generowania raportow,
+> innych zapisow, odswiezania i kontaktu z Garminem. Nie zastepuj narzedzi terminalem.
+> Zakoncz zastrzezeniem disclaimer z digestu w oryginalnym brzmieniu.
 
 The response must use local deterministic facts and the freshness envelope, explain
 missing/unconfirmed evidence, and handle a missing or stale profile honestly.

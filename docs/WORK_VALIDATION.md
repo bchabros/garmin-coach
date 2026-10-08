@@ -33,7 +33,7 @@ regression run passed 182 tests with the same profile skip.
 | Fresh local Work development | Passed, user-reported and diff verified | Isolated checkout; guidance/rules/development guide read; schema mirror test explained; documentation-only diff; relevant offline test passed before and after. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fixture plan/profile previews in Work and desktop Codex | Passed, user-reported; files checked | Both report a successful plan_preview, show all seven days and exact profile diffs, describe confirmation/token rails, and stop before writes. |
 | Fixture plan/profile preview in Claude Code | Passed on explicit rerun, user-reported | Actual coach call, complete result/table, exact profile diff with final Decyzje section, corrected preview/confirm explanation; stopped before writes. Original deviations remain documented. |
-| Fresh local Work personal-data read | Pending | Needs the final locally sourced coaching answer |
+| Fresh local Work personal-data read | Natural routing/read observed; read-only rerun pending | User-supplied answer and app trace confirm coach/profile/report reads and real MCP digest/snapshot calls. The trace also contains plan_import, so the no-write acceptance is not established. |
 
 Computer Use refused access to the target bundle: "Computer Use is not allowed to
 use the app 'com.openai.codex' for safety reasons." The implementation does not work
@@ -220,6 +220,39 @@ verify `feat/work-coach-integration`, read the canonical router/report reference
 and existing profile, and call only `get_digest` / `get_snapshot`. T5 remains
 pending until that actual client result is supplied. This original checkout holds
 personal data; do not use it as an isolated fixture development environment.
+
+## First personal-installation Work observation (2026-10-08)
+
+The user supplied a real-data answer from a fresh local Work conversation at
+22:53 Europe/Warsaw. The supported app thread reader independently found the
+matching conversation, titled "Sprawdź moją formę", with `/Users/Chabi/garmin-coach` as its working directory.
+The coordinating checkout was verified on `feat/work-coach-integration` after the
+user-requested switch. The app's technical backing-kind field is not substituted
+for the user's stated Work product mode.
+
+The actual user prompt was only "Jaką mam formę". The trace shows automatic coach
+routing, a read of the canonical router, then successful file reads of the report
+reference, existing athlete profile and code-style rules. Completed real coach
+calls were `plan_import`, `get_snapshot`, `get_recent_activities` and `get_digest`.
+There is no shown Garmin tool call, shell data substitution, direct profile edit
+or plan confirmation. This demonstrates natural activation and access to the
+intended local coaching workflow, independent of the earlier fixture checks.
+
+The answer distinguishes current-day partial load and missing movement coverage;
+private training values and profile content are intentionally omitted here. It
+again omits the report reference's required final verbatim disclaimer. No full
+freshness envelope or explicit prohibition of local writes was supplied in the
+short user prompt.
+
+**T5 is not yet complete.** `plan_import` writes the local plan cache and may
+recompute marts. Its completed invocation means this conversation cannot establish
+an acceptance run limited to reads; the trace does not prove whether particular
+cache values changed. The normal report procedure explains why import was selected,
+but it does not replace T5's no-write requirement. Repeat in fresh local Work with
+only `get_digest` and `get_snapshot` allowed, expressly excluding `plan_import`,
+all other writes and Garmin contact. Request the project/branch identity, profile
+access, freshness fields and final disclaimer in that read-only response. Do not
+publish private athlete values or profile content in the issue.
 
 ## Record application acceptance
 

@@ -27,8 +27,8 @@ regression run passed 182 tests with the same profile skip.
 | Canonical coach discovery | Passed document/resource contract | Both repo skill links resolve to the same router and references |
 | Existing confirmation/coach-tool behavior | Passed targeted offline regressions | Existing MCP and fake-publisher seams retain the guards |
 | Existing athlete installation local read | Passed through guarded stdio MCP | 26 tools available; digest/snapshot calls completed; database file checksum unchanged. This is not Work acceptance. |
-| Fresh Codex conversation | Pending | Needs actual discovery, routing and fixture read in the client |
-| Fresh Claude Code conversation | Pending | Needs actual discovery, routing and fixture read in the client |
+| Fresh Codex conversation | Passed, user-reported | Desktop fixture chat read guide/router/report/profile, listed 26 coach tools and executed digest/snapshot; expected 2026-07-03 horizon and honest freshness. |
+| Fresh Claude Code conversation | Passed for connection/read, user-reported | Version 2.1.284; fixture guide/router/report/profile read, 26 tools reported, two coach calls completed with the expected horizon. Narrative deviations are recorded below. |
 | Fresh local Work fixture read | Passed, user-reported | Fresh local Work chat read guidance, router, all three references and the synthetic profile; listed 26 actual tools and executed digest/snapshot with the expected 2026-07-03 horizon. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fresh local Work development | Passed, user-reported and diff verified | Isolated checkout; guidance/rules/development guide read; schema mirror test explained; documentation-only diff; relevant offline test passed before and after. Local Work mode confirmed by the user; desktop host version 26.930.61225, build 13232. |
 | Fresh local Work personal-data read | Pending | Needs the final locally sourced coaching answer |
@@ -93,6 +93,53 @@ with the observed reviewable diff and offline results, this demonstrates Work's
 development path separately from the fixture coaching conversation. Application
 version 26.930.61225/build 13232 is identified by the desktop host tool; the user
 explicitly confirmed Work mode and local Mac execution for both conversations.
+
+## Codex Desktop fixture observation (2026-10-08)
+
+The user supplied the desktop Codex answer from the requested fixture chat at
+22:23 Europe/Warsaw. It reported reading `AGENTS.md`, the coach router, reporting
+reference and synthetic profile; all 26 actual coach tools were listed and
+`get_digest({})` / `get_snapshot({})` succeeded. The desktop host previously
+identified version 26.930.61225, build 13232; this transcript does not independently
+supply a version or the folder/trust clicks.
+
+The answer correctly identified the 2026-07-03 horizon as 97 days old, the profile
+as synthetic, the recommendation as historical, template intent as unagreed, null
+metrics as unknown and pre-cutoff dates as onboarding gaps. It distinguished the
+historical window's unconfirmed-day list from the current freshness envelope and
+reported no refresh or state writes. File-reading shell use was explicitly
+separated from real MCP data reads. The pasted answer omitted the report reference's
+required final verbatim disclaimer; connection/read success does not prove full
+narrative adherence.
+
+## Claude Code fixture observation (2026-10-08)
+
+The attached transcript identifies Claude Code **2.1.284**, the fixture root
+`/private/tmp/garmin-coach-work-fixture.s0uH1H`, and two actual coach calls. The
+answer reports reading the guide (including its byte-for-byte mirror), coach router,
+reporting reference, synthetic profile and `memory/README.md`, listing 26 tools,
+and loading the schemas of the two read tools used. Unrelated MCP authentication
+notices did not prevent the coach calls.
+
+The answer identifies the expected 2026-07-03 horizon, the stale synthetic profile,
+the template plan, unknown recent-day execution and onboarding gaps. It reports no
+Garmin refresh or writes. Two narrative deviations remain visible: the required
+final disclaimer is absent, and the claim that no terminal command ran contradicts
+the transcript's three shell commands. The transcript does not show shell
+substitution for the coach data calls; it shows two actual coach calls after file
+inspection. Record these limitations instead of treating tool connectivity as proof
+of every response rule. Sparse fixture differences between digest and snapshot
+were discussed; no formula or schema change is introduced for this setup issue.
+
+## Remaining workflow acceptance
+
+Project setup and fixture read have now been demonstrated in Work, desktop Codex
+and Claude Code, complementing the guarded-launch and preservation tests (T2).
+Before completing T3, observe a seven-day `plan_preview` table and a reviewable
+exact profile diff that stop before confirmation in fixture conversations. Keep
+push/removal transport and accepted/rejected token behavior at the existing offline
+fake-publisher seam; no real Garmin preview or account write is required. The final
+personal-installation read in fresh local Work (T5) remains pending.
 
 ## Record application acceptance
 

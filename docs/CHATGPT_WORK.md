@@ -6,14 +6,15 @@ and all references remain canonical under `skills/coach/`. Codex discovery throu
 `.agents/skills/coach` and Claude Code discovery through `.claude/skills/coach`
 both link to that directory.
 
-**Validation status:** local stdio MCP, offline tests, and a user-reported fresh
-Work fixture read and isolated development demonstration are verified. Other
-client checks and the final Work read from the existing athlete installation
-remain pending. Both Work observations used local Mac execution; the desktop
-host tool identifies version 26.930.61225, build 13232.
-Configuration presence, a Codex conversation, and a protocol test do not prove Work
-success. Record results in [the validation record](WORK_VALIDATION.md); #82 stays
-incomplete until the required Work coaching and development results exist.
+**Validation status:** local stdio MCP, offline tests, and user-reported fixture
+reads in Work, desktop Codex and Claude Code are verified, as is Work's isolated
+development demonstration. Work used local Mac execution; the desktop host tool
+identifies version 26.930.61225, build 13232; Claude Code's transcript identifies
+2.1.284. Full response adherence is separate: the Codex and Claude pasted answers
+omitted the report's required final disclaimer. Plan/profile preview acceptance and
+the final Work read from the existing athlete installation remain pending.
+Record results and limitations in [the validation record](WORK_VALIDATION.md); #82
+stays incomplete until the remaining workflow and personal-read results exist.
 
 ## Prepare the runtime
 

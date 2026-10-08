@@ -14,6 +14,7 @@ computation happens here.
 
 from __future__ import annotations
 
+import pathlib
 import sqlite3
 from typing import Any
 
@@ -42,11 +43,17 @@ _WRITES_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openW
 
 _REPORTS_DIR = "./reports"
 _PLANS_DIR = "./plans"
+_EXISTING_DB_ONLY = False
 
 
 def _open() -> sqlite3.Connection:
-    """Open the configured DB with the schema bootstrapped."""
+    """Open the configured DB, preserving the guarded project launch policy."""
     settings = get_settings()
+    if _EXISTING_DB_ONLY:
+        path = pathlib.Path(settings.db_path).expanduser().resolve()
+        conn = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
     conn = db.connect(settings.db_path)
     db.bootstrap(conn)
     return conn
@@ -604,8 +611,14 @@ def unschedule_confirm(date: str, confirm_token: str) -> dict[str, Any]:
         conn.close()
 
 
-def main() -> None:
-    """Run the coach MCP server over stdio."""
+def main(existing_db_only: bool = False) -> None:
+    """Run the coach MCP server over stdio.
+
+    Args:
+        existing_db_only: Require an existing schema without bootstrapping personal data.
+    """
+    global _EXISTING_DB_ONLY
+    _EXISTING_DB_ONLY = existing_db_only
     server.run()
 
 

@@ -37,6 +37,16 @@ task run FROM=2026-06-08 # local backfill; optional TO=YYYY-MM-DD
 
 ## Where to go next
 
+- **Coaching requests** (form, reports, training weeks, workouts) -> **MUST** read
+  `skills/coach/SKILL.md` before athlete numbers or advice, then follow its routing
+  gates and profile rail. Prefer the sanctioned coach MCP tools. A coaching request
+  alone does not authorize source changes.
+- **Development requests** -> **MUST** read `docs/DEVELOPMENT.md` before changes.
+  Validate with temporary data and fake transport; keep the athlete's real installation
+  out of development tests.
+- **Connecting Work, Codex, or Claude Code** -> `docs/CHATGPT_WORK.md` (project setup,
+  guarded launcher, fixture checks, and the required fresh Work acceptance).
+
 - **Changing code** -> `docs/DEVELOPMENT.md` (workflow, module map, conventions,
   developer gotchas, testing seams, deferred backlog).
 - **Operating the system** -> `docs/OPERATIONS.md` (running the pipeline, exit-code

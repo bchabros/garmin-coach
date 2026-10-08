@@ -1,0 +1,210 @@
+# Local coaching and development in Work, Codex, and Claude Code
+
+This setup uses the current macOS Poetry checkout. The folder serves coaching and
+development requests; start separate chats for distinct outcomes. The coach router
+and all references remain canonical under `skills/coach/`. Codex discovery through
+`.agents/skills/coach` and Claude Code discovery through `.claude/skills/coach`
+both link to that directory.
+
+**Validation status:** local stdio MCP, offline tests, and user-reported fixture
+reads in Work, desktop Codex and Claude Code are verified, as is Work's isolated
+development demonstration. Work used local Mac execution; the desktop host tool
+identifies version 26.930.61225, build 13232; Claude Code's transcript identifies
+2.1.284. Full response adherence is separate: the Codex and Claude pasted answers
+omitted the report's required final disclaimer. Plan/profile previews stopping
+before writes are verified in all three clients; Claude's explicit rerun corrected
+its initial profile/operation explanation. The final Work read from the existing
+athlete installation passed an explicit read-only rerun: the app trace confirms
+only digest/snapshot MCP calls, correct project/branch, profile access, freshness
+handling and the final disclaimer. The earlier natural-activation turn included a
+local plan import and is recorded separately.
+See [the validation record](WORK_VALIDATION.md) for observed results and limitations.
+Implementation/client acceptance is complete; #82 remains open for code review
+and the PR/merge workflow.
+
+## Prepare the runtime
+
+From the source checkout, run `poetry install` with Python 3.13 or newer as allowed
+by the package. Existing data must already have been imported and its marts built.
+The launcher finds the checkout's in-project virtualenv, or asks Poetry for its
+existing interpreter. It never installs dependencies or logs into Garmin.
+
+Set the source checkout's absolute path in your terminal:
+
+```sh
+COACH_SOURCE="$(pwd)"
+python3 "$COACH_SOURCE/scripts/coach_project.py" check --project "$COACH_SOURCE"
+```
+
+`check` validates project guidance, canonical skill references, runtime settings,
+the existing database, and a populated digest/snapshot. It then starts the actual
+guarded stdio server and calls `get_digest` and `get_snapshot`. Output lists tools,
+runtime version and data dates; it omits athlete numbers, profile text and secrets.
+`client_acceptance: not_run` means only the local protocol was checked.
+
+The guarded `serve` launch selects the project before reading configuration and
+requires an existing database compatible with the packaged tables, views, columns
+and primary keys. Pending schema migrations are refused before serving tools, with
+an instruction to run `poetry run garmin-coach features` offline from the intended
+project. The launcher does not bootstrap or migrate the installation.
+The legacy bare `garmin-coach-mcp` entry point retains its previous behavior.
+Use the guarded configuration below for this setup.
+
+The guarded launcher refuses inherited `DB_PATH` or `PLANS_DIR` values that resolve
+to paths different from the selected project's `.env` configuration (or defaults
+when absent). Unset the conflicting variable or intentionally configure the desired
+paths in that project's `.env`; paths outside the project are allowed when explicitly
+configured there. Equivalent absolute, relative and symlink paths are accepted.
+Other runtime environment overrides and the legacy bare entry point retain their
+existing precedence. The launcher does not overwrite these path overrides or configuration files.
+
+## Connect a client manually
+
+Generate the configuration for the intended **athlete installation folder**:
+
+```sh
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_SOURCE" --client codex
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_SOURCE" --client claude
+```
+
+These commands print configuration and write no client settings. Generated paths
+are specific to the selected checkout and interpreter. Regenerate after moving
+the checkout or replacing its virtualenv.
+
+### Codex
+
+Merge the generated `[mcp_servers.coach]` table into the project's
+`.codex/config.toml`. Preserve existing tables; replace an existing coach table
+instead of appending a duplicate. Keep machine-specific configuration local.
+Trust the intended project through the client's supported UI, then start a fresh
+conversation. Check that the coach skill, its references, and tools are visible.
+
+Codex's documented repo skill discovery supports the canonical skill symlink.
+The project guide also routes coaching requests to the router explicitly, so the
+workflow's location is available even before implicit skill activation is tested.
+
+### Claude Code
+
+Merge only the generated `coach` entry into the project's `.mcp.json`, preserving
+other entries. The tracked entry is the legacy bare server; the generated entry
+uses the guarded launcher. Start a fresh Claude Code conversation in the project
+and approve the project MCP server through its supported trust prompt.
+Check the actual connection with `/mcp`.
+
+The existing Claude Desktop helper and uploaded skill path remain available.
+A Desktop upload is not evidence that Work or Claude Code discovered that skill.
+
+### ChatGPT Work on the local Mac
+
+Use a local project with the intended folder selected as primary and choose local
+execution. In the desktop Work view, use `Cmd+O` (Open folder). In the macOS
+folder chooser, use `Cmd+Shift+G` to enter the installation's absolute path and
+select Open. If that command is unavailable, check Settings > Keyboard Shortcuts
+for Open folder and record the missing capability; do not assume a generic plus
+menu can attach a local folder. Verify the product mode and version in the
+application; its displayed name alone is insufficient. The primary folder supplies
+the durable project guide.
+
+The official desktop MCP documentation describes project configuration and manual
+STDIO setup. Try the generated guarded launcher through the supported local MCP
+configuration. Confirm the tools in **Work itself** before recording success.
+
+Install the complete canonical coach skill using the mechanism actually available
+in that Work version. A manual skill installation is acceptable; verify the router
+and every bundled reference. Repo symlink discovery is documented for Codex, so
+do not infer Work discovery from it. If a supported plugin package or additional
+activation is required, record that evidence before adding such an adapter.
+
+If local execution, skill installation or MCP access is unavailable, record the
+specific unavailable capability. Keep Work acceptance pending and do not silently
+switch to a hosted setup or claim that another client's result proves Work support.
+
+## Run acceptance on a synthetic installation first
+
+Create a new empty test installation. This command refuses a nonempty destination
+and uses no Garmin transport:
+
+```sh
+COACH_FIXTURE="$(mktemp -d /tmp/garmin-coach-work-fixture.XXXXXX)"
+python3 "$COACH_SOURCE/scripts/coach_project.py" fixture --project "$COACH_FIXTURE"
+python3 "$COACH_SOURCE/scripts/coach_project.py" check --project "$COACH_FIXTURE"
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_FIXTURE" --client codex
+```
+
+Select the fixture folder as the local chat's primary folder and use its generated
+coach configuration. The fixture contains guidance, complete coach resources and a
+clearly labelled synthetic profile. Its mart and snapshot horizon is **2026-07-03**.
+It contains sparse synthetic evidence, not personal records or a realistic history.
+Its dated profile is intentionally old when tested in October: the coach should
+identify that age and missing evidence rather than inventing newer observations.
+
+In a fresh Work conversation, send:
+
+> This is the synthetic fixture installation. Read the project guide, use the coach
+> workflow, read its reporting reference and available profile, then call get_digest
+> and get_snapshot. Explain my standing and the dates of the evidence. Do not refresh
+> Garmin, write a plan or profile, or push or remove a workout.
+
+Record tool calls, reference/profile access, fixture identity and freshness handling.
+Repeat discovery and read checks in fresh Codex and Claude Code chats separately.
+The runtime cannot infer that the model read the references; assess that in the chat.
+
+For planning and authoring, fixture chats may inspect and show proposals. Complete
+push/removal confirmations are covered offline with `FakePublisher`; never point
+a chat write test at the real account. Keep plan previews and profile amendment
+diffs reviewable and retain their existing human confirmation requirements.
+
+## Demonstrate Work development in an isolated checkout
+
+Create a temporary detached test checkout from the implementation branch and
+install its Poetry dependencies. Do not copy the personal configuration, database,
+reports, plans or profile into it. Use it as the primary folder for a separate
+fresh local Work conversation.
+
+Ask Work to read the project guide and development guide, inspect
+`tests/test_schema_sync.py`, explain the schema mirror check, and run that test.
+Then ask it to make a small documentation change describing the check, show its
+diff, and rerun the relevant offline test. Record the actual files inspected,
+reviewable diff and test result. This test change remains in the disposable test
+checkout. A coaching request alone is not authorization for a source change.
+
+## Final acceptance on the existing athlete installation
+
+Reconnect the intended real project and its generated guarded coach configuration.
+In a fresh local Work chat, send:
+
+> Jaka mam forme? To test tylko do odczytu. Przeczytaj instrukcje coacha, referencje
+> raportu i moj dostepny profil. Podaj katalog i branch projektu. Wywolaj wylacznie
+> get_digest i get_snapshot; wyjasnij data_through, today_included, partial_fields
+> i unconfirmed_days oraz wiek profilu. Bez plan_import, generowania raportow,
+> innych zapisow, odswiezania i kontaktu z Garminem. Nie zastepuj narzedzi terminalem.
+> Zakoncz zastrzezeniem disclaimer z digestu w oryginalnym brzmieniu.
+
+The response must use local deterministic facts and the freshness envelope, explain
+missing/unconfirmed evidence, and handle a missing or stale profile honestly.
+Record success and the execution surface without copying private numbers or profile
+content into the repository or issue. This Work result and its development result
+are required before #82 is complete.
+
+## Recovery
+
+| Diagnostic | Action |
+| --- | --- |
+| Runtime missing | Run `poetry install` in the source checkout; regenerate configuration if its interpreter moved. |
+| Project guidance missing | Select the actual project/fixture folder, not an unrelated launch directory. |
+| Skill or references missing | Restore/install the complete canonical coach directory and regenerate an uploaded copy after changes. |
+| Database missing | Select the existing installation; a new installation requires its separately documented import. The check does not create one. |
+| Installation conflict | Unset the named `DB_PATH` or `PLANS_DIR` override, or intentionally configure that same path in the selected project's `.env`; repeat the check. |
+| Schema unavailable/incompatible or coach data missing | From the intended project, explicitly run offline `poetry run garmin-coach features` after import; repeat the check. If incompatibility persists, inspect the schema or restore a compatible backup. The launcher never migrates it. |
+| MCP connection failed | Check the generated command, selected folder, installed dependencies and client trust/activation; repeat local check before the fresh-chat test. |
+| Local check passes, Work cannot use it | Record the application version and unavailable capability; verify the Work-specific supported route. |
+
+## Sources
+
+Checked 2026-10-08: [local projects](https://learn.chatgpt.com/docs/projects?surface=app),
+[skills and local discovery](https://learn.chatgpt.com/docs/build-skills?product=breeze),
+[MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
+[desktop commands](https://learn.chatgpt.com/docs/reference/commands), and
+[Claude Code MCP](https://code.claude.com/docs/en/mcp).
+These establish documented mechanisms; the validation record establishes what was
+actually exercised here.

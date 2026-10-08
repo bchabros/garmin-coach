@@ -108,6 +108,12 @@ def test_fixture_is_readable_without_touching_an_existing_installation(tmp_path)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["data_through"] == "2026-07-03"
     assert "Synthetic" in (root / "memory" / "athlete-profile.md").read_text()
+    imports = re.findall(r"^@(.+)$", (root / "AGENTS.md").read_text(), re.MULTILINE)
+    assert imports
+    for resource in imports:
+        assert (root / resource).is_file(), resource
+    for rule in (ROOT / ".claude" / "rules").glob("*.md"):
+        assert (root / ".claude" / "rules" / rule.name).read_bytes() == rule.read_bytes()
     before = (root / "data" / "garmin.db").read_bytes()
     result = run_launcher(root, "fixture")
     assert result.returncode == 1

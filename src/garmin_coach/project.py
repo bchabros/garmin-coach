@@ -114,6 +114,7 @@ def _fixture(root: pathlib.Path) -> None:
         shutil.copyfile(source / name, root / name)
     for name in ("skills", "docs"):
         shutil.copytree(source / name, root / name)
+    shutil.copytree(source / ".claude" / "rules", root / ".claude" / "rules")
     for client in (".agents", ".claude"):
         discovery = root / client / "skills"
         discovery.mkdir(parents=True)

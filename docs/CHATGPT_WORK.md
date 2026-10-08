@@ -6,8 +6,9 @@ and all references remain canonical under `skills/coach/`. Codex discovery throu
 `.agents/skills/coach` and Claude Code discovery through `.claude/skills/coach`
 both link to that directory.
 
-**Validation status:** local stdio MCP and offline tests are verified. Fresh client
-conversations, particularly ChatGPT Work, require the acceptance steps below.
+**Validation status:** local stdio MCP, offline tests, and a user-reported fresh
+Work fixture read are verified. Other client checks, Work development, and the
+final Work read from the existing athlete installation remain pending.
 Configuration presence, a Codex conversation, and a protocol test do not prove Work
 success. Record results in [the validation record](WORK_VALIDATION.md); #82 stays
 incomplete until the required Work coaching and development results exist.
@@ -80,8 +81,13 @@ A Desktop upload is not evidence that Work or Claude Code discovered that skill.
 ### ChatGPT Work on the local Mac
 
 Use a local project with the intended folder selected as primary and choose local
-execution. Verify the product mode and version in the application; its displayed
-name alone is insufficient. The primary folder supplies the durable project guide.
+execution. In the desktop Work view, use `Cmd+O` (Open folder). In the macOS
+folder chooser, use `Cmd+Shift+G` to enter the installation's absolute path and
+select Open. If that command is unavailable, check Settings > Keyboard Shortcuts
+for Open folder and record the missing capability; do not assume a generic plus
+menu can attach a local folder. Verify the product mode and version in the
+application; its displayed name alone is insufficient. The primary folder supplies
+the durable project guide.
 
 The official desktop MCP documentation describes project configuration and manual
 STDIO setup. Try the generated guarded launcher through the supported local MCP
@@ -177,7 +183,8 @@ are required before #82 is complete.
 
 Checked 2026-10-08: [local projects](https://learn.chatgpt.com/docs/projects?surface=app),
 [skills and local discovery](https://learn.chatgpt.com/docs/build-skills?product=breeze),
-[MCP configuration](https://learn.chatgpt.com/docs/extend/mcp), and
+[MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
+[desktop commands](https://learn.chatgpt.com/docs/reference/commands), and
 [Claude Code MCP](https://code.claude.com/docs/en/mcp).
 These establish documented mechanisms; the validation record establishes what was
 actually exercised here.

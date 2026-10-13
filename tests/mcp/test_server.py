@@ -8,12 +8,30 @@ name with a usable description. No stdio transport, no network.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
+import json
+import pathlib
 import types
 
 import pytest
 
+from garmin_coach.core import db
 from garmin_coach.etl import client
 from garmin_coach.mcp import server
+
+
+FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _existing_db(tmp_path) -> str:
+    """The installation's database, already imported: the server never creates one."""
+    path = tmp_path / "t.db"
+    if not path.exists():
+        conn = db.connect(str(path))
+        db.bootstrap(conn)
+        conn.commit()
+        conn.close()
+    return str(path)
 
 
 def _past(days: int) -> str:
@@ -98,7 +116,7 @@ def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_
     monkeypatch.setattr(
         server,
         "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08"),
+        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date="2026-06-08"),
     )
 
     def _login(_settings):
@@ -123,7 +141,7 @@ def _settings(tmp_path, monkeypatch):
         server,
         "get_settings",
         lambda: types.SimpleNamespace(
-            db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08", sync_recheck_days=3
+            db_path=_existing_db(tmp_path), data_start_date="2026-06-08", sync_recheck_days=3
         ),
     )
 
@@ -169,7 +187,6 @@ def test_repair_confirm_refuses_a_stale_token_without_logging_in(tmp_path, monke
 def test_unschedule_confirm_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
     """A day the coach never pushed is refused before any login (issue #74)."""
     _settings(tmp_path, monkeypatch)
-    monkeypatch.setattr(server, "_REPORTS_DIR", str(tmp_path))
     logins = []
     monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
 
@@ -182,7 +199,6 @@ def test_unschedule_confirm_without_a_receipt_never_logs_in(tmp_path, monkeypatc
 
 def test_unschedule_preview_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
     _settings(tmp_path, monkeypatch)
-    monkeypatch.setattr(server, "_REPORTS_DIR", str(tmp_path))
     logins = []
     monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
 
@@ -248,3 +264,35 @@ def test_every_tool_says_whether_it_reaches_the_account():
 
     open_world = {t.name for t in tools if t.annotations and t.annotations.openWorldHint}
     assert open_world == GARMIN_TOOLS
+
+
+def test_the_coach_server_refuses_a_missing_database_instead_of_creating_one(athlete_home):
+    """A server started in the wrong place must say so, not coach from an empty history."""
+    with pytest.raises(Exception, match="No database"):
+        asyncio.run(server.server.call_tool("get_snapshot", {}))
+
+    assert not (athlete_home / "data").exists()
+
+
+def test_a_push_from_chat_records_its_receipt_in_the_installation(athlete_home, monkeypatch):
+    """The receipt a terminal status check later reads is where the chat push wrote it."""
+    from tests.conftest import FakePublisher
+
+    (athlete_home / "data").mkdir()
+    conn = db.connect(str(athlete_home / "data" / "garmin.db"))
+    db.bootstrap(conn)
+    conn.close()
+    today = _dt.date.today()
+    week = (today + _dt.timedelta(days=7 - today.weekday())).isoformat()
+    day = (_dt.date.fromisoformat(week) + _dt.timedelta(days=2)).isoformat()
+    request = json.loads((FIXTURES / "hiit_request.json").read_text())
+    account = FakePublisher()
+    monkeypatch.setattr(server.publish, "connect_publisher", lambda settings: account)
+
+    server.plan_confirm(week, [{"planned": "WOD", "intent": "crossfit"}] * 7)
+    server.author_workout(date=day, request=request)
+    token = server.push_preview(date=day)["data"]["confirm_token"]
+    server.push_confirm(date=day, confirm_token=token)
+
+    receipt = athlete_home / "reports" / day / "push.json"
+    assert json.loads(receipt.read_text())["applied"] is True

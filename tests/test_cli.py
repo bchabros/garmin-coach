@@ -18,6 +18,17 @@ from tests.conftest import FakePublisher, run_spec
 DATA_START = "2026-06-08"
 
 
+def _existing_db(tmp_path) -> str:
+    """The installation's database, already imported: only an import may create one."""
+    path = tmp_path / "t.db"
+    if not path.exists():
+        conn = db.connect(str(path))
+        db.bootstrap(conn)
+        conn.commit()
+        conn.close()
+    return str(path)
+
+
 # --- push: the CLI resolves the account the same way the MCP path does (#40) --
 
 PUSH_DATE = "2026-07-17"
@@ -29,7 +40,7 @@ def _run_cli_push(tmp_path, monkeypatch, pub, spec, *, replace=False):
     day_dir.mkdir(exist_ok=True)
     (day_dir / "workout.json").write_text(json.dumps(spec))
     monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
     )
     monkeypatch.setattr(cli.publish, "connect_publisher", lambda settings: pub)
     args = argparse.Namespace(
@@ -96,12 +107,14 @@ def test_cli_push_prints_the_receipt_it_wrote(tmp_path, monkeypatch, capsys):
     assert f"push complete: {day_dir / 'push.json'}" in capsys.readouterr().out
 
 
-def test_cli_push_refuses_a_different_date_before_login(tmp_path, monkeypatch, capsys):
+def test_cli_push_refuses_a_different_date_before_login(
+    tmp_path, monkeypatch, capsys, athlete_home
+):
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir()
     (day_dir / "workout.json").write_text(json.dumps(run_spec(date="2026-07-18")))
     monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
     )
     connections = []
     pub = FakePublisher()
@@ -445,7 +458,7 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
     monkeypatch.setattr(
         cli,
         "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date=DATA_START),
+        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date=DATA_START),
     )
     args = argparse.Namespace(week=None, plans_dir=str(plans_dir), reports_dir=str(reports_dir))
 
@@ -458,7 +471,7 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
 
 
 def test_cli_partial_plan_import_names_the_saved_week_and_rebuilds_it(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, athlete_home
 ):
     path = _seeded_db(tmp_path, dates=("2026-07-13", "2026-07-19"))
     plans = tmp_path / "plans"
@@ -654,7 +667,7 @@ def test_cmd_log_sets_reports_a_failure_with_exit_code_2(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         cli,
         "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date=DATA_START),
+        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date=DATA_START),
     )
     args = argparse.Namespace(activity_id=999, stations=["SLED_PULL"])
 
@@ -672,7 +685,7 @@ def _run_cli_daily(tmp_path, monkeypatch, login_error):
         cli,
         "get_settings",
         lambda: types.SimpleNamespace(
-            db_path=str(tmp_path / "t.db"),
+            db_path=_existing_db(tmp_path),
             log_path=str(log_path),
             log_max_bytes=1_000_000,
             log_backup_count=1,
@@ -708,10 +721,10 @@ def test_daily_keeps_the_traceback_for_any_other_login_failure(tmp_path, monkeyp
 
 
 def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, athlete_home
 ):
     monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))
+        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
     )
 
     def _login(_settings):

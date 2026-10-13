@@ -29,6 +29,69 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
   ADRs). `skills/coach/` -- the coach skill (narrative layer over the digest).
 - `data/garmin.db` -- SQLite system-of-record. `logs/` -- nightly run logs.
 
+## The athlete installation (where every run reads and writes)
+
+Every command, the nightly run and the coach server act on one **athlete installation**:
+the folder holding one athlete's personal state - its `.env`, `data/garmin.db`, `plans/`,
+`reports/`, `logs/`, `memory/`, and by default the saved Garmin login (ADR 0031). The
+program itself never lives there. The directory map above is the inside of an
+installation; the owner's source checkout doubles as one, adopted in place.
+
+**Selecting it**, in this order:
+
+1. `--home <folder>` on `garmin-coach` (before the subcommand) or on `garmin-coach-mcp`;
+2. `GARMIN_COACH_HOME=<folder>`;
+3. otherwise the folder the run starts in, **only if it holds a `.env`**.
+
+```bash
+garmin-coach --home ~/GarminCoach report
+GARMIN_COACH_HOME=~/GarminCoach garmin-coach daily
+garmin-coach-mcp --home ~/GarminCoach     # what an assistant client's entry runs
+poetry run garmin-coach report             # from the checkout: unchanged
+```
+
+`scripts/daily.sh`, the repo `.mcp.json`, the Claude Desktop entry (`task claude:register`)
+and the guarded launcher (`scripts/coach_project.py --project`) all start inside the
+checkout, so none of them changes.
+
+**Paths.** Relative paths in the installation's `.env` resolve against the installation,
+never against the starting folder; paths outside it are fine when written there. Reports,
+workout specs and push receipts always live in `<installation>/reports/`. The
+`--reports-dir` and `--plans-dir` flags stay per-command overrides.
+
+| Setting | Default, inside the installation |
+|---|---|
+| `DB_PATH` | `data/garmin.db` |
+| `PLANS_DIR` | `plans/` |
+| `LOG_PATH` | `logs/daily.log` |
+| `GARMINTOKENS` | `.garminconnect/` |
+
+The saved Garmin login defaults to the installation so two installations never share an
+account; the owner's `.env` names `~/.garminconnect` explicitly and keeps using it.
+
+**Only an import creates the database.** `backfill` and `sync` may create a missing
+database; every other command, `daily` and the coach server refuse.
+
+**Refusals** stop before any data is read or written; commands exit 2 and the server exits
+before serving:
+
+| Message starts with | Cause | What to do |
+|---|---|---|
+| `No athlete installation selected` | no `--home`, no `GARMIN_COACH_HOME`, and the starting folder has no `.env` | name the installation, or start inside it |
+| `Not an athlete installation` | the named folder has no `.env` (often a typo) | name the right folder; a new installation needs a `.env` (`cp .env.example .env`) |
+| `Installation conflict: --home and GARMIN_COACH_HOME` | the two name different folders | drop one, or make them agree |
+| `Installation conflict: DB_PATH` (or `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS`, `GARMIN_EMAIL`) | an environment value disagrees with the installation's `.env` | unset it, or write the intended value into that `.env` |
+| `No database at ...` | the installation has never been imported | `garmin-coach backfill --from YYYY-MM-DD` (or `sync`) |
+| `Invalid runtime settings in ...` | the `.env` does not parse | fix that file |
+
+A relative path in an environment variable is read from the folder the run starts in, as
+the shell would; an absolute path or a symlink to the same file always agrees.
+The guarded launcher preserves that starting folder for its diagnostic server as well.
+Environment names are case-insensitive; every spelling must agree with the installation,
+so conflicting `GARMIN_EMAIL` and `garmin_email` values are refused in either order.
+Settings that do not choose a location or an account (e.g. `SYNC_RECHECK_DAYS`) still
+take an environment value over the `.env`.
+
 ## Running the pipeline
 
 ```bash
@@ -52,7 +115,8 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   so an edit takes effect by morning at the latest. A revision that leaves an
   already-pushed workout harder than the new plan prints a `conflict:` line naming that
   date (issue #22) -- the import still succeeds; re-author and re-push that day. It reads
-  the receipts under `--reports-dir` (default `./reports`), as does the nightly scan.
+  the receipts under `--reports-dir` (default: the installation's `reports/`), as does
+  the nightly scan.
   If a later file is malformed, earlier accepted weeks stay saved and their metrics
   are rebuilt; the command names those weeks and the failing file and exits 1.
 - **Nightly:** `daily` (or `scripts/daily.sh`) chains plans -> sync -> features -> alerts.
@@ -90,8 +154,12 @@ good generation, so a report read against them is stale but never mixed.
 
 ## Report retention
 
-Run from the project root. The command only walks `./reports`; there is no
+The command only walks the selected installation's `reports/`; there is no
 `--reports-dir` option that could point it at `plans/` or the athlete profile.
+Both preview and confirmed pruning require an existing installation database, like all
+non-import commands. This check only verifies the file exists; pruning never opens or
+migrates the database. If it is missing, the command refuses before scanning or deleting
+reports and tells you to import the athlete's history first.
 
 ```bash
 poetry run garmin-coach reports prune                  # dry-run, default age > 90 days
@@ -136,9 +204,10 @@ receipts are records, never disposable report output. See
 ## Logs
 
 In-process `RotatingFileHandler`, configured by `daily` itself (not the shell wrapper).
-Config keys (`config.py`, overridable via env / `.env`):
+Config keys (`config.py`, set in the installation's `.env`; a `LOG_PATH` from the
+environment must agree with it):
 
-- `LOG_PATH` (default `./logs/daily.log`)
+- `LOG_PATH` (default `logs/daily.log` inside the installation)
 - `LOG_MAX_BYTES` (default `1_000_000`)
 - `LOG_BACKUP_COUNT` (default `5`)
 
@@ -147,10 +216,12 @@ Config keys (`config.py`, overridable via env / `.env`):
 ## Gotchas (operational)
 
 - **Login rate limits (429).** Garmin returns 429 (IP-level) on repeated login attempts.
-  Once tokens are cached in `~/.garminconnect`, resume avoids the login endpoint -- don't
+  Once tokens are cached in the saved login (`GARMINTOKENS`), resume avoids the login
+  endpoint -- don't
   hammer it, **wait it out**. A 429 typically surfaces as a `failed` run.
 - **A scheduled run never asks a question.** The nightly run stands on the saved login in
-  `~/.garminconnect` alone; no password is stored anywhere, by choice (a stored password
+  the saved login (`GARMINTOKENS`) alone; no password is stored anywhere, by choice (a
+  stored password
   would turn every passing network failure at 06:00 into an unattended full login against
   the rate-limited endpoint above, and an account with two-step verification would stop at
   the code anyway). When the saved login does not resume, it is tried three times over
@@ -609,11 +680,12 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
 - **Claude Desktop** — does **not** read `.mcp.json`. Add the server to
   `claude_desktop_config.json` (macOS:
   `~/Library/Application Support/Claude/claude_desktop_config.json`). Desktop launches
-  the command from its own working directory, and the server resolves `.env`,
-  `./data/garmin.db`, and `./reports` **relative to its cwd** — so the command must
-  `cd` into the repo first. Poetry's `-C <dir>` flag is not enough: it points poetry
-  at the project but leaves the server's cwd unchanged (verified — the subprocess
-  keeps the caller's cwd), which would silently bootstrap an empty DB elsewhere.
+  the command from its own working directory, and the server serves the folder it
+  starts in only when that folder holds a `.env` (ADR 0031) — so the command must
+  `cd` into the installation first (or pass `--home`). Poetry's `-C <dir>` flag is not
+  enough: it points poetry at the project but leaves the server's cwd unchanged
+  (verified — the subprocess keeps the caller's cwd), so the server would refuse to
+  start.
   Wrap the launch in a shell instead:
 
   ```json

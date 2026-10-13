@@ -641,3 +641,19 @@ code, docstrings, PRDs, and ADRs.
   Falsity deletes, age only flags a note for checking. Distinct from the athlete
   profile's **consolidation proposal**, which is consent-gated and never runs on its own
   (issue #56).
+
+## Installation terms (issue #83)
+
+- **athlete installation** - one folder holding one athlete's entire personal state: their
+  settings, database, authored plans, reports with workout specs and push receipts, logs,
+  the athlete profile, the race archive, and by default their saved Garmin login. The
+  program (code, packaged schema, coach skill) is never part of it, so updating or
+  removing the program leaves it untouched. One athlete per installation; any number of
+  assistants may serve the same one. Not "project", "data dir" or "installation folder".
+- **selected installation** - the one athlete installation a command, nightly run or coach
+  server acts on for its whole run. It is named explicitly or recognized in the folder the
+  run starts from - never inferred from where the program itself is installed, and never
+  created as a side effect of a run that did not ask for it.
+- **source checkout** - a clone of this repository, used to develop the program. Not an
+  installation by itself; the owner's checkout also serves as their installation because
+  it holds their settings and data, adopted in place rather than moved.

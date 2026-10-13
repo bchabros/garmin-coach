@@ -73,7 +73,7 @@ def push_for_date(
     *,
     date: str,
     connect: Callable[[], publish.WorkoutPublisher],
-    reports_dir: str | pathlib.Path = "reports",
+    reports_dir: str | pathlib.Path,
     confirm: bool = False,
     expected_token: str | None = None,
     replace: bool = False,

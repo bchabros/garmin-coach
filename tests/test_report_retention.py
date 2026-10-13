@@ -1,6 +1,7 @@
 """Report retention through the operator's CLI, using a disposable report tree."""
 
 import datetime as dt
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -8,10 +9,19 @@ import pytest
 from garmin_coach.cli import main
 
 
+def _start_in_installation(tmp_path, monkeypatch):
+    """Run from a temporary installation with an existing database, never opened by pruning."""
+    (tmp_path / ".env").write_text("")
+    database = tmp_path / "data" / "garmin.db"
+    database.parent.mkdir()
+    sqlite3.connect(database).close()
+    monkeypatch.chdir(tmp_path)
+
+
 def test_prune_defaults_to_preview_of_reports_strictly_older_than_90_days(
     tmp_path, monkeypatch, capsys
 ):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     today = dt.date.today()
     old = tmp_path / "reports" / (today - dt.timedelta(days=91)).isoformat()
     boundary = tmp_path / "reports" / (today - dt.timedelta(days=90)).isoformat()
@@ -33,7 +43,7 @@ def test_prune_defaults_to_preview_of_reports_strictly_older_than_90_days(
 
 
 def test_confirm_prunes_only_report_files_and_keeps_records(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     old = tmp_path / "reports" / (dt.date.today() - dt.timedelta(days=91)).isoformat()
     old.mkdir(parents=True)
     retained = ("digest.json", "snapshot.json", "workout.json", "push.json", "notes.md")
@@ -53,7 +63,7 @@ def test_confirm_prunes_only_report_files_and_keeps_records(tmp_path, monkeypatc
 
 
 def test_custom_age_and_digest_opt_out_still_keep_workout_history(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     today = dt.date.today()
     old = tmp_path / "reports" / (today - dt.timedelta(days=31)).isoformat()
     boundary = tmp_path / "reports" / (today - dt.timedelta(days=30)).isoformat()
@@ -70,7 +80,7 @@ def test_custom_age_and_digest_opt_out_still_keep_workout_history(tmp_path, monk
 
 @pytest.mark.parametrize("age", ["-1", "1.5", "invalid"])
 def test_invalid_age_is_refused_without_deleting_anything(tmp_path, monkeypatch, capsys, age):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     folder = tmp_path / "reports" / dt.date.today().isoformat()
     folder.mkdir(parents=True)
     (folder / "report.md").write_text("keep")
@@ -84,7 +94,7 @@ def test_invalid_age_is_refused_without_deleting_anything(tmp_path, monkeypatch,
 
 
 def test_non_dated_entries_and_nested_artifacts_are_never_pruned(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     reports = tmp_path / "reports"
     reports.mkdir()
     (reports / "gh-issue-workout-name.md").write_text("issue draft")
@@ -107,7 +117,7 @@ def test_non_dated_entries_and_nested_artifacts_are_never_pruned(tmp_path, monke
 
 @pytest.mark.parametrize("link_kind", ["root", "day", "file"])
 def test_symlinks_cannot_redirect_retention_into_plans(tmp_path, monkeypatch, link_kind):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     reports = tmp_path / "reports"
     plans = tmp_path / "plans"
     day = (dt.date.today() - dt.timedelta(days=91)).isoformat()
@@ -133,19 +143,20 @@ def test_symlinks_cannot_redirect_retention_into_plans(tmp_path, monkeypatch, li
 
 
 def test_missing_reports_is_a_noop_without_creating_directories(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
 
     assert main(["reports", "prune", "--confirm"]) == 0
 
     assert "folders=0 deleted_files=0" in capsys.readouterr().out
-    assert list(tmp_path.iterdir()) == []
+    assert {path.name for path in tmp_path.iterdir()} == {".env", "data"}
+    assert (tmp_path / "data" / "garmin.db").read_bytes() == b""
 
 
 @pytest.mark.parametrize("all_fail,expected_code", [(False, 1), (True, 2)])
 def test_deletion_failures_are_reported_and_other_files_still_prune(
     tmp_path, monkeypatch, capsys, all_fail, expected_code
 ):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     folder = tmp_path / "reports" / (dt.date.today() - dt.timedelta(days=91)).isoformat()
     folder.mkdir(parents=True)
     for name in ("report.md", "acwr.png"):
@@ -169,7 +180,7 @@ def test_deletion_failures_are_reported_and_other_files_still_prune(
 
 
 def test_empty_report_folder_is_removed_only_after_confirmed_deletion(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     folder = tmp_path / "reports" / (dt.date.today() - dt.timedelta(days=91)).isoformat()
     folder.mkdir(parents=True)
     (folder / "digest.json").write_text("{}")
@@ -184,7 +195,7 @@ def test_empty_report_folder_is_removed_only_after_confirmed_deletion(tmp_path, 
 def test_unreadable_report_is_reported_without_aborting_other_folders(
     tmp_path, monkeypatch, capsys
 ):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     reports = tmp_path / "reports"
     today = dt.date.today()
     older = reports / (today - dt.timedelta(days=92)).isoformat()
@@ -211,7 +222,7 @@ def test_unreadable_report_is_reported_without_aborting_other_folders(
 def test_later_folder_inspection_failure_keeps_actual_deletion_summary(
     tmp_path, monkeypatch, capsys
 ):
-    monkeypatch.chdir(tmp_path)
+    _start_in_installation(tmp_path, monkeypatch)
     today = dt.date.today()
     reports = tmp_path / "reports"
     older = reports / (today - dt.timedelta(days=92)).isoformat()

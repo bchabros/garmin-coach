@@ -16,31 +16,8 @@ from typing import Any
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from pydantic_settings import DotEnvSettingsSource
 
-from .core import db
-from .core.config import Settings, get_settings
-
-
-def _installation_settings(root: pathlib.Path) -> Settings:
-    try:
-        settings = get_settings()
-        configured = DotEnvSettingsSource(Settings, env_file=root / ".env")()
-    except Exception:
-        raise ValueError(
-            "Invalid runtime settings; review the selected project's configuration."
-        ) from None
-    for name in ("db_path", "plans_dir"):
-        expected = configured.get(name, Settings.model_fields[name].default)
-        configured_path = pathlib.Path(expected).expanduser().resolve()
-        runtime_path = pathlib.Path(getattr(settings, name)).expanduser().resolve()
-        if runtime_path != configured_path:
-            variable = name.upper()
-            raise ValueError(
-                f"Installation conflict: {variable} differs from the selected project's "
-                f"configuration; unset {variable} or intentionally update that project's .env."
-            )
-    return settings
+from .core import db, installation
 
 
 def _prepare(root: pathlib.Path) -> None:
@@ -53,8 +30,7 @@ def _prepare(root: pathlib.Path) -> None:
     references = re.findall(r"\*\*MUST\*\*\s+read\s+`(references/[\w-]+\.md)`", router.read_text())
     if not references or any(not (skill / name).is_file() for name in references):
         raise ValueError("Coach references missing; install the complete canonical skill.")
-    os.chdir(root)
-    settings = _installation_settings(root)
+    settings = installation.activate(root)
     path = pathlib.Path(settings.db_path).expanduser().resolve()
     if not path.is_file():
         raise ValueError(
@@ -83,7 +59,7 @@ async def _probe(root: pathlib.Path) -> dict[str, Any]:
         command=sys.executable,
         args=["-m", "garmin_coach.project", "serve", "--project", str(root)],
         env=dict(os.environ),
-        cwd=str(root.parent),
+        cwd=str(pathlib.Path.cwd()),
     )
     async with asyncio.timeout(15):
         async with stdio_client(params) as (read, write):
@@ -186,7 +162,7 @@ def main() -> int:
         if args.command == "serve":
             from .mcp import server
 
-            server.main(existing_db_only=True)
+            server.main(existing_db_only=True, argv=[])
         else:
             print(json.dumps(asyncio.run(_probe(root)), indent=2))
     except ValueError as exc:

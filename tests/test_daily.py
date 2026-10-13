@@ -67,18 +67,20 @@ class _SleepFailsClient:
         return None
 
 
-def test_daily_run_is_ok_when_pipeline_completes_cleanly(conn, fake_client):
+def test_daily_run_is_ok_when_pipeline_completes_cleanly(conn, fake_client, tmp_path):
     """A run where every stream progresses without warnings is ok/exit 0."""
     client = fake_client()  # returns [] / None everywhere: no data, no warnings
 
-    result = daily.run_daily(client, conn, data_start_date="2026-06-08", to_date="2026-06-10")
+    result = daily.run_daily(
+        client, conn, data_start_date="2026-06-08", to_date="2026-06-10", reports_dir=tmp_path
+    )
 
     assert result.features_ok is True
     assert result.status == "ok"
     assert result.exit_code == 0
 
 
-def test_daily_run_surfaces_hrv_low_alert_from_fresh_mart(conn, fake_client):
+def test_daily_run_surfaces_hrv_low_alert_from_fresh_mart(conn, fake_client, tmp_path):
     """Given a low latest HRV night, the run extracts an HRV_LOW_MORNING alert."""
     # Descending series [76,72,68,64,60]: median 68, SD 6.3245, threshold 61.67,
     # so only the last night (60, latest day) flags low.
@@ -86,13 +88,15 @@ def test_daily_run_surfaces_hrv_low_alert_from_fresh_mart(conn, fake_client):
         db.upsert_daily(conn, "hrv_nightly", {"date": f"2026-06-{8 + i:02d}", "avg_hrv": hrv})
     client = fake_client()
 
-    result = daily.run_daily(client, conn, data_start_date="2026-06-08", to_date="2026-06-12")
+    result = daily.run_daily(
+        client, conn, data_start_date="2026-06-08", to_date="2026-06-12", reports_dir=tmp_path
+    )
 
     assert result.status == "ok"
     assert "HRV_LOW_MORNING" in [a["code"] for a in result.alerts]
 
 
-def test_daily_run_is_degraded_when_one_stream_fails(conn, fixture):
+def test_daily_run_is_degraded_when_one_stream_fails(conn, fixture, tmp_path):
     """One failing stream degrades the run (exit 1) but does not abort it."""
     client = _SleepFailsClient(hrv_by_day={"2026-06-09": fixture("hrv_day")})
 
@@ -103,6 +107,7 @@ def test_daily_run_is_degraded_when_one_stream_fails(conn, fixture):
         to_date="2026-06-09",
         max_attempts=1,
         retry_base_seconds=0,
+        reports_dir=tmp_path,
     )
 
     assert result.features_ok is True
@@ -110,7 +115,7 @@ def test_daily_run_is_degraded_when_one_stream_fails(conn, fixture):
     assert result.exit_code == 1
 
 
-def test_daily_run_fails_when_no_stream_progresses(conn):
+def test_daily_run_fails_when_no_stream_progresses(conn, tmp_path):
     """A total outage (every stream fails) is failed/exit 2."""
     client = _AllStreamsFailClient()
 
@@ -121,6 +126,7 @@ def test_daily_run_fails_when_no_stream_progresses(conn):
         to_date="2026-06-09",
         max_attempts=1,
         retry_base_seconds=0,
+        reports_dir=tmp_path,
     )
 
     assert result.status == "failed"
@@ -190,9 +196,13 @@ def test_daily_run_degrades_loudly_on_a_bad_plan_file(conn, fake_client, tmp_pat
     assert result.features_ok is True  # the pipeline still ran
 
 
-def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client):
+def test_daily_run_skips_plans_stage_when_unconfigured(conn, fake_client, tmp_path):
     result = daily.run_daily(
-        fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10"
+        fake_client(),
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-10",
+        reports_dir=tmp_path,
     )
     assert result.plans_imported == []
     assert result.status == "ok"
@@ -288,7 +298,7 @@ def _easy_run(conn, date):
 
 
 def test_daily_run_logs_the_distance_between_our_split_and_garmins_balance(
-    conn, fake_client, caplog
+    conn, fake_client, caplog, tmp_path
 ):
     """Ours is 100% easy; Garmin says 50 / 30 / 20: differences 50, 30, 20 -> 33.3 points."""
     _easy_run(conn, "2026-06-10")
@@ -299,15 +309,27 @@ def test_daily_run_logs_the_distance_between_our_split_and_garmins_balance(
     )
 
     with caplog.at_level("INFO", logger="garmin_coach"):
-        daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+        daily.run_daily(
+            fake_client(),
+            conn,
+            data_start_date="2026-06-08",
+            to_date="2026-06-10",
+            reports_dir=tmp_path,
+        )
 
     assert "daily: load split differs from Garmin's 28-day balance by 33.3 pp" in caplog.text
 
 
-def test_daily_run_logs_no_distance_without_garmins_balance(conn, fake_client, caplog):
+def test_daily_run_logs_no_distance_without_garmins_balance(conn, fake_client, caplog, tmp_path):
     _easy_run(conn, "2026-06-10")
 
     with caplog.at_level("INFO", logger="garmin_coach"):
-        daily.run_daily(fake_client(), conn, data_start_date="2026-06-08", to_date="2026-06-10")
+        daily.run_daily(
+            fake_client(),
+            conn,
+            data_start_date="2026-06-08",
+            to_date="2026-06-10",
+            reports_dir=tmp_path,
+        )
 
     assert "load split differs" not in caplog.text

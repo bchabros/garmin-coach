@@ -12,8 +12,8 @@
   morning captures the previous night's HRV/sleep. StandardOut/Error here are a
   coarse launchd capture; the rotated app log lives at logs/daily.log (LOG_PATH).
 
-  Credentials: none are needed here. The run resumes the saved login in
-  ~/.garminconnect, so log in once from a terminal first (any Garmin command,
+  Credentials: none are needed here. The run resumes the installation's saved
+  login (GARMINTOKENS), so log in once from a terminal first (any Garmin command,
   e.g. `poetry run garmin-coach sync`). Without a terminal the run never prompts:
   if the saved login stops resuming it fails with one readable line in
   logs/daily.log saying so. Do not put GARMIN_PASSWORD in EnvironmentVariables

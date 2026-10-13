@@ -22,7 +22,7 @@ def generate_report(
     *,
     from_date: str | None = None,
     to_date: str | None = None,
-    reports_dir: str = "./reports",
+    reports_dir: str,
     recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> pathlib.Path:
     """Build the digest + charts + snapshot and write them to ``reports/{today}/``.

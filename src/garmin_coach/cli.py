@@ -251,6 +251,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
     out = report.generate_report(
         conn,
+        reports_dir=str(installation.reports_dir()),
         from_date=args.from_date,
         to_date=args.to_date,
         recheck_days=settings.sync_recheck_days,
@@ -680,8 +681,8 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument(
         "--reports-dir",
         dest="reports_dir",
-        default="./reports",
-        help="Root directory for dated report folders.",
+        default=None,
+        help="Root directory for dated report folders (default: the installation's reports/).",
     )
     au.set_defaults(func=_cmd_author)
 
@@ -702,8 +703,8 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument(
         "--reports-dir",
         dest="reports_dir",
-        default="./reports",
-        help="Root directory for dated report folders.",
+        default=None,
+        help="Root directory for dated report folders (default: the installation's reports/).",
     )
     pu.set_defaults(func=_cmd_push)
 
@@ -728,8 +729,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--reports-dir",
         dest="reports_dir",
-        default="./reports",
-        help="Root directory for dated report folders.",
+        default=None,
+        help="Root directory for dated report folders (default: the installation's reports/).",
     )
     sp.set_defaults(func=_cmd_snapshot)
 
@@ -801,8 +802,11 @@ def build_parser() -> argparse.ArgumentParser:
     pl_imp.add_argument(
         "--reports-dir",
         dest="reports_dir",
-        default="./reports",
-        help="Root directory for dated report folders (checked for invalidated pushes).",
+        default=None,
+        help=(
+            "Root directory for dated report folders, checked for invalidated pushes "
+            "(default: the installation's reports/)."
+        ),
     )
     pl_imp.set_defaults(func=_cmd_plan)
 
@@ -864,7 +868,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: yesterday)."
     )
     dl.add_argument(
-        "--reports-dir", default="./reports", help="Root of push receipts for plan conflicts."
+        "--reports-dir",
+        default=None,
+        help="Root of push receipts for plan conflicts (default: the installation's reports/).",
     )
     dl.set_defaults(func=_cmd_daily)
 
@@ -892,7 +898,7 @@ def _nonnegative_days(value: str) -> int:
 def _cmd_prune_reports(args: argparse.Namespace) -> int:
     try:
         result = retention.prune_reports(
-            pathlib.Path("reports"),
+            installation.reports_dir(),
             today=_dt.date.today(),
             older_than=args.older_than,
             confirm=args.confirm,
@@ -923,6 +929,8 @@ def main(argv: list[str] | None = None) -> int:
     except installation.InstallationError as exc:
         print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2
+    if getattr(args, "reports_dir", "") is None:
+        args.reports_dir = str(installation.reports_dir())
     try:
         return args.func(args)
     except installation.InstallationError as exc:

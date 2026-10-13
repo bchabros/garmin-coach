@@ -135,7 +135,7 @@ def run_daily(
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
     plans_dir: str | Path | None = None,
-    reports_dir: str | Path = "reports",
+    reports_dir: str | Path,
     recheck_days: int = DEFAULT_RECHECK_DAYS,
 ) -> DailyResult:
     """Run the nightly pipeline: plans -> sync -> features -> alert extraction.

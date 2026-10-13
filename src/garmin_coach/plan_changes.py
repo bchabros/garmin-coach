@@ -38,7 +38,7 @@ def import_plans(
     conn: sqlite3.Connection,
     *,
     plans_dir: str | pathlib.Path,
-    reports_dir: str | pathlib.Path = "reports",
+    reports_dir: str | pathlib.Path,
     week: str | None = None,
     data_start_date: str,
     rebuild: bool = True,

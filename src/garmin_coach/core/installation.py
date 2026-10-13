@@ -21,6 +21,7 @@ from .config import Settings
 
 HOME_VARIABLE = "GARMIN_COACH_HOME"
 CONFIG_FILE = ".env"
+REPORTS_FOLDER = "reports"
 
 # Settings that decide where a run reads and writes, or whose Garmin account it logs in
 # to. An environment value for one of them must agree with the installation's own
@@ -85,6 +86,15 @@ def select(home: str | os.PathLike[str] | None = None) -> pathlib.Path:
             f"select the intended installation folder."
         )
     return root
+
+
+def reports_dir() -> pathlib.Path:
+    """The selected installation's folder of dated reports, workout specs and receipts.
+
+    Raises:
+        InstallationError: No usable installation is selected.
+    """
+    return select() / REPORTS_FOLDER
 
 
 def open_database(settings: Settings, *, create: bool = False) -> sqlite3.Connection:

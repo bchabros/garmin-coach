@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import json
 import pathlib
 
 import pytest
@@ -283,6 +285,147 @@ def test_a_manual_import_creates_the_database_inside_the_installation(
 
     assert (home / "data" / "garmin.db").is_file()
     assert list(elsewhere.iterdir()) == []
+
+
+# --- every personal file lands in the selected installation (T3) -------------
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+WORKOUT_DAY = (_dt.date.today() + _dt.timedelta(days=2)).isoformat()
+WORKOUT_WEEK = (
+    _dt.date.fromisoformat(WORKOUT_DAY)
+    - _dt.timedelta(days=_dt.date.fromisoformat(WORKOUT_DAY).weekday())
+).isoformat()
+
+
+def _seed_standing(home: pathlib.Path) -> None:
+    conn = db.connect(str(home / "data" / "garmin.db"))
+    for date in ("2026-07-21", "2026-07-22"):
+        db.upsert_daily(
+            conn,
+            "daily_metrics",
+            {"date": date, "load_day": 80, "hrv": 61, "hrv_baseline": 60, "hrv_sd": 5, "acwr": 1.0},
+        )
+    conn.commit()
+    conn.close()
+
+
+def _plan_crossfit_week(home: pathlib.Path) -> None:
+    """Plan the workout's week so the plan of record allows a crossfit session."""
+    (home / "plans").mkdir(exist_ok=True)
+    (home / "plans" / f"{WORKOUT_WEEK}_week.md").write_text(
+        _week_file(WORKOUT_WEEK, "crossfit"), encoding="utf-8"
+    )
+    assert cli.main(["--home", str(home), "plan", "import"]) == 0
+
+
+def _week_file(monday: str, intent: str = "easy") -> str:
+    """A plan file in the athlete's own table format, one intent for every day."""
+    start = _dt.date.fromisoformat(monday)
+    rows = "\n".join(
+        f"| {abbr} | {(start + _dt.timedelta(days=i)).strftime('%d.%m')} | sesja | {intent} | plan |"
+        for i, abbr in enumerate(("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"))
+    )
+    return "| Dzień | Data | Plan | Zamiar (dla silnika) | Status |\n|---|---|---|---|---|\n" + rows
+
+
+def test_a_report_lands_in_the_installation(tmp_path, elsewhere):
+    home = make_installation(tmp_path / "athlete")
+    _seed_standing(home)
+
+    assert cli.main(["--home", str(home), "report"]) == 0
+
+    today = _dt.date.today().isoformat()
+    assert (home / "reports" / today / "digest.json").is_file()
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_an_authored_workout_and_its_push_receipt_land_in_the_installation(
+    tmp_path, elsewhere, monkeypatch
+):
+    from tests.conftest import FakePublisher
+
+    home = make_installation(tmp_path / "athlete")
+    _plan_crossfit_week(home)
+    account = FakePublisher()
+    monkeypatch.setattr(cli.publish, "connect_publisher", lambda settings: account)
+    request = FIXTURES / "hiit_request.json"
+
+    assert (
+        cli.main(["--home", str(home), "author", "--date", WORKOUT_DAY, "--request", str(request)])
+        == 0
+    )
+    assert cli.main(["--home", str(home), "push", "--date", WORKOUT_DAY, "--confirm"]) == 0
+
+    day = home / "reports" / WORKOUT_DAY
+    assert (day / "workout.json").is_file()
+    assert json.loads((day / "push.json").read_text())["applied"] is True
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_the_reports_dir_flag_still_overrides_one_command(tmp_path, elsewhere):
+    home = make_installation(tmp_path / "athlete")
+    _plan_crossfit_week(home)
+    chosen = tmp_path / "chosen reports"
+    request = FIXTURES / "hiit_request.json"
+
+    assert (
+        cli.main(
+            [
+                "--home",
+                str(home),
+                "author",
+                "--date",
+                WORKOUT_DAY,
+                "--request",
+                str(request),
+                "--reports-dir",
+                str(chosen),
+            ]
+        )
+        == 0
+    )
+
+    assert (chosen / WORKOUT_DAY / "workout.json").is_file()
+    assert not (home / "reports").exists()
+
+
+def test_plans_are_imported_from_the_installation(tmp_path, elsewhere, capsys):
+    home = make_installation(tmp_path / "athlete")
+    (home / "plans").mkdir()
+    (home / "plans" / "2026-07-13_week.md").write_text(_week_file("2026-07-13"), encoding="utf-8")
+
+    assert cli.main(["--home", str(home), "plan", "import"]) == 0
+
+    assert "1 week(s)" in capsys.readouterr().out
+    conn = db.connect(str(home / "data" / "garmin.db"))
+    weeks = conn.execute("SELECT count(DISTINCT week_start) FROM plan_week").fetchone()[0]
+    conn.close()
+    assert weeks == 1
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_the_nightly_log_lands_in_the_installation(tmp_path, elsewhere, monkeypatch):
+    from tests.conftest import FakeGarminClient
+
+    yesterday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+    home = make_installation(tmp_path / "athlete", env=f"DATA_START_DATE={yesterday}\n")
+    monkeypatch.setattr(cli.client, "login", lambda settings: FakeGarminClient())
+
+    assert cli.main(["--home", str(home), "daily"]) in (0, 1)
+
+    assert "daily: run complete" in (home / "logs" / "daily.log").read_text()
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_report_pruning_acts_on_the_installation(tmp_path, elsewhere, capsys):
+    home = make_installation(tmp_path / "athlete")
+    old = (_dt.date.today() - _dt.timedelta(days=120)).isoformat()
+    (home / "reports" / old).mkdir(parents=True)
+    (home / "reports" / old / "report.md").write_text("report")
+
+    assert cli.main(["--home", str(home), "reports", "prune"]) == 0
+
+    assert f"{old}: age=120 days" in capsys.readouterr().out
 
 
 def test_two_installations_keep_separate_garmin_logins(tmp_path, monkeypatch):

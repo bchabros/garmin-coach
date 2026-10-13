@@ -189,8 +189,26 @@ def test_an_environment_value_agreeing_with_the_installation_is_accepted(
     home = make_installation(tmp_path / "athlete", env="GARMIN_EMAIL=Athlete@Example.com\n")
     monkeypatch.setenv("DB_PATH", str(home / "data" / ".." / "data" / "garmin.db"))
     monkeypatch.setenv("GARMIN_EMAIL", "athlete@example.com")
+    monkeypatch.setenv("garmin_email", "ATHLETE@example.com")
 
     assert cli.main(["--home", str(home), "event", "list"]) == 0
+
+
+@pytest.mark.parametrize("conflict_first", [False, True])
+def test_conflicting_case_variants_of_the_account_are_refused(
+    tmp_path, elsewhere, monkeypatch, capsys, conflict_first
+):
+    home = make_installation(tmp_path / "athlete", env="GARMIN_EMAIL=athlete@example.test\n")
+    values = [("GARMIN_EMAIL", "athlete@example.test"), ("garmin_email", "other@example.test")]
+    for name, value in reversed(values) if conflict_first else values:
+        monkeypatch.setenv(name, value)
+    before = _snapshot(home)
+
+    assert cli.main(["--home", str(home), "event", "list"]) == 2
+
+    assert "Installation conflict: GARMIN_EMAIL" in capsys.readouterr().err
+    assert _snapshot(home) == before
+    assert list(elsewhere.iterdir()) == []
 
 
 def test_an_environment_path_through_a_symlink_names_the_same_file(
@@ -274,6 +292,8 @@ def test_an_explicitly_configured_garmin_login_location_is_kept(tmp_path, monkey
         ["push", "--date", "2026-10-14"],
         ["refresh-today"],
         ["daily"],
+        ["reports", "prune"],
+        ["reports", "prune", "--confirm"],
     ],
     ids=lambda command: " ".join(command[:2]),
 )
@@ -293,6 +313,27 @@ def test_only_a_manual_import_may_create_the_database(
     assert "backfill" in error
     assert [path.name for path in home.iterdir()] == [".env"]
     assert logins == []
+    assert list(elsewhere.iterdir()) == []
+
+
+@pytest.mark.parametrize("confirm", [False, True])
+def test_report_pruning_refuses_a_missing_database_without_deleting_reports(
+    tmp_path, elsewhere, capsys, confirm
+):
+    home = tmp_path / "athlete"
+    home.mkdir()
+    (home / ".env").write_text("")
+    report = home / "reports" / "2026-01-01" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("preserve the synthetic report")
+    before = _snapshot(home)
+    command = ["reports", "prune", *(["--confirm"] if confirm else [])]
+
+    assert cli.main(["--home", str(home), *command]) == 2
+
+    assert "No database" in capsys.readouterr().err
+    assert _snapshot(home) == before
+    assert not (home / "data").exists()
     assert list(elsewhere.iterdir()) == []
 
 

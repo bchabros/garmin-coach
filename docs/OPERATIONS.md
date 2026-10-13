@@ -86,6 +86,9 @@ before serving:
 
 A relative path in an environment variable is read from the folder the run starts in, as
 the shell would; an absolute path or a symlink to the same file always agrees.
+The guarded launcher preserves that starting folder for its diagnostic server as well.
+Environment names are case-insensitive; every spelling must agree with the installation,
+so conflicting `GARMIN_EMAIL` and `garmin_email` values are refused in either order.
 Settings that do not choose a location or an account (e.g. `SYNC_RECHECK_DAYS`) still
 take an environment value over the `.env`.
 
@@ -153,6 +156,10 @@ good generation, so a report read against them is stale but never mixed.
 
 The command only walks the selected installation's `reports/`; there is no
 `--reports-dir` option that could point it at `plans/` or the athlete profile.
+Both preview and confirmed pruning require an existing installation database, like all
+non-import commands. This check only verifies the file exists; pruning never opens or
+migrates the database. If it is missing, the command refuses before scanning or deleting
+reports and tells you to import the athlete's history first.
 
 ```bash
 poetry run garmin-coach reports prune                  # dry-run, default age > 90 days

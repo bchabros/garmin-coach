@@ -1,6 +1,7 @@
 """Report retention through the operator's CLI, using a disposable report tree."""
 
 import datetime as dt
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,8 +10,11 @@ from garmin_coach.cli import main
 
 
 def _start_in_installation(tmp_path, monkeypatch):
-    """Run from a temporary athlete installation: the folder holds a `.env`."""
+    """Run from a temporary installation with an existing database, never opened by pruning."""
     (tmp_path / ".env").write_text("")
+    database = tmp_path / "data" / "garmin.db"
+    database.parent.mkdir()
+    sqlite3.connect(database).close()
     monkeypatch.chdir(tmp_path)
 
 
@@ -144,7 +148,8 @@ def test_missing_reports_is_a_noop_without_creating_directories(tmp_path, monkey
     assert main(["reports", "prune", "--confirm"]) == 0
 
     assert "folders=0 deleted_files=0" in capsys.readouterr().out
-    assert [path.name for path in tmp_path.iterdir()] == [".env"]
+    assert {path.name for path in tmp_path.iterdir()} == {".env", "data"}
+    assert (tmp_path / "data" / "garmin.db").read_bytes() == b""
 
 
 @pytest.mark.parametrize("all_fail,expected_code", [(False, 1), (True, 2)])

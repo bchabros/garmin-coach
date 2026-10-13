@@ -30,7 +30,6 @@ def _prepare(root: pathlib.Path) -> None:
     references = re.findall(r"\*\*MUST\*\*\s+read\s+`(references/[\w-]+\.md)`", router.read_text())
     if not references or any(not (skill / name).is_file() for name in references):
         raise ValueError("Coach references missing; install the complete canonical skill.")
-    os.chdir(root)
     settings = installation.activate(root)
     path = pathlib.Path(settings.db_path).expanduser().resolve()
     if not path.is_file():
@@ -60,7 +59,7 @@ async def _probe(root: pathlib.Path) -> dict[str, Any]:
         command=sys.executable,
         args=["-m", "garmin_coach.project", "serve", "--project", str(root)],
         env=dict(os.environ),
-        cwd=str(root.parent),
+        cwd=str(pathlib.Path.cwd()),
     )
     async with asyncio.timeout(15):
         async with stdio_client(params) as (read, write):

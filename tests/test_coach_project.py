@@ -54,7 +54,7 @@ def external_installation(project, monkeypatch):
     assert database.read_bytes() == before
 
 
-def run_command(project, args, *, env_overrides=None):
+def run_command(project, args, *, env_overrides=None, cwd=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("GARMIN")}
     env.pop("DB_PATH", None)
     env.pop("PLANS_DIR", None)
@@ -62,7 +62,7 @@ def run_command(project, args, *, env_overrides=None):
     env.update(env_overrides or {})
     return subprocess.run(
         args,
-        cwd=project.parent,
+        cwd=cwd or project.parent,
         env=env,
         capture_output=True,
         text=True,
@@ -70,11 +70,12 @@ def run_command(project, args, *, env_overrides=None):
     )
 
 
-def run_launcher(project, command, *args, env_overrides=None):
+def run_launcher(project, command, *args, env_overrides=None, cwd=None):
     return run_command(
         project,
         ["python3", str(LAUNCHER), command, "--project", str(project), *args],
         env_overrides=env_overrides,
+        cwd=cwd,
     )
 
 
@@ -123,6 +124,54 @@ def test_guarded_launch_accepts_equivalent_environment_paths(project):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["data_through"] == "2026-07-03"
+
+
+@pytest.mark.parametrize(
+    "setting, suffix",
+    [
+        ("DB_PATH", "data/garmin.db"),
+        ("PLANS_DIR", "plans"),
+        ("LOG_PATH", "logs/daily.log"),
+        ("GARMINTOKENS", ".garminconnect"),
+        ("GARMIN_COACH_HOME", ""),
+    ],
+)
+def test_guarded_check_preserves_relative_environment_paths_across_stdio(project, setting, suffix):
+    start = project.parent / "clients" / "cache"
+    start.mkdir(parents=True)
+    relative = str(pathlib.Path("../..") / project.name / suffix)
+    before = (project / "data" / "garmin.db").read_bytes()
+
+    result = run_launcher(project, "check", env_overrides={setting: relative}, cwd=start)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["data_through"] == "2026-07-03"
+    assert (project / "data" / "garmin.db").read_bytes() == before
+    assert list(start.iterdir()) == []
+
+
+@pytest.mark.parametrize("command", ["check", "serve"])
+@pytest.mark.parametrize(
+    "setting, relative",
+    [
+        ("DB_PATH", "data/garmin.db"),
+        ("PLANS_DIR", "plans"),
+        ("LOG_PATH", "logs/daily.log"),
+        ("GARMINTOKENS", ".garminconnect"),
+    ],
+)
+def test_guarded_launch_refuses_relative_paths_pointing_outside_the_installation(
+    project, command, setting, relative
+):
+    before = (project / "data" / "garmin.db").read_bytes()
+
+    result = run_launcher(project, command, env_overrides={setting: relative})
+
+    assert result.returncode == 1
+    assert f"Installation conflict: {setting}" in result.stderr
+    assert result.stdout == ""
+    assert (project / "data" / "garmin.db").read_bytes() == before
+    assert not (project.parent / "data").exists()
 
 
 def test_guarded_launch_uses_custom_paths_explicitly_configured_in_project(

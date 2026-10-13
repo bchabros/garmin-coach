@@ -177,21 +177,19 @@ def load(root: pathlib.Path) -> Settings:
 
 def _refuse_conflicts(root: pathlib.Path, configured: dict[str, Any]) -> None:
     for name in PATH_SETTINGS + IDENTITY_SETTINGS:
-        value = _environment_value(name)
-        if value is None:
-            continue
         expected = _configured(configured, name)
-        if name in PATH_SETTINGS:
-            agrees = _resolve(value) == _within(root, expected)
-        else:
-            agrees = value.strip().casefold() == expected.strip().casefold()
-        if not agrees:
-            variable = name.upper()
-            raise InstallationError(
-                f"Installation conflict: {variable} differs from the selected installation's "
-                f"configuration ({root / CONFIG_FILE}); unset {variable} or intentionally "
-                f"update that installation's {CONFIG_FILE}."
-            )
+        for value in _environment_values(name):
+            if name in PATH_SETTINGS:
+                agrees = _resolve(value) == _within(root, expected)
+            else:
+                agrees = value.strip().casefold() == expected.strip().casefold()
+            if not agrees:
+                variable = name.upper()
+                raise InstallationError(
+                    f"Installation conflict: {variable} differs from the selected installation's "
+                    f"configuration ({root / CONFIG_FILE}); unset {variable} or intentionally "
+                    f"update that installation's {CONFIG_FILE}."
+                )
 
 
 def _configured(configured: dict[str, Any], name: str) -> str:
@@ -199,11 +197,8 @@ def _configured(configured: dict[str, Any], name: str) -> str:
     return str(configured.get(name, Settings.model_fields[name].default) or "")
 
 
-def _environment_value(name: str) -> str | None:
-    for key, value in os.environ.items():
-        if key.lower() == name:
-            return value
-    return None
+def _environment_values(name: str) -> list[str]:
+    return [value for key, value in os.environ.items() if key.lower() == name]
 
 
 def _within(root: pathlib.Path, value: str) -> pathlib.Path:

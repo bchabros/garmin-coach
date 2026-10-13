@@ -135,7 +135,9 @@ ones sparingly:
 - Test report retention through `cli.main` on temporary dated folders
   (`tests/test_report_retention.py`): preview, confirmed deletion, preserved records,
   age boundaries, symlink exclusion and filesystem failure exit codes. Only filesystem
-  failures are faked; no Garmin or database setup is needed.
+  failures are faked; fixtures include the required existing temporary database, which
+  pruning never opens. Missing-database refusals preserve reports through the installation
+  CLI seam. No Garmin transport is used.
 
 ## Conventions
 

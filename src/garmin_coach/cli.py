@@ -887,6 +887,7 @@ def _nonnegative_days(value: str) -> int:
 
 
 def _cmd_prune_reports(args: argparse.Namespace) -> int:
+    installation.require_database(get_settings())
     try:
         result = retention.prune_reports(
             installation.reports_dir(),

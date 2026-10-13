@@ -96,7 +96,9 @@ def test_cli_push_prints_the_receipt_it_wrote(tmp_path, monkeypatch, capsys):
     assert f"push complete: {day_dir / 'push.json'}" in capsys.readouterr().out
 
 
-def test_cli_push_refuses_a_different_date_before_login(tmp_path, monkeypatch, capsys):
+def test_cli_push_refuses_a_different_date_before_login(
+    tmp_path, monkeypatch, capsys, athlete_home
+):
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir()
     (day_dir / "workout.json").write_text(json.dumps(run_spec(date="2026-07-18")))
@@ -458,7 +460,7 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
 
 
 def test_cli_partial_plan_import_names_the_saved_week_and_rebuilds_it(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, athlete_home
 ):
     path = _seeded_db(tmp_path, dates=("2026-07-13", "2026-07-19"))
     plans = tmp_path / "plans"
@@ -708,7 +710,7 @@ def test_daily_keeps_the_traceback_for_any_other_login_failure(tmp_path, monkeyp
 
 
 def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, athlete_home
 ):
     monkeypatch.setattr(
         cli, "get_settings", lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"))

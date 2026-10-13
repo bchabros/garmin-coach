@@ -27,6 +27,7 @@ def project(tmp_path):
     shutil.copytree(ROOT / "skills", root / "skills")
     for name in ("CLAUDE.md", "AGENTS.md"):
         shutil.copyfile(ROOT / name, root / name)
+    (root / ".env").write_text("")
     (root / "data").mkdir()
     conn = db.connect(str(root / "data" / "garmin.db"))
     db.bootstrap(conn)

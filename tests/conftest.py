@@ -11,6 +11,42 @@ import pytest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
+# Every variable that selects an installation or points a run at a path or Garmin account.
+_INSTALLATION_VARIABLES = (
+    "GARMIN_COACH_HOME",
+    "DB_PATH",
+    "PLANS_DIR",
+    "LOG_PATH",
+    "GARMINTOKENS",
+    "GARMIN_EMAIL",
+    "GARMIN_PASSWORD",
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_installation(tmp_path_factory, monkeypatch):
+    """Keep every test away from the athlete's real installation (ADR 0031).
+
+    The checkout doubles as the owner's installation, so a test that fell back to the
+    starting folder would read and write real data. Each test instead starts in an empty
+    folder with no selection variable; one that needs an installation builds its own.
+    Setting before deleting makes pytest restore the variable even when the code under
+    test exports it (a CLI run exports the installation it selected).
+    """
+    for name in _INSTALLATION_VARIABLES:
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    monkeypatch.chdir(tmp_path_factory.mktemp("start"))
+
+
+@pytest.fixture
+def athlete_home(tmp_path_factory, monkeypatch):
+    """An empty temporary athlete installation, selected for the test."""
+    home = tmp_path_factory.mktemp("athlete")
+    (home / ".env").write_text("")
+    monkeypatch.setenv("GARMIN_COACH_HOME", str(home))
+    return home
+
 
 def load_fixture(name: str):
     """Load a JSON fixture by filename (with or without .json suffix)."""

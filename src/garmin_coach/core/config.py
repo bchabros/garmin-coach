@@ -1,4 +1,4 @@
-"""Runtime configuration via pydantic-settings (.env + environment)."""
+"""Runtime configuration via pydantic-settings (an installation's .env + environment)."""
 
 from __future__ import annotations
 
@@ -32,8 +32,9 @@ class Settings(BaseSettings):
     # Authored weekly plans of record (issue #21); gitignored personal data.
     plans_dir: str = "./plans"
 
-    # Where garminconnect caches OAuth tokens.
-    garmintokens: str = "~/.garminconnect"
+    # Where garminconnect caches OAuth tokens: inside the installation unless configured,
+    # so two installations never share one Garmin login (ADR 0031).
+    garmintokens: str = ".garminconnect"
 
     # Nightly-run logging. Rotation is size-based, in-process.
     log_path: str = "./logs/daily.log"
@@ -42,5 +43,11 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    """Load runtime settings."""
-    return Settings()
+    """Load the selected installation's settings, with absolute paths (ADR 0031).
+
+    Raises:
+        InstallationError: No usable installation is selected, or the selection conflicts.
+    """
+    from . import installation
+
+    return installation.load(installation.select())

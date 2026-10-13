@@ -8,11 +8,12 @@ import json
 import os
 import pathlib
 import sqlite3
+import sys
 from typing import TYPE_CHECKING, Any
 
 from . import daily, plan_changes, retention
 from .coach import digest, report, thresholds as _thresholds
-from .core import db, events as _events, manual_sets, plan as _plan
+from .core import db, events as _events, installation, manual_sets, plan as _plan
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -607,6 +608,14 @@ def _cmd_refresh_today(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
+    parser.add_argument(
+        "--home",
+        default=None,
+        help=(
+            "Athlete installation folder to act on (default: GARMIN_COACH_HOME, else the "
+            "current folder when it holds a .env)."
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     bf = sub.add_parser("backfill", help="Pull a date range into the DB (raw + core).")
@@ -916,6 +925,11 @@ def _cmd_prune_reports(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     args = build_parser().parse_args(argv)
+    try:
+        installation.activate(args.home)
+    except installation.InstallationError as exc:
+        print(f"garmin-coach: {exc}", file=sys.stderr)
+        return 2
     try:
         return args.func(args)
     except client.LoginUnavailableError as exc:

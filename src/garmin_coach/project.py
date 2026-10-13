@@ -163,7 +163,7 @@ def main() -> int:
         if args.command == "serve":
             from .mcp import server
 
-            server.main(existing_db_only=True)
+            server.main(existing_db_only=True, argv=[])
         else:
             print(json.dumps(asyncio.run(_probe(root)), indent=2))
     except ValueError as exc:

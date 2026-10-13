@@ -226,7 +226,7 @@ def get_workout_status(
     date: str,
     *,
     connect: Callable[[], publish.WorkoutPublisher],
-    reports_dir: str = "reports",
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Return the authored spec, the push receipt, the account finding, and the plan check.
 
@@ -588,7 +588,8 @@ def author_workout(
     request: dict[str, Any] | None = None,
     sport: str | None = None,
     reuse_from: str | None = None,
-    reports_dir: str = "reports",
+    *,
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Author a workout spec for a date and write ``workout.json``.
 
@@ -747,8 +748,8 @@ def _event_result(
 def plan_import(
     conn: sqlite3.Connection,
     *,
-    plans_dir: str = "plans",
-    reports_dir: str = "reports",
+    plans_dir: str,
+    reports_dir: str,
     week: str | None = None,
     data_start_date: str,
 ) -> dict[str, Any]:
@@ -780,7 +781,7 @@ def plan_preview(
     *,
     week_start: str,
     days: list[dict[str, Any]],
-    plans_dir: str = "plans",
+    plans_dir: str,
 ) -> dict[str, Any]:
     """Validate a proposed week and show it back; nothing is written.
 
@@ -800,8 +801,8 @@ def plan_confirm(
     *,
     week_start: str,
     days: list[dict[str, Any]],
-    plans_dir: str = "plans",
-    reports_dir: str = "reports",
+    plans_dir: str,
+    reports_dir: str,
     data_start_date: str,
 ) -> dict[str, Any]:
     """Write a previewed week to ``plans/<monday>_week.md``, cache it, rebuild the marts.
@@ -899,7 +900,7 @@ def _write_spec(spec: dict[str, Any], date: str, reports_dir: str) -> pathlib.Pa
 
 
 def get_pushed_workouts(
-    conn: sqlite3.Connection, since: str | None = None, reports_dir: str = "reports"
+    conn: sqlite3.Connection, *, reports_dir: str, since: str | None = None
 ) -> dict[str, Any]:
     """The workouts already pushed, newest first, from the receipts on disk.
 
@@ -942,7 +943,7 @@ def push_preview(
     *,
     date: str,
     connect: Callable[[], publish.WorkoutPublisher],
-    reports_dir: str = "reports",
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Dry-run the push for a date: the resolved action, payload, and confirm token.
 
@@ -980,7 +981,7 @@ def push_confirm(
     confirm_token: str,
     connect: Callable[[], publish.WorkoutPublisher],
     replace: bool = False,
-    reports_dir: str = "reports",
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Execute the push for a date, gated on the token from ``push_preview``.
 
@@ -1022,7 +1023,7 @@ def unschedule_preview(
     *,
     date: str,
     connect: Callable[[], publish.WorkoutPublisher],
-    reports_dir: str = "reports",
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Show what taking the coach's workout off a day would remove, and hand over a token.
 
@@ -1046,7 +1047,7 @@ def unschedule_confirm(
     date: str,
     confirm_token: str,
     connect: Callable[[], publish.WorkoutPublisher],
-    reports_dir: str = "reports",
+    reports_dir: str,
 ) -> dict[str, Any]:
     """Take the previewed workout off the day's calendar, gated on the preview's token.
 

@@ -1144,6 +1144,7 @@ def test_plan_confirm_writes_the_file_and_imports_it(conn, tmp_path):
 
     out = tools.plan_confirm(
         conn,
+        reports_dir=str(tmp_path / "reports"),
         week_start=WEEK,
         days=PROPOSAL,
         plans_dir=str(tmp_path),
@@ -1166,6 +1167,7 @@ def test_plan_confirm_refuses_to_clobber_an_existing_plan(conn, tmp_path):
 
     out = tools.plan_confirm(
         conn,
+        reports_dir=str(tmp_path / "reports"),
         week_start=WEEK,
         days=PROPOSAL,
         plans_dir=str(tmp_path),
@@ -1183,6 +1185,7 @@ def test_plan_confirm_rejects_an_invalid_proposal_without_writing(conn, tmp_path
 
     out = tools.plan_confirm(
         conn,
+        reports_dir=str(tmp_path / "reports"),
         week_start=WEEK,
         days=days,
         plans_dir=str(tmp_path),
@@ -1222,6 +1225,7 @@ def test_plan_confirm_with_a_pipe_reports_an_error_and_strands_nothing(conn, tmp
 
     out = tools.plan_confirm(
         conn,
+        reports_dir=str(tmp_path / "reports"),
         week_start=WEEK,
         days=days,
         plans_dir=str(tmp_path),
@@ -1616,7 +1620,12 @@ def test_plan_import_reads_the_week_and_rebuilds_plan_versus_actual(conn, tmp_pa
         )
     _plan_file(tmp_path)
 
-    out = tools.plan_import(conn, plans_dir=str(tmp_path), data_start_date=DATA_START)["data"]
+    out = tools.plan_import(
+        conn,
+        reports_dir=str(tmp_path / "reports"),
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )["data"]
 
     assert out["error"] is None
     assert out["weeks"] == [WEEK]
@@ -1668,7 +1677,12 @@ def test_partial_plan_import_reports_accepted_weeks_conflicts_and_fresh_metrics(
 
 
 def test_plan_import_without_a_plan_file_says_so(conn, tmp_path):
-    out = tools.plan_import(conn, plans_dir=str(tmp_path), data_start_date=DATA_START)["data"]
+    out = tools.plan_import(
+        conn,
+        reports_dir=str(tmp_path / "reports"),
+        plans_dir=str(tmp_path),
+        data_start_date=DATA_START,
+    )["data"]
 
     assert out["weeks"] == []
     assert "no plan file" in out["error"]
@@ -1685,6 +1699,7 @@ def test_plan_confirm_rebuilds_plan_versus_actual(conn, tmp_path):
 
     tools.plan_confirm(
         conn,
+        reports_dir=str(tmp_path / "reports"),
         week_start=WEEK,
         days=PROPOSAL,
         plans_dir=str(tmp_path),

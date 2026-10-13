@@ -14,8 +14,10 @@ computation happens here.
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 import sqlite3
+import sys
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -41,9 +43,17 @@ _WRITES_LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openW
 _REPULLS_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
 _WRITES_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
 
-_REPORTS_DIR = "./reports"
-_PLANS_DIR = "./plans"
 _EXISTING_DB_ONLY = False
+
+
+def _reports_dir() -> str:
+    """The selected installation's reports folder: specs, receipts, dated reports."""
+    return str(installation.reports_dir())
+
+
+def _plans_dir() -> str:
+    """The selected installation's configured plans folder."""
+    return get_settings().plans_dir
 
 
 def _open() -> sqlite3.Connection:
@@ -133,7 +143,7 @@ def plan_preview(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
     """
     conn = _open()
     try:
-        return tools.plan_preview(conn, week_start=week_start, days=days, plans_dir=_PLANS_DIR)
+        return tools.plan_preview(conn, week_start=week_start, days=days, plans_dir=_plans_dir())
     finally:
         conn.close()
 
@@ -155,8 +165,8 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
             conn,
             week_start=week_start,
             days=days,
-            plans_dir=_PLANS_DIR,
-            reports_dir=_REPORTS_DIR,
+            plans_dir=_plans_dir(),
+            reports_dir=_reports_dir(),
             data_start_date=get_settings().data_start_date,
         )
     finally:
@@ -177,8 +187,8 @@ def plan_import(week: str | None = None) -> dict[str, Any]:
     try:
         return tools.plan_import(
             conn,
-            plans_dir=_PLANS_DIR,
-            reports_dir=_REPORTS_DIR,
+            plans_dir=_plans_dir(),
+            reports_dir=_reports_dir(),
             week=week,
             data_start_date=settings.data_start_date,
         )
@@ -309,7 +319,7 @@ def get_workout_status(date: str) -> dict[str, Any]:
             conn,
             date=date,
             connect=lambda: publish.connect_publisher(get_settings()),
-            reports_dir=_REPORTS_DIR,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()
@@ -487,7 +497,7 @@ def author_workout(
     conn = _open()
     try:
         return tools.author_workout(
-            conn, date=date, request=request, sport=sport, reports_dir=_REPORTS_DIR
+            conn, date=date, request=request, sport=sport, reports_dir=_reports_dir()
         )
     finally:
         conn.close()
@@ -502,7 +512,7 @@ def get_pushed_workouts(since: str | None = None) -> dict[str, Any]:
     """
     conn = _open()
     try:
-        return tools.get_pushed_workouts(conn, since=since, reports_dir=_REPORTS_DIR)
+        return tools.get_pushed_workouts(conn, since=since, reports_dir=_reports_dir())
     finally:
         conn.close()
 
@@ -527,7 +537,7 @@ def push_preview(date: str) -> dict[str, Any]:
             conn,
             date=date,
             connect=lambda: publish.connect_publisher(settings),
-            reports_dir=_REPORTS_DIR,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()
@@ -551,7 +561,7 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
             confirm_token=confirm_token,
             connect=lambda: publish.connect_publisher(settings),
             replace=replace,
-            reports_dir=_REPORTS_DIR,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()
@@ -577,7 +587,7 @@ def unschedule_preview(date: str) -> dict[str, Any]:
             conn,
             date=date,
             connect=lambda: publish.connect_publisher(settings),
-            reports_dir=_REPORTS_DIR,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()
@@ -603,18 +613,34 @@ def unschedule_confirm(date: str, confirm_token: str) -> dict[str, Any]:
             date=date,
             confirm_token=confirm_token,
             connect=lambda: publish.connect_publisher(settings),
-            reports_dir=_REPORTS_DIR,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()
 
 
-def main(existing_db_only: bool = False) -> None:
-    """Run the coach MCP server over stdio.
+def main(existing_db_only: bool = False, argv: list[str] | None = None) -> None:
+    """Run the coach MCP server over stdio on the selected athlete installation.
 
     Args:
         existing_db_only: Require an existing schema without bootstrapping personal data.
+        argv: Command-line arguments (default: the process's own).
     """
+    parser = argparse.ArgumentParser(prog="garmin-coach-mcp", description=__doc__)
+    parser.add_argument(
+        "--home",
+        default=None,
+        help=(
+            "Athlete installation folder to serve (default: GARMIN_COACH_HOME, else the "
+            "current folder when it holds a .env)."
+        ),
+    )
+    args = parser.parse_args(argv)
+    try:
+        installation.activate(args.home)
+    except installation.InstallationError as exc:
+        print(f"garmin-coach-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     global _EXISTING_DB_ONLY
     _EXISTING_DB_ONLY = existing_db_only
     server.run()

@@ -48,7 +48,7 @@ garmin-coach/
 ├── AGENTS.md                 # byte-for-byte mirror of CLAUDE.md (guarded by a test)
 ├── .claude/rules/            # extra working rules imported by CLAUDE.md (style, no-emoji)
 ├── .codex/                   # Codex local notes and companion files
-├── .env.example              # optional overrides (credentials, DATA_START_DATE, DB_PATH, LOG_PATH, ...)
+├── .env.example              # copy to .env: marks the installation; optional overrides inside
 ├── docs/
 │   ├── PROJECT.md            # build history: the phased brief (0–11), kept as-is (historical)
 │   ├── architecture-roadmap.md # architecture review after the weekly rollups (historical)
@@ -129,9 +129,12 @@ poetry install                 # or: task install (also installs the pre-commit 
 `task check` before every commit (see [Development](#development)). After a bare
 `poetry install`, enable it once with `poetry run pre-commit install`.
 
-No `.env` is required: credentials are prompted on the first login and every other
-setting has a sensible default. To override anything (DB path, backfill start,
-logging), `cp .env.example .env` and uncomment what you need.
+Every athlete installation needs a `.env`: it is what marks the folder as the
+installation a run acts on (ADR 0031). In a fresh clone run `cp .env.example .env`
+before the first import; credentials are still prompted on the first login and every
+other setting has a sensible default, so uncomment only what you need. To act on an
+installation in another folder, pass `--home <folder>` or set `GARMIN_COACH_HOME`
+(see "The athlete installation" in `docs/OPERATIONS.md`).
 
 ### Athlete-specific configuration (lives in the DB)
 
@@ -153,8 +156,9 @@ Edit both with plain SQL (`sqlite3 data/garmin.db`), then re-run
 ## Usage
 
 ```bash
-# First run prompts for email + password + MFA once, then caches OAuth tokens to
-# ~/.garminconnect; later runs resume from them (no login endpoint, no rate limits).
+# First run prompts for email + password + MFA once, then caches OAuth tokens in the
+# installation's saved login (GARMINTOKENS); later runs resume from them (no login
+# endpoint, no rate limits).
 task run FROM=2026-06-08
 
 # Optional end date for a bounded local run.
@@ -245,7 +249,8 @@ run yourself.
 ## Troubleshooting
 
 - **First login asks for email, password, and MFA.** That happens once; OAuth tokens
-  are then cached in `GARMINTOKENS` (`~/.garminconnect`) and later runs never touch
+  are then cached in `GARMINTOKENS` (default `.garminconnect/` inside the installation)
+  and later runs never touch
   the login endpoint.
 - **HTTP 429 on login.** Garmin rate-limits repeated login attempts at the IP level.
   Do not retry in a loop — wait it out. Once tokens are cached this stops being

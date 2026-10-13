@@ -43,7 +43,9 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 
 ## Architecture
 
-The package is layered: `core/` (`config.py` pydantic-settings, `db.py` connect/
+The package is layered: `core/` (`config.py` pydantic-settings, `installation.py` for
+the selected athlete installation (selection, path resolution, conflict refusals and
+the only database opener; ADR 0031), `db.py` connect/
 bootstrap/upserts, `models.py` pure `payload dict -> row dict` normalizers +
 discipline mapping, `weeks.py`, `schema.sql`) - `etl/` (`client.py` login+MFA,
 endpoint->method map, the only garminconnect importer; `sync.py`
@@ -97,6 +99,14 @@ ones sparingly:
   environment-path conflicts, schema compatibility and preservation, client config
   round-trips, and actionable prerequisite failures. Inherited operational settings
   are removed; conflict tests inject only explicit temporary installation paths.
+- Test installation selection at the entry points on temporary installations: the
+  CLI in-process through `cli.main` (`tests/test_installation.py`), the coach server as
+  real stdio subprocesses started from an unrelated folder
+  (`tests/test_installation_server.py`), and the built package installed into a fresh
+  environment with borrowed dependencies (`tests/test_package.py`, skipped without
+  Poetry). An autouse guard in `tests/conftest.py` scrubs the selection and path
+  variables and starts every test in an empty folder, so no test can fall back to the
+  owner's checkout; a test that needs settings selects `athlete_home`.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
 - Test the complete workout push through `workouts.push.push_for_date` with real
   SQLite, temporary specs/receipts, and a factory returning `FakePublisher`. CLI and

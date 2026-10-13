@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from . import tools
-from ..core import db, manual_sets
+from ..core import installation, manual_sets
 from ..core.config import get_settings
 from ..etl import client
 from ..workouts import publish
@@ -54,9 +54,7 @@ def _open() -> sqlite3.Connection:
         conn = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
-    return conn
+    return installation.open_database(settings)
 
 
 @server.tool(annotations=_READS_DB)

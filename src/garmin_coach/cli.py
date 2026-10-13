@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import os
 import pathlib
 import sqlite3
 import sys
@@ -24,16 +23,17 @@ if TYPE_CHECKING:
 
 
 def _bootstrap_db(settings: Settings) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
-    return conn
+    return installation.open_database(settings)
 
 
-def _init_env() -> tuple[Settings, sqlite3.Connection, sync.GarminClient]:
+def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sync.GarminClient]:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
-    transport = client.login(settings)
+    conn = installation.open_database(settings, create=create)
+    try:
+        transport = client.login(settings)
+    except BaseException:
+        conn.close()
+        raise
     return settings, conn, transport
 
 
@@ -195,7 +195,7 @@ def log_activity_sets(
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
-    settings, conn, transport = _init_env()
+    settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
 
     sync.backfill(transport, conn, from_date, args.to_date)
@@ -205,7 +205,7 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
-    settings, conn, transport = _init_env()
+    settings, conn, transport = _init_env(create=True)
 
     result = sync.sync_incremental(
         transport,
@@ -230,9 +230,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_features(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     features.features(
         conn,
@@ -249,9 +247,7 @@ def _cmd_features(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     out = report.generate_report(
         conn,
@@ -266,9 +262,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 def _cmd_author(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
     thresholds = _thresholds.read(conn)
@@ -364,9 +358,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     status = snapshot.read(conn)
     conn.close()
@@ -419,9 +411,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     try:
         if args.activity_id is not None:
@@ -463,9 +453,7 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
 
 def _cmd_log_sets(args: argparse.Namespace) -> int:
     settings = get_settings()
-    os.makedirs(os.path.dirname(settings.db_path) or ".", exist_ok=True)
-    conn = db.connect(settings.db_path)
-    db.bootstrap(conn)
+    conn = _bootstrap_db(settings)
 
     try:
         out = log_activity_sets(
@@ -564,7 +552,12 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         max_bytes=settings.log_max_bytes,
         backup_count=settings.log_backup_count,
     )
-    conn = _bootstrap_db(settings)
+    try:
+        conn = _bootstrap_db(settings)
+    except installation.InstallationError as exc:
+        # The nightly log is where a failed run is looked for, not only the launchd capture.
+        daily.logger.error("daily: %s", exc)
+        raise
 
     try:
         transport = client.login(settings)
@@ -932,6 +925,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return args.func(args)
+    except installation.InstallationError as exc:
+        print(f"garmin-coach: {exc}", file=sys.stderr)
+        return 2
     except client.LoginUnavailableError as exc:
         print(f"login failed: {exc}")
         return 2

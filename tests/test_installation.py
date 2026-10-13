@@ -232,6 +232,59 @@ def test_an_explicitly_configured_garmin_login_location_is_kept(tmp_path, monkey
     assert pathlib.Path(get_settings().garmintokens) == (user_home / ".garminconnect").resolve()
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["features"],
+        ["report"],
+        ["snapshot"],
+        ["event", "list"],
+        ["plan", "import"],
+        ["log-rpe", "--activity", "1", "--rpe", "5"],
+        ["log-sets", "--activity", "1", "SkiErg"],
+        ["author", "--date", "2026-10-14", "--from-recommendation"],
+        ["push", "--date", "2026-10-14"],
+        ["refresh-today"],
+        ["daily"],
+    ],
+    ids=lambda command: " ".join(command[:2]),
+)
+def test_only_a_manual_import_may_create_the_database(
+    tmp_path, elsewhere, monkeypatch, capsys, command
+):
+    home = tmp_path / "athlete"
+    home.mkdir()
+    (home / ".env").write_text("")
+    logins = []
+    monkeypatch.setattr(cli.client, "login", lambda settings: logins.append(settings))
+
+    assert cli.main(["--home", str(home), *command]) == 2
+
+    error = capsys.readouterr().err
+    assert "No database" in error
+    assert "backfill" in error
+    assert not (home / "data").exists()
+    assert logins == []
+    assert list(elsewhere.iterdir()) == []
+
+
+@pytest.mark.parametrize("command", [["backfill", "--to", "2026-06-09"], ["sync"]])
+def test_a_manual_import_creates_the_database_inside_the_installation(
+    tmp_path, elsewhere, monkeypatch, command
+):
+    from tests.conftest import FakeGarminClient
+
+    home = tmp_path / "athlete"
+    home.mkdir()
+    (home / ".env").write_text("DATA_START_DATE=2026-06-08\n")
+    monkeypatch.setattr(cli.client, "login", lambda settings: FakeGarminClient())
+
+    assert cli.main(["--home", str(home), *command]) == 0
+
+    assert (home / "data" / "garmin.db").is_file()
+    assert list(elsewhere.iterdir()) == []
+
+
 def test_two_installations_keep_separate_garmin_logins(tmp_path, monkeypatch):
     logins = set()
     for name in ("first", "second"):

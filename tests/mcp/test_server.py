@@ -12,8 +12,20 @@ import types
 
 import pytest
 
+from garmin_coach.core import db
 from garmin_coach.etl import client
 from garmin_coach.mcp import server
+
+
+def _existing_db(tmp_path) -> str:
+    """The installation's database, already imported: the server never creates one."""
+    path = tmp_path / "t.db"
+    if not path.exists():
+        conn = db.connect(str(path))
+        db.bootstrap(conn)
+        conn.commit()
+        conn.close()
+    return str(path)
 
 
 def _past(days: int) -> str:
@@ -98,7 +110,7 @@ def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_
     monkeypatch.setattr(
         server,
         "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08"),
+        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date="2026-06-08"),
     )
 
     def _login(_settings):
@@ -123,7 +135,7 @@ def _settings(tmp_path, monkeypatch):
         server,
         "get_settings",
         lambda: types.SimpleNamespace(
-            db_path=str(tmp_path / "t.db"), data_start_date="2026-06-08", sync_recheck_days=3
+            db_path=_existing_db(tmp_path), data_start_date="2026-06-08", sync_recheck_days=3
         ),
     )
 
@@ -248,3 +260,11 @@ def test_every_tool_says_whether_it_reaches_the_account():
 
     open_world = {t.name for t in tools if t.annotations and t.annotations.openWorldHint}
     assert open_world == GARMIN_TOOLS
+
+
+def test_the_coach_server_refuses_a_missing_database_instead_of_creating_one(athlete_home):
+    """A server started in the wrong place must say so, not coach from an empty history."""
+    with pytest.raises(Exception, match="No database"):
+        asyncio.run(server.server.call_tool("get_snapshot", {}))
+
+    assert not (athlete_home / "data").exists()

@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import os
 import pathlib
+import sqlite3
 from typing import Any
 
 from pydantic_settings import DotEnvSettingsSource
 
+from . import db
 from .config import Settings
 
 HOME_VARIABLE = "GARMIN_COACH_HOME"
@@ -83,6 +85,32 @@ def select(home: str | os.PathLike[str] | None = None) -> pathlib.Path:
             f"select the intended installation folder."
         )
     return root
+
+
+def open_database(settings: Settings, *, create: bool = False) -> sqlite3.Connection:
+    """Open the selected installation's database, bootstrapping its schema.
+
+    Only a manual import may create a missing database: everything else refuses, so a
+    run started in the wrong place says so instead of coaching from an empty history.
+
+    Args:
+        settings: The selected installation's settings.
+        create: Whether a missing database may be created (``backfill`` and ``sync``).
+
+    Raises:
+        InstallationError: The database is missing and ``create`` is False.
+    """
+    path = pathlib.Path(settings.db_path)
+    if not path.is_file():
+        if not create:
+            raise InstallationError(
+                f"No database at {path}; import the athlete's history first with "
+                f"`garmin-coach backfill --from YYYY-MM-DD` (or `garmin-coach sync`)."
+            )
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = db.connect(str(path))
+    db.bootstrap(conn)
+    return conn
 
 
 def load(root: pathlib.Path) -> Settings:

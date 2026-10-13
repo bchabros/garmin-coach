@@ -135,10 +135,12 @@ def test_the_server_honours_the_installations_configured_plans_folder(tmp_path, 
 def test_two_installations_served_at_once_stay_apart(tmp_path, elsewhere):
     first = make_installation(tmp_path / "first", horizon="2026-07-03")
     second = make_installation(tmp_path / "second", horizon="2026-08-14")
+    request = json.loads((FIXTURES / "hiit_request.json").read_text())
 
     async def scenario():
         async with coach_server(elsewhere, first) as a, coach_server(elsewhere, second) as b:
             await call(a, "plan_confirm", week_start=WEEK, days=CROSSFIT_WEEK)
+            await call(a, "author_workout", date=WORKOUT_DAY, request=request)
             return (
                 (await call(a, "get_digest"))["freshness"]["data_through"],
                 (await call(b, "get_digest"))["freshness"]["data_through"],
@@ -150,7 +152,9 @@ def test_two_installations_served_at_once_stay_apart(tmp_path, elsewhere):
     assert (first_horizon, second_horizon) == ("2026-07-03", "2026-08-14")
     assert all(day["source"] != "plan_week" for day in second_plan["days"])
     assert (first / "plans" / f"{WEEK}_week.md").is_file()
+    assert (first / "reports" / WORKOUT_DAY / "workout.json").is_file()
     assert not (second / "plans").exists()
+    assert not (second / "reports").exists()
 
 
 def test_two_servers_on_one_installation_see_each_others_writes(tmp_path, elsewhere):
@@ -179,6 +183,26 @@ def test_the_owners_layout_is_served_unchanged_from_inside_the_installation(tmp_
             return await call(session, "get_digest")
 
     assert run(scenario())["freshness"]["data_through"] == "2026-07-03"
+
+
+def test_the_server_refuses_to_start_on_an_installation_without_a_database(tmp_path, elsewhere):
+    home = tmp_path / "athlete"
+    home.mkdir()
+    (home / ".env").write_text("")
+    result = subprocess.run(
+        [sys.executable, *_server_args(home)],
+        cwd=elsewhere,
+        env=_environment(),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 2
+    assert "No database" in result.stderr
+    assert result.stdout == ""
+    assert [path.name for path in home.iterdir()] == [".env"]
 
 
 @pytest.mark.parametrize("named", [True, False])

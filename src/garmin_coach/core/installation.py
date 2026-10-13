@@ -9,6 +9,7 @@ them resolves against the installation, never against the starting folder.
 
 from __future__ import annotations
 
+import argparse
 import os
 import pathlib
 import sqlite3
@@ -32,6 +33,18 @@ IDENTITY_SETTINGS = ("garmin_email",)
 
 class InstallationError(ValueError):
     """No usable installation was selected, or the selection contradicts itself."""
+
+
+def add_home_argument(parser: argparse.ArgumentParser) -> None:
+    """Give an entry point the ``--home`` option that names the installation."""
+    parser.add_argument(
+        "--home",
+        default=None,
+        help=(
+            f"Athlete installation to act on: a folder holding a {CONFIG_FILE} "
+            f"(default: {HOME_VARIABLE}, else the current folder when it holds a {CONFIG_FILE})."
+        ),
+    )
 
 
 def activate(home: str | os.PathLike[str] | None = None) -> Settings:
@@ -64,26 +77,26 @@ def select(home: str | os.PathLike[str] | None = None) -> pathlib.Path:
     Raises:
         InstallationError: Nothing usable was selected, or the selection conflicts.
     """
-    variable = os.environ.get(HOME_VARIABLE) or None
-    if home is not None and variable is not None and _resolve(home) != _resolve(variable):
+    from_variable = os.environ.get(HOME_VARIABLE) or None
+    if home is not None and from_variable is not None and _resolve(home) != _resolve(from_variable):
         raise InstallationError(
             f"Installation conflict: --home and {HOME_VARIABLE} name different folders; "
             f"pass one of them, or make them agree."
         )
-    named = home if home is not None else variable
+    named = home if home is not None else from_variable
     if named is None:
         root = pathlib.Path.cwd().resolve()
         if not (root / CONFIG_FILE).is_file():
             raise InstallationError(
                 f"No athlete installation selected: pass --home <folder>, set {HOME_VARIABLE}, "
-                f"or start from an installation folder (one with a {CONFIG_FILE})."
+                f"or start inside an athlete installation (a folder holding a {CONFIG_FILE})."
             )
         return root
     root = _resolve(named)
     if not (root / CONFIG_FILE).is_file():
         raise InstallationError(
             f"Not an athlete installation: {root} has no {CONFIG_FILE}; "
-            f"select the intended installation folder."
+            f"select the intended athlete installation."
         )
     return root
 
@@ -111,23 +124,34 @@ def open_database(settings: Settings, *, create: bool = False) -> sqlite3.Connec
         InstallationError: The database is missing and ``create`` is False.
     """
     path = pathlib.Path(settings.db_path)
-    if not path.is_file():
-        if not create:
-            raise InstallationError(
-                f"No database at {path}; import the athlete's history first with "
-                f"`garmin-coach backfill --from YYYY-MM-DD` (or `garmin-coach sync`)."
-            )
+    if create:
         path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        require_database(settings)
     conn = db.connect(str(path))
     db.bootstrap(conn)
     return conn
+
+
+def require_database(settings: Settings) -> None:
+    """Refuse an installation whose database has never been imported.
+
+    Raises:
+        InstallationError: The selected installation has no database yet.
+    """
+    path = pathlib.Path(settings.db_path)
+    if not path.is_file():
+        raise InstallationError(
+            f"No database at {path}; import the athlete's history first with "
+            f"`garmin-coach backfill --from YYYY-MM-DD` (or `garmin-coach sync`)."
+        )
 
 
 def load(root: pathlib.Path) -> Settings:
     """Load an installation's settings, refusing conflicting environment values.
 
     Args:
-        root: The installation folder (already selected).
+        root: The selected installation's root (already selected).
 
     Returns:
         Settings read from the installation's ``.env`` and the environment, with every
@@ -147,7 +171,7 @@ def load(root: pathlib.Path) -> Settings:
         ) from None
     _refuse_conflicts(root, configured)
     return settings.model_copy(
-        update={name: str(_in(root, _configured(configured, name))) for name in PATH_SETTINGS}
+        update={name: str(_within(root, _configured(configured, name))) for name in PATH_SETTINGS}
     )
 
 
@@ -158,7 +182,7 @@ def _refuse_conflicts(root: pathlib.Path, configured: dict[str, Any]) -> None:
             continue
         expected = _configured(configured, name)
         if name in PATH_SETTINGS:
-            agrees = _resolve(value) == _in(root, expected)
+            agrees = _resolve(value) == _within(root, expected)
         else:
             agrees = value.strip().casefold() == expected.strip().casefold()
         if not agrees:
@@ -182,7 +206,7 @@ def _environment_value(name: str) -> str | None:
     return None
 
 
-def _in(root: pathlib.Path, value: str) -> pathlib.Path:
+def _within(root: pathlib.Path, value: str) -> pathlib.Path:
     path = pathlib.Path(value).expanduser()
     return (path if path.is_absolute() else root / path).resolve()
 

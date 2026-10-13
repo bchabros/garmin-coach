@@ -197,7 +197,7 @@ are required before #82 is complete.
 | Skill or references missing | Restore/install the complete canonical coach directory and regenerate an uploaded copy after changes. |
 | Database missing | Select the existing installation; a new installation requires its separately documented import. The check does not create one. |
 | Installation conflict | Unset the named variable (`DB_PATH`, `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS`, `GARMIN_EMAIL`, or a `GARMIN_COACH_HOME` naming another folder), or intentionally configure that value in the selected installation's `.env`; repeat the check. |
-| No athlete installation selected / Not an athlete installation | Select the installation folder itself; it must hold a `.env` (ADR 0031). |
+| No athlete installation selected / Not an athlete installation | Select the athlete installation itself: the folder that holds its `.env` (ADR 0031). |
 | Schema unavailable/incompatible or coach data missing | From the intended project, explicitly run offline `poetry run garmin-coach features` after import; repeat the check. If incompatibility persists, inspect the schema or restore a compatible backup. The launcher never migrates it. |
 | MCP connection failed | Check the generated command, selected folder, installed dependencies and client trust/activation; repeat local check before the fresh-chat test. |
 | Local check passes, Work cannot use it | Record the application version and unavailable capability; verify the Work-specific supported route. |

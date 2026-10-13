@@ -84,6 +84,8 @@ before serving:
 | `No database at ...` | the installation has never been imported | `garmin-coach backfill --from YYYY-MM-DD` (or `sync`) |
 | `Invalid runtime settings in ...` | the `.env` does not parse | fix that file |
 
+A relative path in an environment variable is read from the folder the run starts in, as
+the shell would; an absolute path or a symlink to the same file always agrees.
 Settings that do not choose a location or an account (e.g. `SYNC_RECHECK_DAYS`) still
 take an environment value over the `.env`.
 

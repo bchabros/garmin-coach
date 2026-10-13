@@ -22,8 +22,9 @@ if TYPE_CHECKING:
     from .core.config import Settings
 
 
-def _bootstrap_db(settings: Settings) -> sqlite3.Connection:
-    return installation.open_database(settings)
+def _reports_dir(args: argparse.Namespace) -> str:
+    """The command's ``--reports-dir`` override, else the installation's reports folder."""
+    return args.reports_dir or str(installation.reports_dir())
 
 
 def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sync.GarminClient]:
@@ -230,7 +231,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_features(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     features.features(
         conn,
@@ -247,7 +248,7 @@ def _cmd_features(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     out = report.generate_report(
         conn,
@@ -263,7 +264,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 def _cmd_author(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
     thresholds = _thresholds.read(conn)
@@ -309,7 +310,7 @@ def _cmd_author(args: argparse.Namespace) -> int:
         print(f"author: nothing to author for {args.date} (rest)")
         return 0
 
-    out = pathlib.Path(args.reports_dir) / args.date
+    out = pathlib.Path(_reports_dir(args)) / args.date
     out.mkdir(parents=True, exist_ok=True)
     (out / "workout.json").write_text(json.dumps(spec, indent=2))
     print(f"author complete: {out / 'workout.json'} ({spec['name']}, {len(spec['steps'])} steps)")
@@ -320,13 +321,13 @@ def _cmd_author(args: argparse.Namespace) -> int:
 
 def _cmd_push(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
     try:
         outcome = push.push_for_date(
             conn,
             date=args.date,
             connect=lambda: publish.connect_publisher(settings),
-            reports_dir=args.reports_dir,
+            reports_dir=_reports_dir(args),
             confirm=args.confirm,
             replace=args.replace,
         )
@@ -359,7 +360,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     status = snapshot.read(conn)
     conn.close()
@@ -367,7 +368,7 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
         print("snapshot: no athlete_status row yet; run `garmin-coach features` first")
         return 1
 
-    out = pathlib.Path(args.reports_dir) / _dt.date.today().isoformat()
+    out = pathlib.Path(_reports_dir(args)) / _dt.date.today().isoformat()
     out.mkdir(parents=True, exist_ok=True)
     path = snapshot.write_json(status, out)
     print(f"snapshot complete: {path} (as of {status['computed_at']})")
@@ -376,14 +377,14 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
 def _cmd_plan(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
     plans_dir = args.plans_dir or settings.plans_dir
 
     try:
         result = plan_changes.import_plans(
             conn,
             plans_dir=plans_dir,
-            reports_dir=args.reports_dir,
+            reports_dir=_reports_dir(args),
             week=args.week,
             data_start_date=settings.data_start_date,
         )
@@ -412,7 +413,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     try:
         if args.activity_id is not None:
@@ -454,7 +455,7 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
 
 def _cmd_log_sets(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     try:
         out = log_activity_sets(
@@ -502,7 +503,7 @@ def _list_events(conn: sqlite3.Connection) -> int:
 
 def _cmd_event(args: argparse.Namespace) -> int:
     settings = get_settings()
-    conn = _bootstrap_db(settings)
+    conn = installation.open_database(settings)
 
     try:
         if args.event_command == "add":
@@ -548,17 +549,14 @@ def _cmd_event(args: argparse.Namespace) -> int:
 
 def _cmd_daily(args: argparse.Namespace) -> int:
     settings = get_settings()
+    # Refuse before the log exists: a run that cannot happen leaves nothing behind.
+    installation.require_database(settings)
     daily.configure_logging(
         settings.log_path,
         max_bytes=settings.log_max_bytes,
         backup_count=settings.log_backup_count,
     )
-    try:
-        conn = _bootstrap_db(settings)
-    except installation.InstallationError as exc:
-        # The nightly log is where a failed run is looked for, not only the launchd capture.
-        daily.logger.error("daily: %s", exc)
-        raise
+    conn = installation.open_database(settings)
 
     try:
         transport = client.login(settings)
@@ -576,7 +574,7 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         data_start_date=settings.data_start_date,
         to_date=args.to_date,
         plans_dir=settings.plans_dir,
-        reports_dir=args.reports_dir,
+        reports_dir=_reports_dir(args),
         recheck_days=settings.sync_recheck_days,
     )
     conn.close()
@@ -602,14 +600,7 @@ def _cmd_refresh_today(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(prog="garmin-coach")
-    parser.add_argument(
-        "--home",
-        default=None,
-        help=(
-            "Athlete installation folder to act on (default: GARMIN_COACH_HOME, else the "
-            "current folder when it holds a .env)."
-        ),
-    )
+    installation.add_home_argument(parser)
     sub = parser.add_subparsers(dest="command", required=True)
 
     bf = sub.add_parser("backfill", help="Pull a date range into the DB (raw + core).")
@@ -929,8 +920,6 @@ def main(argv: list[str] | None = None) -> int:
     except installation.InstallationError as exc:
         print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2
-    if getattr(args, "reports_dir", "") is None:
-        args.reports_dir = str(installation.reports_dir())
     try:
         return args.func(args)
     except installation.InstallationError as exc:

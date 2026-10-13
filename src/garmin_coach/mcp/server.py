@@ -627,17 +627,10 @@ def main(existing_db_only: bool = False, argv: list[str] | None = None) -> None:
         argv: Command-line arguments (default: the process's own).
     """
     parser = argparse.ArgumentParser(prog="garmin-coach-mcp", description=__doc__)
-    parser.add_argument(
-        "--home",
-        default=None,
-        help=(
-            "Athlete installation folder to serve (default: GARMIN_COACH_HOME, else the "
-            "current folder when it holds a .env)."
-        ),
-    )
+    installation.add_home_argument(parser)
     args = parser.parse_args(argv)
     try:
-        installation.activate(args.home)
+        installation.require_database(installation.activate(args.home))
     except installation.InstallationError as exc:
         print(f"garmin-coach-mcp: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

@@ -193,6 +193,32 @@ def test_an_environment_value_agreeing_with_the_installation_is_accepted(
     assert cli.main(["--home", str(home), "event", "list"]) == 0
 
 
+def test_an_environment_path_through_a_symlink_names_the_same_file(
+    tmp_path, elsewhere, monkeypatch
+):
+    home = make_installation(tmp_path / "athlete")
+    alias = tmp_path / "alias"
+    alias.symlink_to(home, target_is_directory=True)
+    monkeypatch.setenv("DB_PATH", str(alias / "data" / "garmin.db"))
+
+    assert cli.main(["--home", str(home), "event", "list"]) == 0
+
+
+def test_a_relative_environment_path_is_read_from_where_the_run_starts(
+    tmp_path, monkeypatch, capsys
+):
+    """As a shell user would read it: the same text means the same file only from inside."""
+    home = make_installation(tmp_path / "athlete")
+    monkeypatch.setenv("DB_PATH", "data/garmin.db")
+
+    monkeypatch.chdir(home)
+    assert cli.main(["--home", str(home), "event", "list"]) == 0
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["--home", str(home), "event", "list"]) == 2
+    assert "Installation conflict: DB_PATH" in capsys.readouterr().err
+
+
 def test_settings_unrelated_to_location_stay_overridable_from_the_environment(
     tmp_path, monkeypatch
 ):
@@ -265,7 +291,7 @@ def test_only_a_manual_import_may_create_the_database(
     error = capsys.readouterr().err
     assert "No database" in error
     assert "backfill" in error
-    assert not (home / "data").exists()
+    assert [path.name for path in home.iterdir()] == [".env"]
     assert logins == []
     assert list(elsewhere.iterdir()) == []
 

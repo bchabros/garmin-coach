@@ -34,7 +34,9 @@ a nightly launchd job, Claude Desktop, Claude Code and Work - none of which may 
 - **Conflicts are refused, not resolved by precedence.** `--home` and
   `GARMIN_COACH_HOME` naming different folders is an error. So is an environment value
   for a path setting (`DB_PATH`, `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS`) or for
-  `GARMIN_EMAIL` that differs from what the selected installation configures. Other
+  `GARMIN_EMAIL` that differs from what the selected installation configures. A relative
+  environment path is read from the starting folder, as the shell that set it would read
+  it; the installation's own relative paths are read from the installation. Other
   settings keep the usual environment-over-`.env` precedence; paths written in the
   installation's own `.env` (outside its folder included) and per-command flags such as
   `--plans-dir` remain the supported overrides.

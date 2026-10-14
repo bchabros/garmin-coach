@@ -10,7 +10,7 @@ import sqlite3
 import sys
 from typing import TYPE_CHECKING, Any
 
-from . import daily, plan_changes, retention
+from . import daily, onboarding, plan_changes, retention
 from .coach import digest, report, thresholds as _thresholds
 from .core import db, events as _events, installation, manual_sets, plan as _plan
 from .core.config import get_settings
@@ -603,6 +603,14 @@ def build_parser() -> argparse.ArgumentParser:
     installation.add_home_argument(parser)
     sub = parser.add_subparsers(dest="command", required=True)
 
+    setup = sub.add_parser("setup", help="Guide first login and history import for an athlete.")
+    setup.add_argument(
+        "--configure-only", action="store_true", help="Configure without logging in."
+    )
+    setup.add_argument(
+        "--to", dest="to_date", help="Import through YYYY-MM-DD (default: yesterday)."
+    )
+
     bf = sub.add_parser("backfill", help="Pull a date range into the DB (raw + core).")
     bf.add_argument(
         "--from",
@@ -916,6 +924,8 @@ def _cmd_prune_reports(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface."""
     args = build_parser().parse_args(argv)
+    if args.command == "setup":
+        return onboarding.run(args.home, configure_only=args.configure_only, to_date=args.to_date)
     try:
         installation.activate(args.home)
     except installation.InstallationError as exc:

@@ -61,6 +61,13 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
   (the complete plan import outcome shared by CLI, MCP and the nightly run), and
   `retention.py` (manual report-file retention, with no DB or transport access).
 
+`onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
+existing-installation adoption, confirmed terminal login, resumable initial backfill and
+the first local digest. Its checkpoint is separate from nightly sync watermarks; the ETL
+calls back only after all daily streams commit. Templates under `templates/` contain no
+athlete observations. The schema seeds policy defaults and reference mappings only;
+existing personal HRV overrides and weekly templates are preserved in place.
+
 `scripts/coach_project.py` selects the source checkout's Poetry interpreter before
 entering `project.py`, including from GUI clients or an unrelated working directory.
 The guarded launch rejects conflicting database/plan environment paths and uses
@@ -93,6 +100,11 @@ The agreed boundaries a test exercises -- prefer the highest existing seam, add 
 ones sparingly:
 
 - Test normalizers through pure model functions (`core/models.py`).
+- Test onboarding through `cli.main` on temporary installations
+  (`tests/test_onboarding.py`): explicit history/template choices, empty observations,
+  adopted data and file preservation, terminal login/MFA, failures and resumption. The
+  shared `conn` fixture represents an existing athlete with an explicitly agreed weekly
+  template; fresh-install tests bootstrap their own unseeded databases.
 - Test persistence through `core/db.py` helpers and observable SQLite state.
 - Test project setup through `scripts/coach_project.py` and real stdio MCP on
   temporary installations (`tests/test_coach_project.py`): selected configuration,

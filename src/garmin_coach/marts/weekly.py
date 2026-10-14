@@ -24,8 +24,7 @@ def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
 def _plan_intents(conn: sqlite3.Connection, monday: _dt.date) -> dict[int, str | None]:
     """The week's planned intents by weekday, from the plan-of-record resolver.
 
-    A day reads None only when neither the authored week nor the template has it -
-    possible but not expected, since the template seeds all seven weekdays.
+    A day reads None when neither the authored week nor an agreed template has it.
     """
     return {day["dow"]: day.get("intent") for day in _plan.resolve_week(conn, monday.isoformat())}
 
@@ -235,7 +234,9 @@ def _week_row(
         "monotony": monotony,
         "strain": strain,
         "max_consec_hard": _max_consec_hard(loads, hard),
-        "plan_adherence": matches / 7,
+        "plan_adherence": matches / 7
+        if all(row["planned"] is not None for row in intent_rows)
+        else None,
         "n_sessions": sum(1 for x in loads if x > 0),
         "n_quality": sum(1 for a in actual if a == "quality"),
         "n_rest_days": sum(1 for a in actual if a == "rest"),

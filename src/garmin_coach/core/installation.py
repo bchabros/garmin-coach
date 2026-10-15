@@ -157,6 +157,27 @@ def require_database(settings: Settings) -> None:
         )
 
 
+def read_database(settings: Settings) -> sqlite3.Connection:
+    """Inspect an existing installation without creating, seeding or migrating it.
+
+    Args:
+        settings: The selected athlete installation's resolved settings.
+
+    Raises:
+        InstallationError: The selected database does not exist.
+        sqlite3.DatabaseError: Its schema needs an explicit migration first.
+    """
+    require_database(settings)
+    uri = pathlib.Path(settings.db_path).as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        db.validate_schema(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def load(root: pathlib.Path) -> Settings:
     """Load an installation's settings, refusing conflicting environment values.
 

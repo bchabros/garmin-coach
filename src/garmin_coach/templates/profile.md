@@ -1,6 +1,6 @@
 # Athlete profile
 
-_Ostatnia aktualizacja: {created_on}._
+_Ostatnia aktualizacja: {created_on}. Pusty szablon; profil nie został jeszcze uzupełniony._
 
 ## Goals
 

@@ -2,6 +2,7 @@
 
 The athlete fills in `athlete-profile.md` over time, in their own language.
 An empty heading means unknown; never invent a profile or copy another athlete's data.
+The initial date records template creation, not an athlete assessment or a coaching review.
 Numbers come from the database; this file holds qualitative context and decisions.
 
 ## Profile structure and history

@@ -6,11 +6,13 @@ are mapped to their meaning in `references/report.md` ("Sygnały").
 The athlete's plan of record is `plans/<monday>_week.md`, one file per week, authored by
 hand and revised mid-week when signals warrant. It drives today's planned intent, the
 recommendation's starting point, and weekly adherence. A week with no file falls back to
-the repeating `plan_template` - a default shape, never an agreed plan.
+the repeating `plan_template` only when the athlete has chosen one. It is a fallback
+shape, not an authored plan for that week; without either source, intent and source are null.
 
 **Read it** with `mcp__coach__get_plan(week_start)` when the tools are present (defaults
-to the current week). `has_plan: false`, every day sourced `plan_template`, or a
+to the current week). `has_plan: false`, a template fallback, null intent/source, or a
 `PLAN_MISSING` signal all mean the same thing: that week is unplanned. Say so plainly.
+Null does not mean rest or a missed session; do not invent sessions to replace unknowns.
 
 **Propose one** when the athlete asks, or when you spot an unplanned week - offer, never
 write unasked. Compose the seven days yourself from what you already read (`get_weekly`

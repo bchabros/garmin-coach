@@ -107,7 +107,11 @@ def _intent_rows(
                 "actual": actual,
                 # Compare what the mart can observe, not the raw label: the planned
                 # intent names the session, the actual is only ever a load class.
-                "match": _plan.intent_class(planned) == _plan.intent_class(actual),
+                "match": (
+                    _plan.intent_class(planned) == _plan.intent_class(actual)
+                    if planned is not None
+                    else None
+                ),
             }
         )
     return out
@@ -131,7 +135,9 @@ def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> li
                 "date": date,
                 "planned": planned,
                 "actual": actual,
-                "match": bool(matched),
+                # Old caches store a required integer; absence of a plan makes
+                # that placeholder unassessable, not a failed training day.
+                "match": bool(matched) if planned is not None else None,
             }
             for dow, date, planned, actual, matched in stored
         ]

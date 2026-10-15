@@ -67,15 +67,26 @@ or interruption. An empty response is not proof of an empty training history.
 **Recovery and resumption.** Re-run setup with the same `--home` and `--to` shown in
 the failure message. A checkpoint in `data/setup-import.json` advances only after every
 daily stream for that date has committed. The first incomplete day is fetched again;
-completed days and core rows remain intact. Checkpoints are bound to the requested
-range and database identity; missing, invalid or mismatched checkpoints cause a safe
+completed days and core rows remain intact. Checkpoints are bound to the history start
+and database identity; extending the end date (including running a day later) resumes
+after the last committed day. Missing, invalid or mismatched checkpoints cause a safe
 repeat of the full range. Nightly sync watermarks are never written by setup. Once a
 range is complete, repeating it rebuilds the local read without logging in again; use
 the normal `sync`/`backfill` commands for a fresh fetch. After a rate limit, wait before
 retrying; setup stops at the failed request rather than automatically retrying it.
+Diagnostics report the failed stage, exception class, failure category and last complete
+day without logging exception messages, credentials or token contents. Rate-limit,
+authentication, connection and interruption outcomes are distinguished from unknown failures.
 
 **Existing installations.** A `.env` identifies adoption: setup loads the selected
-installation's configuration and uses its existing paths and saved login. It does not
+installation's configuration and uses its existing paths. Without a setup checkpoint,
+an existing history is inspected read-only: setup shows the observed coverage and offers
+`yes` for a local read or `import` to explicitly request a history fetch. Local adoption
+does not log in, and `onboarding.import_complete` is null rather than inferring complete
+history from a maximum date. The local read ends at the latest actual observation within
+the requested window; date-only rows do not extend it. An ongoing setup import instead
+resumes its checkpoint.
+Setup does not
 rewrite the `.env`, profile, profile rules, authored plans, reports, receipts or existing
 DB overrides/templates. Schema bootstrap retains its existing non-destructive migration
 behavior. `WEEKLY_TEMPLATE` is a first-DB choice, not a way to revise an existing plan;
@@ -83,6 +94,10 @@ authored weekly files retain precedence through the normal plan resolver/import 
 Clear contradictory exported path/account settings before selecting another installation.
 For a new athlete, also unset inherited `DATA_START_DATE`, `WEEKLY_TEMPLATE` and
 `GARMIN_PASSWORD`; the guided choices and terminal login establish their own identity.
+If a manual `.env` has no database and omits the history start or weekly choice, setup
+asks for those missing choices and previews the lines to append. Other configuration
+bytes and paths are preserved, and declining leaves the file unchanged. An existing
+database retains its compatibility defaults and historical settings.
 
 **Honest missing data.** Fresh schemas contain algorithm policy defaults and shared
 exercise mappings, without the owner's HRV baseline/SD or training week. Existing
@@ -643,7 +658,7 @@ Which clients pick it up and how is covered in "Registering the server" below â€
   not know come back as `unmapped`.
 - **Plan of record** â€” `get_plan(week_start?)` returns the resolved week with a
   per-day `source` (`plan_week` = the athlete authored it, `plan_template` = the
-  fallback shape answered) and `has_plan`. When a week is unplanned the digest also
+  fallback shape answered, null = no source exists) and `has_plan`. When a week is unplanned the digest also
   carries the `PLAN_MISSING` signal. To plan it: compose seven `{planned, intent}`
   days from the athlete's history and standing, call `plan_preview(week_start, days)`
   to validate and **show the table to the athlete**, then `plan_confirm(week_start,

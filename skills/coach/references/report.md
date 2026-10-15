@@ -49,7 +49,8 @@ may be null, and the structure of `report.md`.
 
    `plan_source_today` says where today's plan came from: `plan_week` is the week the
    athlete authored (the plan of record), `plan_template` is the repeating fallback
-   shape - a default, never something they agreed to. Never present a `plan_template`
+   shape they selected, not an authored plan for that week. A null source means no
+   planned session is known. Never present a `plan_template`
    day as "your plan"; say the week is unplanned and the template is standing in.
 
 3. **Write `reports/{today}/report.md`.** Structure:
@@ -100,9 +101,9 @@ may be null, and the structure of `report.md`.
      - `HARD_RPE_YESTERDAY` -> yesterday's session was subjectively very hard
        (`facts.rpe` on Borg CR10); the next day should back off. This feeds tomorrow's
        recommendation below.
-     - `PLAN_MISSING` -> the week starting `facts.week_start` has no authored plan, so
-       the repeating template is standing in and every planned-intent read for it is a
-       default, not the athlete's intent. Offer to plan the week (read
+     - `PLAN_MISSING` -> the week starting `facts.week_start` has no authored plan.
+       With `facts.source=plan_template`, a repeating shape stands in; with a null
+       source there is no fallback and the planned intent is unknown. Offer to plan the week (read
        `references/planning.md` before you propose one); do not treat the template days
        as agreed sessions.
    - **Movement coverage** - when the digest's `movement` block is present and
@@ -115,10 +116,13 @@ may be null, and the structure of `report.md`.
    - **Tydzień: plan vs realizacja** - only if the digest has a non-null `weekly` block
      (the latest complete week). One line on the week's numbers (`load_total`, the
      low/high/anaero shares, `monotony`/`strain`, `max_consec_hard`), then the adherence:
-     state `plan_adherence` and walk the `plan_vs_actual` rows where `match` is false,
+     state `plan_adherence` when known and walk only `plan_vs_actual` rows where `match` is false,
      naming the direction (e.g. "pt: plan quality, było rest"). If `was_deload` is true,
      say so - a deliberate deload is not lost fitness. Skip this block entirely when
      `weekly` is null.
+
+     A null adherence or daily `match` means the comparison cannot be assessed without
+     a plan. Name the gap without describing unknown days as missed sessions.
 
      `planned` and `actual` are recorded at different granularities on purpose, so trust
      `match` over your own comparison of the two strings. `planned` is what the athlete

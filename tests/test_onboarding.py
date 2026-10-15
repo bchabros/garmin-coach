@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from garminconnect import GarminConnectTooManyRequestsError
 
 from garmin_coach import cli
 from garmin_coach.core.config import get_settings
@@ -35,6 +36,64 @@ def test_new_athlete_configures_an_empty_installation_before_login(tmp_path, mon
     assert "Every edit" in (home / "memory/README.md").read_text()
     assert "GARMIN_PASSWORD" not in (home / ".env").read_text()
     assert "Configured" in capsys.readouterr().out
+
+
+def test_a_manual_dot_env_without_history_still_requires_own_athlete_choices(tmp_path, monkeypatch):
+    home = tmp_path / "manual"
+    home.mkdir()
+    original = "# keep my paths\nDB_PATH=private/history.db\nLOG_PATH=logs/custom.log\n"
+    (home / ".env").write_text(original)
+    answer(monkeypatch, "2026-09-01", "none", "yes")
+
+    assert cli.main(["--home", str(home), "setup", "--configure-only"]) == 0
+
+    settings = get_settings()
+    assert settings.data_start_date == "2026-09-01"
+    assert settings.weekly_template == "none"
+    assert settings.db_path == str(home / "private/history.db")
+    assert (home / ".env").read_text().startswith(original)
+    assert not (home / "private/history.db").exists()
+    assert (home / "memory/athlete-profile.md").is_file()
+
+
+def test_declining_missing_first_run_choices_preserves_manual_configuration(tmp_path, monkeypatch):
+    home = tmp_path / "manual"
+    home.mkdir()
+    original = b"# personal paths\r\nDB_PATH=private/history.db\r\n"
+    (home / ".env").write_bytes(original)
+    answer(monkeypatch, "2026-09-01", "none", "no")
+
+    assert cli.main(["--home", str(home), "setup", "--configure-only"]) == 2
+
+    assert (home / ".env").read_bytes() == original
+    assert [path.name for path in home.iterdir()] == [".env"]
+
+
+@pytest.mark.parametrize(
+    "variable,value",
+    [
+        ("DATA_START_DATE", "2026-06-08"),
+        ("WEEKLY_TEMPLATE", "rest,easy,tempo,rest,easy,strength,rest"),
+        ("GARMIN_PASSWORD", "private-secret"),
+    ],
+)
+def test_complete_manual_configuration_refuses_inherited_first_run_overrides(
+    tmp_path, monkeypatch, capsys, variable, value
+):
+    home = tmp_path / "manual"
+    home.mkdir()
+    original = "DATA_START_DATE=2026-09-01\nWEEKLY_TEMPLATE=none\n"
+    (home / ".env").write_text(original)
+    answer(monkeypatch)
+    monkeypatch.setenv(variable, value)
+
+    assert cli.main(["--home", str(home), "setup", "--configure-only"]) == 2
+
+    assert (home / ".env").read_text() == original
+    assert [path.name for path in home.iterdir()] == [".env"]
+    error = capsys.readouterr().err
+    assert variable in error
+    assert value not in error
 
 
 def test_a_fresh_database_has_rules_but_no_other_athletes_measurements_or_plan(tmp_path):
@@ -103,7 +162,17 @@ def test_without_an_agreed_plan_the_first_read_does_not_report_missed_training(
 ):
     home = tmp_path / "athlete"
     answer(monkeypatch, "2026-08-31", "none", "yes", "yes")
-    transport = fake_client(by_day={"hrv": {"2026-09-06": {"hrvSummary": {"lastNightAvg": 40}}}})
+    transport = fake_client(
+        activities=[
+            {
+                "activityId": 900001,
+                "startTimeLocal": "2026-09-04 10:00:00",
+                "activityType": {"typeKey": "running"},
+                "activityTrainingLoad": 80,
+            }
+        ],
+        by_day={"hrv": {"2026-09-06": {"hrvSummary": {"lastNightAvg": 40}}}},
+    )
     monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
 
     assert cli.main(["--home", str(home), "setup", "--to", "2026-09-06"]) == 0
@@ -112,15 +181,24 @@ def test_without_an_agreed_plan_the_first_read_does_not_report_missed_training(
         next((home / "reports/2026-09-06").glob("setup-*/digest.json")).read_text()
     )
     assert reading["weekly"]["plan_adherence"] is None
+    assert all(day["match"] is None for day in reading["weekly"]["plan_vs_actual"])
+    assert any(day["actual"] != "rest" for day in reading["weekly"]["plan_vs_actual"])
     assert reading["recommendation"]["intended_type"] is None
     assert reading["recommendation"]["replan"] is None
     gap = next(signal for signal in reading["signals"] if signal["code"] == "PLAN_MISSING")
     assert gap["facts"]["source"] is None
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("429 secret-token"), KeyboardInterrupt()])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        GarminConnectTooManyRequestsError("secret-token"),
+        KeyboardInterrupt(),
+        RuntimeError("secret-token"),
+    ],
+)
 def test_interrupted_or_rate_limited_history_keeps_completed_days_and_can_be_repeated(
-    tmp_path, monkeypatch, fake_client, capsys, failure
+    tmp_path, monkeypatch, fake_client, capsys, caplog, failure
 ):
     home = tmp_path / "athlete"
     answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
@@ -148,6 +226,16 @@ def test_interrupted_or_rate_limited_history_keeps_completed_days_and_can_be_rep
     first = next((home / "reports/2026-09-02").glob("setup-*/status.json"))
     status = json.loads(first.read_text())
     assert status["onboarding"]["import_complete"] is False
+    assert status["onboarding"]["failure_kind"] == (
+        "interrupted"
+        if isinstance(failure, KeyboardInterrupt)
+        else "rate_limited"
+        if isinstance(failure, GarminConnectTooManyRequestsError)
+        else "failed"
+    )
+    assert status["onboarding"]["completed_through"] == "2026-09-01"
+    assert type(failure).__name__ in caplog.text
+    assert "secret-token" not in caplog.text
     assert "headline" not in status
     assert "recommendation" not in status
     assert not (first.parent / "snapshot.json").exists()
@@ -226,6 +314,39 @@ def test_adoption_preserves_personal_files_measurements_and_configuration(
     assert "Existing athlete installation" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("later_row", ["empty", "outside_window"])
+def test_adoption_inspects_and_reuses_existing_history_without_garmin_login(
+    tmp_path, monkeypatch, capsys, later_row
+):
+    home = tmp_path / "existing"
+    (home / "data").mkdir(parents=True)
+    (home / ".env").write_text("DATA_START_DATE=2026-09-01\n")
+    conn = db.connect(str(home / "data/garmin.db"))
+    db.bootstrap(conn)
+    db.upsert_daily(conn, "hrv_nightly", {"date": "2026-09-01", "avg_hrv": 40})
+    if later_row == "empty":
+        db.upsert_daily(conn, "sleep", {"date": "2026-09-02", "score": None})
+    else:
+        db.upsert_daily(conn, "hrv_nightly", {"date": "2026-09-03", "avg_hrv": 100})
+    conn.commit()
+    conn.close()
+    answer(monkeypatch, "yes")
+
+    def no_login(settings):
+        pytest.fail("adopting recorded history must not trigger an unrequested history fetch")
+
+    monkeypatch.setattr("garmin_coach.etl.client.login", no_login)
+
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 0
+
+    reading = json.loads(next((home / "reports").glob("*/setup-*/digest.json")).read_text())
+    assert reading["onboarding"]["history_source"] == "existing"
+    assert reading["onboarding"]["import_complete"] is None
+    assert reading["window"]["to"] == "2026-09-01"
+    assert reading["headline"]["hrv_baseline"] == 40
+    assert "Stored observations" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "start, template, confirm",
     [
@@ -284,7 +405,7 @@ def test_existing_data_after_the_import_end_does_not_enter_the_first_read(
     db.upsert_daily(conn, "hrv_nightly", {"date": "2026-09-03", "avg_hrv": 100})
     conn.commit()
     conn.close()
-    answer(monkeypatch, "yes")
+    answer(monkeypatch, "import", "yes")
     monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: fake_client())
 
     assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 0
@@ -395,6 +516,23 @@ def test_completed_setup_can_be_repeated_without_another_login(tmp_path, monkeyp
     assert cli.main(args) == 0
 
 
+def test_extending_the_setup_horizon_keeps_completed_history(tmp_path, monkeypatch, fake_client):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: fake_client())
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 0
+    resumed = fake_client()
+    answer(monkeypatch, "yes")
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: resumed)
+
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-03"]) == 0
+
+    assert ("activities", "2026-09-03..2026-09-03") in resumed.calls
+    assert ("sleep", "2026-09-01") not in resumed.calls
+    assert ("sleep", "2026-09-02") not in resumed.calls
+    assert ("sleep", "2026-09-03") in resumed.calls
+
+
 def test_a_checkpoint_for_a_replaced_database_never_skips_the_import(
     tmp_path, monkeypatch, fake_client
 ):
@@ -484,18 +622,21 @@ def test_an_incomplete_import_preserves_an_existing_generation_of_marts(
 
     class Interrupted(fake_client):
         def get_sleep(self, date):
-            if date == "2026-09-02":
+            if date == "2026-09-04":
                 raise RuntimeError("rate limited")
             return super().get_sleep(date)
 
     answer(monkeypatch, "yes")
-    changed = {"hrv": {"2026-09-01": {"hrvSummary": {"lastNightAvg": 80}}}}
+    changed = {"hrv": {"2026-09-03": {"hrvSummary": {"lastNightAvg": 80}}}}
     monkeypatch.setattr(
         "garmin_coach.etl.client.login", lambda settings: Interrupted(by_day=changed)
     )
-    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-03"]) == 2
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-04"]) == 2
 
     conn = db.connect(str(home / "data/garmin.db"))
     assert {table: conn.execute(f"SELECT * FROM {table}").fetchall() for table in tables} == before
-    assert conn.execute("SELECT avg_hrv FROM hrv_nightly").fetchone() == (80,)
+    assert conn.execute("SELECT avg_hrv FROM hrv_nightly ORDER BY date").fetchall() == [
+        (40,),
+        (80,),
+    ]
     conn.close()

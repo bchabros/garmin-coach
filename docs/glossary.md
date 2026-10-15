@@ -182,11 +182,11 @@ code, docstrings, PRDs, and ADRs.
 - **plan week (override)** - the cached per-week rows ingested from a plan file, keyed
   `(week_start, dow)`. Present only for weeks the athlete authored.
 - **planned-intent resolver** - the single read path for "what was planned for this
-  date": the authored `plan_week` for that week, else the `plan_template` fallback. It
-  always reports which of the two answered (`source`). No code reads `plan_template`
-  directly - that drift is exactly what issue #21 fixed.
+  date": the authored week first, then an explicitly chosen repeating template.
+  Without either, the planned intent and its source are unknown, not rest.
 - **plan template (fallback)** - the static day-of-week table that answers for weeks
-  with no authored plan. A repeating *shape*, not a plan the athlete agreed to.
+  with no authored plan, when the athlete has chosen one. Agreement to this repeating
+  shape does not imply agreement to a dated weekly plan; no template is a valid choice.
 - **planned intent** - the training category the plan of record assigns to a date:
   `rest | easy | tempo | strength | hyrox | crossfit | quality`. It names the session
   the athlete meant.
@@ -220,17 +220,17 @@ code, docstrings, PRDs, and ADRs.
   adherence compares classes. Without it every intent outside `rest | easy | quality`
   would score as a permanent mismatch.
 - **plan adherence** - the fraction of the week's seven days whose actual intent
-  matches the planned intent *at intent-class granularity*. The report also shows the
-  *direction* of each mismatch, since the DoD asks to surface divergence, not just a
-  number.
+  matches the planned intent at intent-class granularity, when all seven days have a
+  planned intent. Unknown when any day has no plan; it is not zero adherence.
 - **weekly plan-vs-actual fact** - the per-day planned intent, actual intent, and match
-  flag materialized alongside `weekly_metrics`. Planned and actual are stored as
+  result materialized alongside `weekly_metrics`. Planned and actual are stored as
   authored/observed (not collapsed), so the grid shows what was meant next to what
-  happened; only `match` compares classes. The digest reads these stored weekly facts
+  happened; only `match` compares classes, and no planned intent means an unknown
+  match rather than a missed session. The digest reads these stored weekly facts
   instead of re-deriving mismatch direction from a later plan.
 - **PLAN_MISSING** - the informational signal that the current week has no authored
-  plan, so the template is answering for it. A statement of fact and the coach's cue to
-  propose a week; proposing is never automatic.
+  plan, whether a repeating template answers or no fallback exists. Its source names
+  the fallback or is unknown; proposing a week is never automatic.
 - **monotony / strain (Foster)** - `monotony` = mean daily load / SD of daily load
   across the week (`NULL` when uncomputable, e.g. fewer than two training days);
   `strain` = weekly load x monotony. Classic overtraining flags.
@@ -605,8 +605,8 @@ code, docstrings, PRDs, and ADRs.
 
 ## Process terms
 
-- **data_start** - first date with real (non-onboarding) data: 2026-06-08. Earlier
-  dates are explicit gaps, not zero training.
+- **data_start** - the athlete's chosen first date with real history; earlier dates
+  are explicit gaps, not zero training. The original installation's date is 2026-06-08.
 - **watermark** - per-stream `sync_state.last_synced_date`; the last date the
   incremental sync treats as final and never asks Garmin about again. It never passes
   the first day of the re-check window (ADR 0026).
@@ -657,3 +657,12 @@ code, docstrings, PRDs, and ADRs.
 - **source checkout** - a clone of this repository, used to develop the program. Not an
   installation by itself; the owner's checkout also serves as their installation because
   it holds their settings and data, adopted in place rather than moved.
+- **initial setup** - the guided establishment of an athlete installation's own history
+  start, optional weekly template and saved Garmin login, ending in a local first read
+  or an explicit explanation of missing evidence.
+- **installation adoption** - inspecting and reusing an existing athlete installation
+  without replacing personal state. A local read does not assert complete history or
+  authorize a new history fetch.
+- **setup checkpoint** - the last full day committed by the initial history import for
+  the same athlete history start and database. It survives an extension of the import
+  horizon and is independent of nightly sync watermarks.

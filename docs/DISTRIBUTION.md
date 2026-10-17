@@ -5,38 +5,72 @@ lives in `~/Library/Application Support/Garmin Coach`; the athlete installation 
 to `~/GarminCoach`. Settings, the database, saved Garmin login, plans, reports and the
 profile stay in the athlete installation when the program changes.
 
+## Install v0.1.0 from Terminal
+
+The [v0.1.0 prerelease](https://github.com/bchabros/garmin-coach/releases/tag/v0.1.0)
+is available for macOS 15+ on Apple Silicon and Intel. Install and sign into your
+selected assistant first: supported choices are Codex, Claude Code and Work.
+Their registration uses the `codex` CLI for Work/Codex or the `claude` CLI for Claude
+Code; see [client setup](CLIENT_SETUP.md) for missing CLI and UI completion steps.
+Run this in your own macOS user account:
+
+```sh
+coach_installer="$(mktemp)" &&
+curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/bchabros/garmin-coach/releases/download/v0.1.0/install-$(uname -m).sh" -o "$coach_installer" &&
+/bin/sh "$coach_installer"
+```
+
+The command downloads the installer for your native architecture. Setup guides your
+own Garmin login/MFA and history import, asks which assistants to prepare and offers
+optional daily refresh. Open the athlete installation as the primary folder of a
+local conversation in each selected assistant and complete its trust/activation steps.
+Keep your own
+athlete installation; do not copy another athlete's database, saved login or profile.
+Use `--home <folder>` after the installer path to select a different athlete folder,
+or `--runtime-root <folder>` to select a different program root.
+
 ## Release availability and acceptance
 
-No Garmin Coach release assets have been published as part of this change. There is
-therefore no active paste-and-run installation command yet. Do not copy a guessed
-release URL into onboarding instructions.
+Release source: `61f1dbbe23ade4059afd0cb321d1bc3846658d7a`, tagged `v0.1.0`.
+Published installer SHA-256 values, checked against the downloaded assets:
+
+| Architecture | Installer SHA-256 |
+| --- | --- |
+| arm64 | `c156e86b5be9e7f47cc6521eda6c33c4a8aa36ff468e02c3c5e9a452071fc418` |
+| x86_64 | `7d0f5c8373d629f11c6aa6a328d28056119f0a7821de784e5afad0fbaf8a6476` |
+
+The release also provides manifests and SHA256SUMS files for the complete asset set.
 
 The release workflow runs native candidate checks on relevant pull requests and builds
 native arm64 and Intel wheelhouses for macOS 15+, supplies
 pinned standalone CPython 3.13.16, and can publish a version-addressed prerelease only
-after both native package checks pass. The documented support matrix is provisional
-until those workflow results and the following consumer acceptance are recorded.
+after both native package checks pass. The documented support matrix remains provisional
+until the following consumer acceptance is recorded.
 A temporary directory on a developer Mac and a GitHub runner are dependency-isolation
 checks; neither is a clean consumer Mac with fresh assistant conversations.
 
 | Check | Status |
 | --- | --- |
 | Offline checksum, private venv/launcher, repeat and temporary scheduler contracts | Automated tests |
-| Local arm64 candidate, standalone Python and packaged stdio digest/snapshot | Passed 2026-10-17 on macOS 27.0.1; unpublished |
-| Native arm64 released bundle, packaged stdio digest and snapshot | Workflow available; not run |
-| Native Intel released bundle, packaged stdio digest and snapshot | Workflow available; not run |
+| Published arm64 shell, standalone Python and packaged stdio digest/snapshot | Passed 2026-10-17 on macOS 27.0.1 with temporary HOME/runtime and scrubbed PATH |
+| Native arm64 released bundle, packaged stdio digest and snapshot | Passed [publication run 39050136480](https://github.com/bchabros/garmin-coach/actions/runs/39050136480) |
+| Native Intel released bundle, packaged stdio digest and snapshot | Passed [publication run 39050136480](https://github.com/bchabros/garmin-coach/actions/runs/39050136480) |
 | Clean Mac without a checkout/Python/Poetry | Pending |
 | New athlete's interactive Garmin login/import | Pending, user operated |
+| Real launchd activation/removal on a consumer installation | Pending |
 | Fresh Work conversation from installed release | Pending |
 | Fresh Claude Code conversation from installed release | Pending |
 | Fresh Codex conversation from installed release | Pending |
 | All selected clients share the same athlete installation | Pending |
 
-The local candidate check used only verified binary wheels and standalone CPython
-3.13.16 in temporary storage, with a scrubbed PATH and no borrowed developer
-dependencies. It called both actual packaged stdio tools. It used neither Garmin
-transport nor the real scheduler. This is evidence of dependency isolation on the
-current host, not a released artifact or fresh-client acceptance.
+The published arm64 shell was downloaded without GitHub authentication and run with
+`--prepare-only` into temporary storage on the developer Mac. It supplied standalone
+CPython 3.13.16 and hash-checked locked wheels, then called actual packaged stdio
+digest/snapshot before activation. The packaged `doctor` also reported a missing
+database in an explicitly configured empty synthetic installation without creating it.
+No developer dependencies, real Garmin login, client registration or scheduler were
+used. This verifies the published download path and dependency isolation; it does
+not establish a clean consumer Mac or fresh-client acceptance.
 
 Issue #86 retains the required clean-Mac and fresh-client acceptance checks until
 they are actually observed. A written client configuration or local MCP protocol probe

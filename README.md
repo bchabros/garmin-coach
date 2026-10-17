@@ -20,7 +20,11 @@ that got the system here. New work is tracked as GitHub issues.
 
 ## First run for a new athlete (macOS)
 
-With the runtime available (`poetry install` in a source checkout), run this in Terminal:
+For a tester on macOS 15+, use the
+[published v0.1.0 installer](docs/DISTRIBUTION.md#install-v010-from-terminal).
+It supplies its own Python runtime and guides account onboarding and assistant setup.
+
+From a source checkout, run `poetry install` first, then run this in Terminal:
 
 ```bash
 poetry run garmin-coach --home ~/GarminCoach setup
@@ -33,8 +37,9 @@ an interrupted import without resetting data. An existing installation is adopte
 place; configuration, plans, profile and reports are preserved.
 
 Use `--configure-only` to stop before login or `--to YYYY-MM-DD` to bound the initial
-import. Assistant registration and clean-Mac runtime installation are separate work
-(#85 and #86). See [the setup runbook](docs/OPERATIONS.md#guided-first-run-setup-macos)
+import. The [versioned installer](docs/DISTRIBUTION.md#install-v010-from-terminal)
+guides runtime installation, onboarding and selected assistant preparation together.
+See [the setup runbook](docs/OPERATIONS.md#guided-first-run-setup-macos)
 for recovery, missing-data semantics and the separate live acceptance checklist.
 See [program maintenance](docs/LIFECYCLE.md) for local diagnosis, recovery backups,
 staged updates and removal that retains athlete records.

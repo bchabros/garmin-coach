@@ -5,6 +5,7 @@ description = "Local Garmin Connect ETL + training coach (system-of-record in SQ
 authors = ["Chabros <chabros96@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "garmin_coach", from = "src" }]
+include = [{ path = "skills/coach/**/*.md", format = ["sdist", "wheel"] }]
 
 [tool.poetry.dependencies]
 python = "^3.13"

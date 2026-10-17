@@ -252,3 +252,32 @@ def test_symlinked_package_resource_cannot_be_overwritten_or_removed(athlete_hom
     assert retry.returncode == 2
     assert "symlink" in retry.stderr
     assert outside.read_text() == "Unrelated document"
+
+
+def test_main_cli_routes_client_setup_to_the_selected_installation(athlete_home, tmp_path):
+    runtime = tmp_path / "cli runtime"
+    result = subprocess.run(
+        [
+            str(PYTHON),
+            "-m",
+            "garmin_coach.cli",
+            "--home",
+            str(athlete_home),
+            "clients",
+            "configure",
+            "--clients",
+            "codex",
+            "--runtime-root",
+            str(runtime),
+        ],
+        env=dict(os.environ, PYTHONPATH=str(ROOT / "src"), PATH=""),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["home"] == str(athlete_home)
+    assert output["selected_clients"] == ["codex"]
+    assert output["clients"]["codex"]["state"] == "client_missing"
+    assert sorted(path.name for path in athlete_home.iterdir()) == [".env"]

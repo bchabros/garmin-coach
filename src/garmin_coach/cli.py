@@ -10,7 +10,7 @@ import sqlite3
 import sys
 from typing import TYPE_CHECKING, Any
 
-from . import daily, onboarding, plan_changes, retention
+from . import clients, daily, onboarding, plan_changes, retention
 from .coach import digest, report, thresholds as _thresholds
 from .core import db, events as _events, installation, manual_sets, plan as _plan
 from .core.config import get_settings
@@ -602,6 +602,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="garmin-coach")
     installation.add_home_argument(parser)
     sub = parser.add_subparsers(dest="command", required=True)
+    clients.add_parser(sub)
 
     setup = sub.add_parser("setup", help="Guide first login and history import for an athlete.")
     setup.add_argument(

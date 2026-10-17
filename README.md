@@ -36,6 +36,8 @@ Use `--configure-only` to stop before login or `--to YYYY-MM-DD` to bound the in
 import. Assistant registration and clean-Mac runtime installation are separate work
 (#85 and #86). See [the setup runbook](docs/OPERATIONS.md#guided-first-run-setup-macos)
 for recovery, missing-data semantics and the separate live acceptance checklist.
+See [program maintenance](docs/LIFECYCLE.md) for local diagnosis, recovery backups,
+staged updates and removal that retains athlete records.
 
 ## How work is tracked
 

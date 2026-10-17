@@ -2381,3 +2381,16 @@ def test_unschedule_preview_with_an_unreadable_receipt_never_logs_in(conn, tmp_p
 
     assert "cannot be read" in out["data"]["error"]
     assert logins == []
+
+
+def test_weekly_without_an_agreed_plan_reports_unknown_matches(conn):
+    from garmin_coach.marts import features
+
+    conn.execute("DELETE FROM plan_template")
+    features.features(conn, data_start_date="2026-07-06", to_date="2026-07-12")
+
+    out = tools.get_weekly(conn, week_start="2026-07-06")["data"]
+    assert out["weeks"][0]["plan_adherence"] is None
+    assert len(out["plan_actual"]) == 7
+    assert all(day["planned"] is None for day in out["plan_actual"])
+    assert all(day["matched"] is None for day in out["plan_actual"])

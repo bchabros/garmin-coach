@@ -61,6 +61,7 @@ def run(home: str | None, *, configure_only: bool = False, to_date: str | None =
 def _run(home: str | None, *, configure_only: bool, to_date: str | None) -> int:
     if not sys.stdin.isatty():
         raise ValueError("Setup needs an interactive terminal; run it in Terminal.")
+    _refuse_first_run_overrides()
     root, end = _destination(home), _end_date(to_date)
     settings = _configure_installation(root, end)
     print(f"Configured: {root}; real data starts {settings.data_start_date}.")
@@ -86,7 +87,22 @@ def _configure_installation(root: pathlib.Path, end: dt.date) -> Settings:
             raise ValueError("A new installation needs an empty folder; select another folder.")
         _configure(root, end)
     settings = installation.activate(str(root))
-    if not pathlib.Path(settings.db_path).exists():
+    if not pathlib.Path(settings.garmintokens).resolve().is_relative_to(root):
+        raise ValueError(
+            "Setup requires GARMINTOKENS inside this athlete installation; "
+            "select an installation-owned token folder before importing history."
+        )
+    if pathlib.Path(settings.db_path).exists():
+        configured = {
+            key.lower(): value
+            for key, value in dotenv_values(root / installation.CONFIG_FILE).items()
+        }
+        if not configured.get("data_start_date"):
+            raise ValueError(
+                "Set DATA_START_DATE to this athlete's first real history date "
+                "in the installation configuration before adopting existing history."
+            )
+    else:
         settings = _complete_first_configuration(root, settings, end)
         _seed_folders(root)
     return settings
@@ -103,7 +119,11 @@ def _destination(home: str | None) -> pathlib.Path:
 
 
 def _adopt_existing(root: pathlib.Path, settings: Settings, start: str, end: str) -> int | None:
-    if not pathlib.Path(settings.db_path).is_file() or _checkpoint_path(root).exists():
+    if (
+        not pathlib.Path(settings.db_path).is_file()
+        or _checkpoint_path(root).exists()
+        or any((root / installation.REPORTS_FOLDER).glob("*/setup-*/status.json"))
+    ):
         return None
     with closing(installation.read_database(settings)) as conn:
         observations = _observation_dates(conn, start, end)
@@ -206,7 +226,7 @@ def _complete_first_configuration(root: pathlib.Path, settings: Settings, end: d
 def _refuse_first_run_overrides() -> None:
     for key in os.environ:
         if key.upper() in ("DATA_START_DATE", "WEEKLY_TEMPLATE", "GARMIN_PASSWORD"):
-            raise ValueError(f"Unset {key.upper()} before configuring a new athlete.")
+            raise ValueError(f"Unset {key.upper()} before running athlete setup.")
 
 
 def _append_configuration(path: pathlib.Path, additions: list[str]) -> None:
@@ -252,12 +272,15 @@ def _import(root: pathlib.Path, settings: Settings, start: str, end: str) -> int
         return 0
     print("setup: logging in to Garmin.")
     try:
-        transport = client.login(settings)
+        with client.redacted_logs():
+            transport = client.login(settings)
     except Exception as exc:
         kind = _record_failure("login", exc)
         print(f"setup: Garmin login failed ({kind}); retry from Terminal: {retry}", file=sys.stderr)
         return 2
     with closing(installation.open_database(settings, create=True)) as conn:
+        if not _checkpoint_path(root).exists():
+            _checkpoint(root, settings, start, end, None)
         print("setup: importing history; completed days are retained if interrupted.")
         failure = _backfill(
             transport, conn, first, end, lambda day: _checkpoint(root, settings, start, end, day)
@@ -292,7 +315,15 @@ def _backfill(
     checkpoint: Callable[[str], None],
 ) -> str | None:
     try:
-        sync.backfill(transport, conn, first, end, on_day_complete=checkpoint)
+        with client.redacted_logs():
+            sync.backfill(
+                transport,
+                conn,
+                first,
+                end,
+                on_day_complete=checkpoint,
+                stop_on_enrichment_error=lambda exc: client.failure_kind(exc) == "rate_limited",
+            )
     except (Exception, KeyboardInterrupt) as exc:
         conn.rollback()
         return _record_failure("history_import", exc)
@@ -328,7 +359,9 @@ def _completed_through(root: pathlib.Path, settings: Settings, start: str) -> st
     return last.isoformat()
 
 
-def _checkpoint(root: pathlib.Path, settings: Settings, start: str, end: str, day: str) -> None:
+def _checkpoint(
+    root: pathlib.Path, settings: Settings, start: str, end: str, day: str | None
+) -> None:
     folder = root / "data"
     folder.mkdir(exist_ok=True)
     state = {
@@ -403,7 +436,9 @@ def _prepare_read(
         rebuild=False,
     )
     if has_observations:
-        features.features(conn, data_start_date=settings.data_start_date, to_date=end)
+        latest = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
+        horizon = max(end, latest) if latest is not None else end
+        features.features(conn, data_start_date=settings.data_start_date, to_date=horizon)
     if imported.error:
         print(
             "setup: authored plan import failed; fix the plan files and repeat setup.",

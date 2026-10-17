@@ -15,6 +15,7 @@ import os
 import sys
 import time
 from collections.abc import Iterator
+from contextvars import ContextVar
 from typing import Any, Callable
 
 from garminconnect import (
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 _RESUME_DELAYS_S = (5.0, 15.0)
 _LIBRARY_LOGGER = "garminconnect"
 _REASON_MAX_CHARS = 300
+_REDACT_LOGS: ContextVar[bool] = ContextVar("redact_garmin_logs", default=False)
 
 
 class LoginUnavailableError(RuntimeError):
@@ -50,6 +52,30 @@ def failure_kind(exc: BaseException) -> str:
     if isinstance(exc, (GarminConnectConnectionError, TimeoutError, ConnectionError, OSError)):
         return "unavailable"
     return "failed"
+
+
+@contextlib.contextmanager
+def redacted_logs() -> Iterator[None]:
+    """Keep upstream messages out of interactive setup's terminal output.
+
+    The library may log HTTP response bodies independently of raised errors. Keep
+    those loggers local during setup and classify our own retry messages instead.
+    Ordinary operational logging outside this scope retains its existing behavior.
+    """
+    token = _REDACT_LOGS.set(True)
+    saved = []
+    for name in ("garminconnect", "garth"):
+        library = logging.getLogger(name)
+        saved.append((library, library.handlers[:], library.propagate))
+        library.handlers = [logging.NullHandler()]
+        library.propagate = False
+    try:
+        yield
+    finally:
+        for library, handlers, propagate in saved:
+            library.handlers = handlers
+            library.propagate = propagate
+        _REDACT_LOGS.reset(token)
 
 
 def _tokenstore(settings: Settings) -> str:
@@ -94,7 +120,10 @@ class _FailureReasons(logging.Handler):
 def _library_failure_reasons() -> Iterator[list[str]]:
     """Listen to garminconnect's loggers, children included, for one login attempt."""
     library = logging.getLogger(_LIBRARY_LOGGER)
-    handler = _FailureReasons(library, forward_from=library.getEffectiveLevel())
+    handler = _FailureReasons(
+        library,
+        forward_from=logging.CRITICAL + 1 if _REDACT_LOGS.get() else library.getEffectiveLevel(),
+    )
     level, propagate = library.level, library.propagate
     library.addHandler(handler)
     library.setLevel(logging.DEBUG)
@@ -123,8 +152,11 @@ def _resume(tokenstore: str) -> Garmin | None:
                 api.login(tokenstore)
                 return api
             except Exception as exc:  # noqa: BLE001 - any failure falls through to a full login
-                detail = f" ({'; '.join(reasons)})" if reasons else ""
-                logger.warning("client: saved login did not resume: %s%s", exc, detail)
+                if _REDACT_LOGS.get():
+                    logger.warning("client: saved login did not resume (%s)", failure_kind(exc))
+                else:
+                    detail = f" ({'; '.join(reasons)})" if reasons else ""
+                    logger.warning("client: saved login did not resume: %s%s", exc, detail)
         if delay is not None:
             time.sleep(delay)
     return None

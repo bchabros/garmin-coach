@@ -198,19 +198,22 @@ def _fetch_enrichment(
     kind: str,
     activity_id: Any,
     misses: list[str] | None,
+    stop_on_error: Callable[[Exception], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Run one best-effort enrichment call, recording a failure instead of hiding it.
 
-    A failure leaves the enrichment absent and never aborts the run (ADR 0001), but
-    it is logged and appended to ``misses`` so the gap can be found and repaired
-    later. A ``None`` result is not a miss: Garmin simply has nothing for it.
+    By default a failure leaves enrichment absent (ADR 0001), logs its type and
+    appends it to ``misses``. Initial setup may supply a predicate to stop on a
+    rate limit before advancing its checkpoint. A ``None`` result is not a miss.
     """
     if activity_id is None:
         return None
     try:
         return call()
     except Exception as exc:  # noqa: BLE001 - enrichment isolation: record, keep going
-        message = f"{kind} enrichment failed for activity {activity_id}: {exc}"
+        if stop_on_error is not None and stop_on_error(exc):
+            raise
+        message = f"{kind} enrichment failed for activity {activity_id}: {type(exc).__name__}"
         logger.warning("sync: %s", message)
         if misses is not None:
             misses.append(message)
@@ -223,6 +226,8 @@ def _store_activities(
     activities: list[dict[str, Any]],
     client: GarminClient | None = None,
     misses: list[str] | None = None,
+    *,
+    stop_on_error: Callable[[Exception], bool] | None = None,
 ) -> None:
     """Store activity range payload raw-first, then upsert each core activity.
 
@@ -230,7 +235,7 @@ def _store_activities(
     (``temp_c``) and its exercise sets; both raw payloads are appended for
     reprocessing, filed under the activity's own day rather than the requested
     range start, so reprocessing by date finds them. Each enrichment is
-    best-effort: a failure is recorded in ``misses`` and never aborts the run.
+    best-effort unless the caller supplies a matching stop-on-error predicate.
     """
     db.insert_raw(conn, "get_activities_by_date", ref_date, json.dumps(activities))
     for act in activities:
@@ -238,10 +243,14 @@ def _store_activities(
         day = models.date_of(act.get("startTimeLocal")) or ref_date
         weather: dict[str, Any] | None = None
         if client is not None:
-            weather = _store_weather(conn, client, activity_id, day, misses)
+            weather = _store_weather(
+                conn, client, activity_id, day, misses, stop_on_error=stop_on_error
+            )
         db.upsert_activity(conn, models.normalize_activity(act, weather))
         if client is not None and activity_id is not None:
-            _store_exercise_sets(conn, day, activity_id, client, misses)
+            _store_exercise_sets(
+                conn, day, activity_id, client, misses, stop_on_error=stop_on_error
+            )
 
 
 def _store_weather(
@@ -250,10 +259,16 @@ def _store_weather(
     activity_id: Any,
     ref_date: str,
     misses: list[str] | None,
+    *,
+    stop_on_error: Callable[[Exception], bool] | None = None,
 ) -> dict[str, Any] | None:
     """Fetch one activity's weather raw-first; return it for the core row's temp_c."""
     weather = _fetch_enrichment(
-        lambda: client.get_activity_weather(activity_id), "weather", activity_id, misses
+        lambda: client.get_activity_weather(activity_id),
+        "weather",
+        activity_id,
+        misses,
+        stop_on_error,
     )
     if weather is not None:
         db.insert_raw(conn, "get_activity_weather", ref_date, json.dumps(weather))
@@ -266,10 +281,16 @@ def _store_exercise_sets(
     activity_id: int,
     client: GarminClient,
     misses: list[str] | None = None,
+    *,
+    stop_on_error: Callable[[Exception], bool] | None = None,
 ) -> None:
     """Fetch one activity's exercise sets raw-first, then replace its `activity_sets`."""
     payload = _fetch_enrichment(
-        lambda: client.get_activity_exercise_sets(activity_id), "sets", activity_id, misses
+        lambda: client.get_activity_exercise_sets(activity_id),
+        "sets",
+        activity_id,
+        misses,
+        stop_on_error,
     )
     if payload is None:
         return
@@ -285,6 +306,7 @@ def _sync_lactate(
     *,
     start_date: str | None = None,
     end_date: str | None = None,
+    stop_on_error: Callable[[Exception], bool] | None = None,
 ) -> None:
     """Ingest the LTHR anchor into fitness_markers (best-effort, isolated).
 
@@ -294,7 +316,9 @@ def _sync_lactate(
     """
     try:
         payload = client.get_lactate_threshold(start_date=start_date, end_date=end_date)
-    except Exception:
+    except Exception as exc:
+        if stop_on_error is not None and stop_on_error(exc):
+            raise
         return
     if payload is None:
         return
@@ -318,6 +342,7 @@ def backfill(
     to_date: str | None = None,
     *,
     on_day_complete: Callable[[str], None] | None = None,
+    stop_on_enrichment_error: Callable[[Exception], bool] | None = None,
 ) -> None:
     """Backfill the inclusive date range from `from_date` to `to_date`.
 
@@ -331,17 +356,26 @@ def backfill(
         to_date: Last day to fetch, inclusive; defaults to yesterday.
         on_day_complete: Optional checkpoint callback, called only after a whole
             day's streams have committed. It never changes sync watermarks.
+        stop_on_enrichment_error: Optional transport-neutral failure predicate. Matching
+            weather, sets or LTHR failures abort before daily checkpoints; other
+            optional endpoint errors keep the established best-effort behavior.
     """
     start = dt.date.fromisoformat(from_date)
     end = _default_end(to_date)
 
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []
-    _store_activities(conn, from_date, activities, client)
+    _store_activities(conn, from_date, activities, client, stop_on_error=stop_on_enrichment_error)
     conn.commit()
 
     # LTHR anchor: backfill the detection history via the ranged form.
-    _sync_lactate(client, conn, start_date=from_date, end_date=end.isoformat())
+    _sync_lactate(
+        client,
+        conn,
+        start_date=from_date,
+        end_date=end.isoformat(),
+        stop_on_error=stop_on_enrichment_error,
+    )
     conn.commit()
 
     for d in _daterange(start, end):

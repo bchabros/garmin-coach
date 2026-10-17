@@ -14,6 +14,6 @@ _Ostatnia aktualizacja: {created_on}. Pusty szablon; profil nie został jeszcze 
 
 ## Preferences
 
-## Open threads
+## Otwarte wątki
 
 ## Decyzje

@@ -13,7 +13,13 @@ garmin-coach --home ~/GarminCoach clients status
 
 The second configure adds clients to the first selection. All selections use the
 same absolute athlete installation and saved Garmin identity. Work and Codex share
-one OpenAI host registration; Claude Code has a separate registration. Only selected
+one OpenAI host registration; Claude Code has a separate registration. Each host has
+one user-wide client binding. Before native changes, setup checks the runtime's selected
+athlete installation, its user-wide ownership record and native plugin inventory.
+A conflicting installation or stale runtime is refused with a recovery action: remove
+its binding through the original installation/runtime, or inspect and disconnect the
+unverified plugin through the client UI before retrying. Source-path inventory verifies
+legacy registrations; a familiar plugin name alone does not prove ownership. Only selected
 hosts are configured. Unrelated client settings and plugins are not edited.
 
 The default program directory is `~/Library/Application Support/Garmin Coach`.
@@ -54,9 +60,16 @@ The receipt records historical registration, resource hashes, source/package ver
 runtime availability, and pending actions. Status verifies prepared files and whether
 they match current source resources. It does not infer what an active conversation
 loaded. `client_acceptance: not_run` and `protocol_check: not_run` remain explicit;
-the separate local protocol check or an actual transcript supplies that evidence.
-When updating a cached plugin, disconnect its owned registration and configure from
-the new runtime, then repeat activation and acceptance.
+`doctor` performs the separate bounded local stdio handshake and digest read. Each
+surface also has an independent acceptance entry; all remain `not_run` until a human
+records a fresh conversation. Historical registration remains prepared, never `ready`
+by inference.
+
+A new owned artifact generation is journaled before replacement. Retry completes only
+that generation and refuses unrelated edits. Refresh uses Claude Code's supported
+plugin update command; OpenAI refresh requires its remove/add commands, which may reset
+client permissions. A completed host remains connected while another host is prepared.
+After any refresh, repeat activation and fresh-conversation acceptance.
 
 ## Verify with synthetic data
 
@@ -99,3 +112,10 @@ the built wheel and real stdio reads from a copied plugin cache. Fresh authentic
 Work, Codex and Claude Code acceptance for this distribution remains **not run**.
 The earlier source-checkout acceptance in [WORK_VALIDATION.md](WORK_VALIDATION.md)
 does not establish acceptance of these newly generated packages.
+
+Only `SKILL.md` and the report, planning and authoring references are copied into
+generated plugins. Other source Markdown, including private athlete context, is excluded.
+A previous receipt that owns extra skill Markdown requires a clean plugin reinstall after
+hash-verified removal, so an old native cache cannot retain those files. This can require
+permission reapproval. Unknown or edited Markdown is preserved and blocks configuration
+until inspected; backups remain preserved and are filtered when restoring public resources.

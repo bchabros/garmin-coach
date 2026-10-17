@@ -54,7 +54,7 @@ jobs:
           BUILD_TAG="${RELEASE_TAG:-v$(poetry version -s)}"
           python scripts/build_release.py --tag "$BUILD_TAG" --output dist/release --release-base "https://github.com/${{ github.repository }}/releases/download/$BUILD_TAG"
       - name: Install actual bundle into private runtime and probe package
-        run: PYTHONPATH=src python scripts/smoke_release.py --manifest "dist/release/manifest-${{ matrix.arch }}.json" --bundle "dist/release/garmin-coach-$(poetry version -s)-macos-${{ matrix.arch }}.tar.gz"
+        run: PYTHONPATH=src python scripts/smoke_release.py --manifest "dist/release/manifest-${{ matrix.arch }}.json" --bundle "dist/release/garmin-coach-$(poetry version -s)-macos-${{ matrix.arch }}.tar.gz" --installer "dist/release/install-${{ matrix.arch }}.sh"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}

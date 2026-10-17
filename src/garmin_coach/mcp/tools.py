@@ -169,6 +169,9 @@ def get_weekly(conn: sqlite3.Connection, week_start: str | None = None) -> dict[
                 (week_start,),
             )
         )
+    for day in plan_actual:
+        if day["planned"] is None:
+            day["matched"] = None
     return _wrap(conn, {"weeks": weeks, "plan_actual": plan_actual})
 
 

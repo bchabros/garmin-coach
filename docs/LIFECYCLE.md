@@ -5,7 +5,7 @@ The athlete installation contains your records. The managed runtime under
 preserves the athlete installation, including its saved login, and any database,
 plans or tokens you explicitly configured outside it.
 
-These commands use the normal explicit selection. Replace the sample athlete home
+These commands use the normal explicit selection. Replace the sample athlete installation
 and use `--runtime-root` after the subcommand if your program is installed elsewhere.
 
 ```bash
@@ -21,7 +21,10 @@ garmin-coach --home "$HOME/GarminCoach" program remove --confirm
 
 Local diagnosis reads the existing database without migrating it, checks the runtime,
 reports program and Python versions, verifies skill/client artifacts and examines the
-owned daily job. It never imports training or contacts Garmin. It reports client
+owned daily job. A bounded stdio probe initializes the verified server, lists its tools
+and reads the selected installation's digest without migrations or writes. It never imports
+training or contacts Garmin. A SQLite read-only connection may create WAL/SHM coordination
+files beside a WAL database; it does not alter its records or migrate its schema. It reports client
 registration state and recovery actions independently for each selected assistant.
 An interrupted `preparing` registration remains incomplete even when another client
 is prepared. Registration history remains separate from actual activation: `client_acceptance: not_run`
@@ -31,7 +34,8 @@ credentials are withheld.
 `--live-auth` explicitly attempts to resume the selected installation's saved Garmin
 login. It does not perform sync or a workout operation and never prompts for account
 credentials. An unverified result may mean expired credentials or an unavailable
-network; renew the login by running setup from a terminal. Token files alone do not
+network; renew the login by running setup from a terminal. Missing local tokens are
+reported as `missing` before any login process is started. Token files alone do not
 prove that a login is still valid. The login subprocess uses isolated Python imports;
 the current folder and `PYTHONPATH` cannot replace the installed authentication code.
 
@@ -72,7 +76,10 @@ assistant refuses rollback, the outcome is `recovery_required`, with the backup 
 retained in the receipt. The prior runtime pointer is restored before attempting client
 recovery. Diagnose first, preserve both releases and use the backup's receipt/assets
 to repair the exact owned registration; do not delete history or reset the database.
-An interrupted operation blocks another update until its recorded recovery is reviewed.
+An interrupted update is recovered from its recorded backup and previous runtime when
+`program update` is retried. The journal records the selected athlete installation,
+manifest, candidate and recovery phase. Preserve both runtimes and the backup if native
+client recovery fails; retrying the same command attempts recovery again.
 No command automatically overwrites the live database with an older backup.
 
 ## Removal
@@ -84,8 +91,8 @@ ownership includes an inventory whose digest is recorded outside the release its
 Unknown notes, edited files and changed symlinks cause refusal before any client or
 job is removed. Older releases without a verified inventory remain preserved and need
 deliberate recovery using a separate runtime root. A missing
-owned file is handled as partial installation state. An enabled job with a missing
-plist must be repaired before runtime removal.
+owned file is handled as partial installation state. A missing job plist does not skip
+stopping its owned, installation-specific launchd label; unverifiable labels are refused.
 
 Configured databases, plans, tokens and logs must be outside the program root.
 Maintenance resolves these paths, including symlink aliases, before changing any

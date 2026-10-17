@@ -105,6 +105,17 @@ def test_the_package_carries_the_schema_and_both_commands_and_nothing_personal(w
     }
 
 
+def test_packaged_setup_templates_are_empty_and_match_the_coach_profile_contract(wheel):
+    with zipfile.ZipFile(wheel) as archive:
+        profile = archive.read("garmin_coach/templates/profile.md").decode("utf-8")
+        conventions = archive.read("garmin_coach/templates/README.md").decode("utf-8")
+    assert "Ostatnia aktualizacja: {created_on}" in profile
+    assert "## Otwarte wątki" in profile
+    assert "## Decyzje" in profile
+    assert all(not line.strip() or line.startswith(("#", "_")) for line in profile.splitlines())
+    assert "Every edit" in conventions
+
+
 def test_installed_client_setup_carries_all_references_without_a_source_checkout(
     environment,
     tmp_path,

@@ -10,12 +10,14 @@ import pathlib
 import platform
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
+import uuid
 from contextlib import closing
 from typing import Any
 
@@ -57,8 +59,13 @@ def _download(asset: dict[str, Any], destination: pathlib.Path) -> None:
     expected = str(asset["sha256"])
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         raise ValueError("Release asset checksum is missing or invalid.")
-    with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as target:
-        shutil.copyfileobj(response, target)
+    cache = os.environ.get("GARMIN_COACH_ASSET_CACHE")
+    cached = pathlib.Path(cache) / destination.name if cache else None
+    if cached is not None and cached.is_file():
+        shutil.copyfile(cached, destination)
+    else:
+        with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as target:
+            shutil.copyfileobj(response, target)
     if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
         raise ValueError(f"Release asset checksum mismatch: {destination.name}")
 
@@ -86,6 +93,18 @@ def validate_release_platform(metadata: dict[str, Any]) -> None:
     """Refuse unsupported operating systems, architectures and minimum macOS versions."""
     if platform.system() != "Darwin" or platform.machine() != metadata["architecture"]:
         raise ValueError("Release does not match this macOS architecture.")
+    if platform.machine() == "x86_64":
+        translated = subprocess.run(
+            ["/usr/sbin/sysctl", "-in", "sysctl.proc_translated"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if translated.returncode == 0 and translated.stdout.strip() == "1":
+            raise ValueError(
+                "Rosetta Terminal detected; open a native Apple Silicon Terminal and "
+                "run the arm64 installer."
+            )
     actual = tuple(map(int, platform.mac_ver()[0].split(".")[:2]))
     minimum = tuple(map(int, metadata["min_macos"].split(".")[:2]))
     if actual < minimum:
@@ -219,43 +238,99 @@ def _prepared_release(release: pathlib.Path, metadata: dict[str, Any]) -> bool:
     return False
 
 
+def _build_checkpoint(
+    root: pathlib.Path, release: pathlib.Path, metadata: dict[str, Any], stage: str
+) -> None:
+    state = read_state(root)
+    state.setdefault("builds", {})[str(release)] = {
+        "stage": stage,
+        "manifest": metadata,
+        "owned_entries": _inventory_entries(release) if release.exists() else {},
+        "action": "Repeat the same installer; incomplete build files are preserved.",
+    }
+    write_state(root, state)
+
+
+def _release_destination(root: pathlib.Path, metadata: dict[str, Any]) -> pathlib.Path:
+    if (root / "releases").is_symlink():
+        raise ValueError("Program release directory is a symlink; preserve it.")
+    canonical = root / "releases" / f"{metadata['version']}-{metadata['architecture']}"
+    candidates = [canonical]
+    builds = read_state(root).get("builds", {})
+    candidates += [pathlib.Path(name) for name in builds if pathlib.Path(name) != canonical]
+    for release in candidates:
+        if release.parent != root / "releases" or not release.exists():
+            continue
+        if release.is_symlink():
+            raise ValueError("Release directory is a symlink; preserve it.")
+        try:
+            observed = json.loads((release / "manifest.json").read_text())
+        except (OSError, ValueError):
+            observed = None
+        if observed != metadata:
+            pending = builds.get(str(release), {})
+            if pending.get("manifest") == metadata and not (release / "ready.json").exists():
+                continue
+            if release == canonical:
+                raise ValueError(
+                    "Existing release has different or unverified contents; preserve it."
+                )
+            continue
+        if (release / "ready.json").exists():
+            expected = read_state(root).get("managed_release_inventories", {}).get(str(release))
+            verify_release_inventory(release, expected)
+            if _prepared_release(release, metadata):
+                return release
+    if not canonical.exists():
+        return canonical
+    return canonical.with_name(canonical.name + "-retry-" + uuid.uuid4().hex)
+
+
+def _build_release(
+    manifest: pathlib.Path, root: pathlib.Path, release: pathlib.Path, metadata: dict[str, Any]
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="download-", dir=root) as temporary:
+        folder = pathlib.Path(temporary)
+        python_archive, bundle_archive = folder / "python.tar.gz", folder / "bundle.tar.gz"
+        _download(metadata["python"], python_archive)
+        _download(metadata["bundle"], bundle_archive)
+        # Journal ownership and intended work before the first program-directory write.
+        _build_checkpoint(root, release, metadata, "creating")
+        release.mkdir(parents=True)
+        shutil.copyfile(manifest, release / "manifest.json")
+        for archive, target, stage in (
+            (python_archive, release, "extracting_python"),
+            (bundle_archive, release / "bundle", "extracting_bundle"),
+        ):
+            _build_checkpoint(root, release, metadata, stage)
+            _unpack(archive, target)
+        _build_checkpoint(root, release, metadata, "installing_environment")
+        _install_environment(release)
+        _build_checkpoint(root, release, metadata, "checking_protocol")
+        _runtime_check(release, metadata)
+        _write_inventory(release, metadata)
+        _build_checkpoint(root, release, metadata, "ready")
+
+
 def prepare_release(manifest: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
-    """Prepare a verified private runtime without activating it or touching athlete data.
+    """Prepare a verified runtime beside existing releases, preserving interrupted builds.
 
     Args:
         manifest: Local per-architecture release manifest with HTTPS or file asset URLs.
         root: Managed runtime root, separate from the athlete installation.
 
     Returns:
-        The version-addressed release directory after successful package health checks.
+        A ready release directory. Repairs return a new sibling and never alter the
+        active runtime. Unfinished siblings remain preserved for inspection/recovery.
     """
     metadata = _manifest(manifest)
     validate_release_platform(metadata)
     root = root.expanduser().resolve()
-    release = root / "releases" / f"{metadata['version']}-{metadata['architecture']}"
-    if _prepared_release(release, metadata):
+    release = _release_destination(root, metadata)
+    if (release / "ready.json").exists():
         return release
     root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="download-", dir=root) as temporary:
-        folder = pathlib.Path(temporary)
-        python_archive, bundle_archive = folder / "python.tar.gz", folder / "bundle.tar.gz"
-        _download(metadata["python"], python_archive)
-        _download(metadata["bundle"], bundle_archive)
-        if release.exists():
-            if release.is_symlink() or not (release / "manifest.json").is_file():
-                raise ValueError("Incomplete runtime is not owned by this installer; preserve it.")
-            if json.loads((release / "manifest.json").read_text()) != metadata:
-                raise ValueError("Incomplete runtime belongs to another release; preserve it.")
-            expected = read_state(root).get("managed_release_inventories", {}).get(str(release))
-            verify_release_inventory(release, expected)
-            shutil.rmtree(release)
-        release.mkdir(parents=True)
-        (release / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        _unpack(python_archive, release)
-        _unpack(bundle_archive, release / "bundle")
-        _install_environment(release)
-        _runtime_check(release, metadata)
-        _write_inventory(release, metadata)
+    _build_release(manifest, root, release, metadata)
     return release
 
 
@@ -280,7 +355,9 @@ snapshot.rollup(conn)
 conn.commit()
 conn.close()
 async def probe():
-    params = StdioServerParameters(command=server_command[0], args=server_command[1:] + ['--home', str(home)])
+    params = StdioServerParameters(
+        command=server_command[0], args=server_command[1:] + ['--home', str(home)]
+    )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -304,6 +381,8 @@ def _probe_environment() -> dict[str, str]:
         "GARMINTOKENS",
         "GARMIN_EMAIL",
         "GARMIN_PASSWORD",
+        "DATA_START_DATE",
+        "WEEKLY_TEMPLATE",
     }
     result = {key: value for key, value in os.environ.items() if key not in excluded}
     return {**result, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
@@ -323,7 +402,7 @@ def check_runtime_protocol(release: pathlib.Path, *, launcher: pathlib.Path | No
         subprocess.run(
             [python, "-I", "-c", RUNTIME_PROBE, str(folder / "athlete"), json.dumps(command)],
             cwd=folder,
-            env=_probe_environment(),
+            env={**_probe_environment(), "HOME": str(folder)},
             check=True,
             timeout=60,
         )
@@ -336,7 +415,13 @@ def _runtime_check(release: pathlib.Path, metadata: dict[str, Any]) -> None:
         f"assert m.version('garmin-coach') == {metadata['version']!r}; "
         "assert files('garmin_coach.core').joinpath('schema.sql').is_file()"
     )
-    subprocess.run([str(release / "venv" / "bin" / "python"), "-I", "-c", script], check=True)
+    with tempfile.TemporaryDirectory(prefix="coach-import-probe-") as temporary:
+        subprocess.run(
+            [str(release / "venv" / "bin" / "python"), "-I", "-c", script],
+            env={**_probe_environment(), "HOME": temporary},
+            check=True,
+            timeout=60,
+        )
     check_runtime_protocol(release)
 
 
@@ -344,65 +429,134 @@ def _guard_active_pointer(root: pathlib.Path) -> None:
     current = root / "current"
     if not current.exists() and not current.is_symlink():
         return
-    expected = read_state(root).get("release_dir")
-    if (
-        not current.is_symlink()
-        or expected is None
-        or current.resolve() != pathlib.Path(expected).resolve()
+    state = read_state(root)
+    pending = state.get("pending_activation", {})
+    expected = [
+        state.get("release_dir"),
+        pending.get("release_dir"),
+        pending.get("previous_release_dir"),
+    ]
+    if not current.is_symlink() or not any(
+        path is not None and current.resolve() == pathlib.Path(path).resolve() for path in expected
     ):
         raise ValueError("Active runtime pointer is not owned or has changed; preserve it.")
 
 
+def _launcher_content(module: str) -> bytes:
+    return (
+        "#!/bin/sh\nset -eu\n"
+        'runtime_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+        'python="$runtime_root/current/venv/bin/python"\n'
+        'if [ ! -x "$python" ]; then\n'
+        '  echo "Garmin Coach runtime missing. Re-run your versioned installer to repair it; '
+        'keep your athlete installation." >&2\n  exit 2\nfi\n'
+        f'exec "$python" -I -m garmin_coach.{module} "$@"\n'
+    ).encode()
+
+
+def verify_activation_launchers(root: pathlib.Path) -> None:
+    """Refuse edited launcher bytes, including either journaled side of an activation.
+
+    Args:
+        root: Managed runtime root whose receipt records the current or pending ownership.
+
+    Raises:
+        ValueError: A launcher/directory is a symlink or its bytes have no owned hash.
+    """
+    state = read_state(root)
+    if (root / "bin").is_symlink():
+        raise ValueError("Stable launcher directory is a symlink; preserve it.")
+    for name in ("garmin-coach", "garmin-coach-mcp"):
+        launcher = root / "bin" / name
+        pending = state.get("pending_activation", {}).get("launchers", {}).get(str(launcher), {})
+        expected = {
+            state.get("owned_launchers", {}).get(str(launcher)),
+            pending.get("previous_sha256"),
+            pending.get("sha256"),
+        }
+        if launcher.is_symlink() or (
+            launcher.exists() and hashlib.sha256(launcher.read_bytes()).hexdigest() not in expected
+        ):
+            raise ValueError("Stable launcher is not owned or was edited; preserve it.")
+
+
+def _activation_plan(root: pathlib.Path, release: pathlib.Path) -> dict[str, Any]:
+    verify_activation_launchers(root)
+    state = read_state(root)
+    pending = state.get("pending_activation", {})
+    if pending and pending.get("release_dir") != str(release):
+        if state.get("release_dir") != str(release):
+            raise ValueError("Another activation is pending; repeat its installer first.")
+        pending = {}
+    current = root / "current"
+    previous_pointer = str(current.resolve()) if current.is_symlink() else None
+    plan = pending or {
+        "release_dir": str(release),
+        "previous_release_dir": previous_pointer,
+        "launchers": {},
+    }
+    for name, module in (("garmin-coach", "cli"), ("garmin-coach-mcp", "mcp.server")):
+        launcher = root / "bin" / name
+        expected = hashlib.sha256(_launcher_content(module)).hexdigest()
+        previous = hashlib.sha256(launcher.read_bytes()).hexdigest() if launcher.exists() else None
+        entry = plan["launchers"].setdefault(
+            str(launcher), {"previous_sha256": previous, "sha256": expected}
+        )
+        if entry["sha256"] != expected:
+            raise ValueError("Pending launcher belongs to a different installer; preserve it.")
+    state["pending_activation"] = plan
+    write_state(root, state)
+    return state
+
+
+def _activate_files(root: pathlib.Path, release: pathlib.Path) -> None:
+    (root / "bin").mkdir(exist_ok=True)
+    for name, module in (("garmin-coach", "cli"), ("garmin-coach-mcp", "mcp.server")):
+        launcher = root / "bin" / name
+        with tempfile.NamedTemporaryFile(dir=launcher.parent, delete=False) as stream:
+            stream.write(_launcher_content(module))
+            temporary = pathlib.Path(stream.name)
+        temporary.chmod(0o755)
+        os.replace(temporary, launcher)
+    with tempfile.NamedTemporaryFile(dir=root, delete=False) as stream:
+        pointer = pathlib.Path(stream.name)
+    pointer.unlink()
+    pointer.symlink_to(release.relative_to(root))
+    os.replace(pointer, root / "current")
+
+
+def _record_activation(root: pathlib.Path, release: pathlib.Path, metadata: dict[str, Any]) -> None:
+    state = read_state(root)
+    ready = json.loads((release / "ready.json").read_text())
+    manifest_hash = hashlib.sha256((release / "manifest.json").read_bytes()).hexdigest()
+    state.setdefault("managed_release_inventories", {})[str(release)] = ready["inventory_sha256"]
+    state.setdefault("managed_releases", {})[str(release)] = manifest_hash
+    state["owned_launchers"] = {
+        path: entry["sha256"] for path, entry in state["pending_activation"]["launchers"].items()
+    }
+    state.update(
+        managed_by="garmin-coach",
+        release=metadata["version"],
+        source_commit=metadata["source_commit"],
+        release_dir=str(release),
+        manifest_sha256=manifest_hash,
+    )
+    state.pop("pending_activation", None)
+    write_state(root, state)
+
+
 def activate_release(release: pathlib.Path, root: pathlib.Path) -> None:
-    """Activate an already checked release and install stable CLI/MCP launchers."""
+    """Activate a checked release using a resumable pre-write ownership journal."""
     root, release = root.expanduser().resolve(), release.resolve()
     if release.parent != root / "releases" or not (release / "ready.json").is_file():
         raise ValueError("Only a prepared owned release can be activated.")
     _guard_active_pointer(root)
     metadata = _manifest(release / "manifest.json")
+    verify_release_inventory(release)
     _runtime_check(release, metadata)
-    (root / "bin").mkdir(exist_ok=True)
-    for name, module in (("garmin-coach", "cli"), ("garmin-coach-mcp", "mcp.server")):
-        launcher = root / "bin" / name
-        if launcher.exists():
-            owned = read_state(root).get("owned_launchers", {})
-            if owned.get(str(launcher)) != hashlib.sha256(launcher.read_bytes()).hexdigest():
-                raise ValueError("Stable launcher is not owned or was edited; preserve it.")
-        launcher.write_text(
-            "#!/bin/sh\nset -eu\n"
-            'runtime_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
-            'python="$runtime_root/current/venv/bin/python"\n'
-            'if [ ! -x "$python" ]; then\n'
-            '  echo "Garmin Coach runtime missing. Re-run your versioned installer to repair it; '
-            'keep your athlete installation." >&2\n  exit 2\nfi\n'
-            f'exec "$python" -I -m garmin_coach.{module} "$@"\n'
-        )
-        launcher.chmod(0o755)
-    pointer = root / ".current-next"
-    pointer.unlink(missing_ok=True)
-    pointer.symlink_to(release.relative_to(root))
-    os.replace(pointer, root / "current")
-    state = read_state(root)
-    ready = json.loads((release / "ready.json").read_text())
-    state.setdefault("managed_release_inventories", {})[str(release)] = ready["inventory_sha256"]
-    state.setdefault("managed_releases", {})[str(release)] = hashlib.sha256(
-        (release / "manifest.json").read_bytes()
-    ).hexdigest()
-    state["owned_launchers"] = {
-        str(path): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in (root / "bin").iterdir()
-        if path.name in ("garmin-coach", "garmin-coach-mcp")
-    }
-    state.update(
-        {
-            "managed_by": "garmin-coach",
-            "release": metadata["version"],
-            "source_commit": metadata["source_commit"],
-            "release_dir": str(release),
-            "manifest_sha256": hashlib.sha256((release / "manifest.json").read_bytes()).hexdigest(),
-        }
-    )
-    write_state(root, state)
+    _activation_plan(root, release)
+    _activate_files(root, release)
+    _record_activation(root, release, metadata)
 
 
 def _execute(arguments: list[str]) -> None:
@@ -416,7 +570,7 @@ def _schedule_observation(previous: dict[str, Any], path: pathlib.Path) -> dict[
         "status": activation,
         "activation_status": activation,
         "choice": previous.get("choice", "enabled"),
-        "actions": [],
+        "actions": previous.get("actions", []),
     }
     if not path.is_file():
         result.update(
@@ -434,19 +588,17 @@ def _schedule_observation(previous: dict[str, Any], path: pathlib.Path) -> dict[
 
 
 def _existing_schedule(
-    path: pathlib.Path, state: dict[str, Any], when: str, execute: Any
+    path: pathlib.Path, root: pathlib.Path, state: dict[str, Any], when: str, execute: Any
 ) -> dict[str, Any] | None:
     previous = state.get("scheduler", {})
+    if path.is_symlink():
+        raise ValueError("Scheduler job is a symlink; preserve it.")
     if path.exists():
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         if previous.get("path") != str(path) or previous.get("sha256") != digest:
             raise ValueError("Existing scheduler job is not owned or has changed; preserve it.")
         if previous.get("time") == when:
-            if previous.get("status") != "enabled":
-                execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
-                previous.update(status="enabled", activation_status="enabled")
-                state["scheduler"] = previous
-            return previous
+            return _bootstrap_schedule(root=root, record=previous, state=state, execute=execute)
         raise ValueError("Schedule already enabled at another time; remove it explicitly first.")
     return None
 
@@ -483,6 +635,105 @@ def _schedule_record(
     }
 
 
+def _printed_schedule_matches(record: dict[str, Any], output: str) -> bool:
+    # launchctl documents this as diagnostic output, not a stable machine API.
+    # Accept only a complete known identity; changed/missing formats fail closed.
+    target = f"gui/{os.getuid()}/{record['label']} = {{"
+    if not output.splitlines() or output.splitlines()[0].strip() != target:
+        return False
+    fields = {
+        "path": record["path"],
+        "program": record["command"][0],
+        "working directory": record["selected_home"],
+        "stdout path": record["stdout_path"],
+        "stderr path": record["stderr_path"],
+    }
+    for key, expected in fields.items():
+        found = re.findall(r"(?m)^[ \t]*" + re.escape(key) + r" = (.*)$", output)
+        if found != [expected]:
+            return False
+    blocks = re.findall(r"(?ms)^[ \t]*arguments = \{\n(.*?)^[ \t]*\}", output)
+    if len(blocks) != 1 or [line.strip() for line in blocks[0].splitlines()] != record["command"]:
+        return False
+    return _printed_schedule_time(record, output)
+
+
+def _printed_schedule_time(record: dict[str, Any], output: str) -> bool:
+    streams = re.findall(r"(?m)^[ \t]*stream = (.*)$", output)
+    descriptors = re.findall(r"(?ms)^[ \t]*descriptor = \{\n(.*?)^[ \t]*\}", output)
+    if streams != ["com.apple.launchd.calendarinterval"] or len(descriptors) != 1:
+        return False
+    lines = [line.strip() for line in descriptors[0].splitlines() if line.strip()]
+    matches = [re.fullmatch(r'"([A-Za-z]+)" => ([0-9]+)', line) for line in lines]
+    if len(matches) != 2 or any(match is None for match in matches):
+        return False
+    pairs = [(match.group(1), match.group(2)) for match in matches if match is not None]
+    hour, minute = map(int, record["time"].split(":"))
+    return dict(pairs) == {"Hour": str(hour), "Minute": str(minute)}
+
+
+def _owned_schedule_is_loaded(record: dict[str, Any]) -> bool:
+    result = subprocess.run(
+        ["/bin/launchctl", "print", f"gui/{os.getuid()}/{record['label']}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        if re.search(r"Could not find service|No such (?:process|service)", result.stderr or ""):
+            return False
+        raise ValueError(
+            "Could not inspect the daily job; preserve it and check launchd before retrying."
+        )
+    if not _printed_schedule_matches(record, result.stdout):
+        raise ValueError(
+            "Loaded daily job identity could not be verified; preserve it and inspect its "
+            "path, arguments and schedule before retrying."
+        )
+    return True
+
+
+def _bootstrap_schedule(
+    root: pathlib.Path, record: dict[str, Any], state: dict[str, Any], execute: Any
+) -> dict[str, Any]:
+    try:
+        if not _owned_schedule_is_loaded(record):
+            execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", record["path"]])
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        record.update(
+            status="prepared",
+            activation_status="failed",
+            actions=[str(exc)]
+            if isinstance(exc, ValueError)
+            else [
+                "Daily refresh activation failed; the saved job may load at the next login. "
+                "Repeat setup to retry, or explicitly remove the owned scheduler job."
+            ],
+        )
+        state["scheduler"] = record
+        write_state(root, state)
+        raise
+    record.update(status="enabled", activation_status="enabled", actions=[])
+    state["scheduler"] = record
+    write_state(root, state)
+    return record
+
+
+def _guard_new_schedule(record: dict[str, Any], state: dict[str, Any], content: bytes) -> None:
+    if not _owned_schedule_is_loaded(record):
+        return
+    previous = state.get("scheduler", {})
+    if (
+        previous.get("path") != record["path"]
+        or previous.get("sha256") != hashlib.sha256(content).hexdigest()
+    ):
+        raise ValueError(
+            "Loaded daily job has no matching ownership receipt; preserve it and inspect "
+            "launchd before creating another job."
+        )
+
+
 def _enable_schedule(
     home: pathlib.Path,
     root: pathlib.Path,
@@ -492,20 +743,50 @@ def _enable_schedule(
 ) -> dict[str, Any]:
     path = pathlib.Path(record["path"])
     command, label, when = record["command"], record["label"], record["time"]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    (home / "logs").mkdir(parents=True, exist_ok=True)
     content = _schedule_content(home, command, label, when)
-    path.write_bytes(content)
+    _guard_new_schedule(record, state, content)
     record.update(
-        {"status": "prepared", "choice": "enabled", "sha256": hashlib.sha256(content).hexdigest()}
+        status="preparing",
+        activation_status="not_run",
+        choice="enabled",
+        sha256=hashlib.sha256(content).hexdigest(),
+        actions=["Repeat setup to finish installing and activating the owned daily job."],
     )
     state["scheduler"] = record
     write_state(root, state)
-    execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
-    record["status"] = "enabled"
-    state["scheduler"] = record
+    path.parent.mkdir(parents=True, exist_ok=True)
+    (home / "logs").mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        stream.write(content)
+        temporary = pathlib.Path(stream.name)
+    os.replace(temporary, path)
+    record.update(status="prepared", activation_status="not_run")
     write_state(root, state)
-    return record
+    return _bootstrap_schedule(root, record, state, execute)
+
+
+def _legacy_schedule(agents: pathlib.Path, *, inspect_loaded: bool) -> list[str]:
+    legacy = agents / "com.garmincoach.daily.plist"
+    present = legacy.exists() or legacy.is_symlink()
+    if not present and inspect_loaded:
+        try:
+            result = subprocess.run(
+                ["/bin/launchctl", "print", f"gui/{os.getuid()}/com.garmincoach.daily"],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+            present = result.returncode == 0
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ValueError(
+                "Could not inspect the legacy daily job; check launchd before enabling."
+            ) from exc
+    if present:
+        return [
+            "An existing legacy daily job com.garmincoach.daily is present. "
+            "Review and explicitly disable that job before enabling another daily refresh."
+        ]
+    return []
 
 
 def configure_schedule(
@@ -538,6 +819,11 @@ def configure_schedule(
     path = agents / f"{label}.plist"
     command = [str(root / "bin" / "garmin-coach"), "--home", str(home), "daily"]
     record = _schedule_record(home, command, label, path, when)
+    warnings = _legacy_schedule(agents, inspect_loaded=enabled and agents_dir is None)
+    if warnings:
+        record["warnings"] = warnings
+        if enabled:
+            raise ValueError(warnings[0])
     state = read_state(root)
     previous = state.get("scheduler", {})
     if not enabled:
@@ -546,7 +832,7 @@ def configure_schedule(
             state["scheduler"] = record
             write_state(root, state)
         return record
-    existing = _existing_schedule(path, state, when, execute)
+    existing = _existing_schedule(path, root, state, when, execute)
     if existing is not None:
         state["scheduler"] = existing
         write_state(root, state)
@@ -659,26 +945,75 @@ def _client_result(
     return result
 
 
-def finish_setup(
+def _continue_onboarding(
     home: pathlib.Path,
-    root: pathlib.Path,
-    *,
-    clients: str,
-    setup_arguments: list[str] | None = None,
-    execute: Any = _run_stage,
+    command: list[str],
+    arguments: list[str] | None,
+    execute: Any,
+    previous: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    readiness = _readiness(home)
+    if not arguments and previous.get("status") == "complete" and readiness == "ready":
+        return {**previous, "reused": True}, readiness
+    before = _onboarding_files(home)
+    code = execute(command + ["setup", *(arguments or [])])
+    readiness = _readiness(home)
+    return _onboarding_result(home, before, code, readiness), readiness
+
+
+def _setup_next(result: dict[str, Any]) -> str:
+    if result["onboarding"]["status"] != "complete":
+        return "Repeat this versioned installer with the same athlete installation to resume setup."
+    if result["clients"]["status"] == "incomplete":
+        return "Repair the listed client registration problems and repeat setup."
+    return (
+        "Open a fresh chat in each selected client, complete its trust/activation steps, "
+        "and use the first-read prompt."
+    )
+
+
+def _recover_setup_operation(
+    home: pathlib.Path, root: pathlib.Path, state: dict[str, Any], execute: Any
 ) -> dict[str, Any]:
-    """Run the existing interactive athlete and client setup with visible terminal prompts.
+    if not state.get("operation"):
+        return state
+    release = pathlib.Path(state["release_dir"]).resolve()
+    if release.parent != root / "releases" or not (release / "ready.json").is_file():
+        raise ValueError(
+            "Interrupted update needs a checked corrective runtime. Preserve the journal/backups "
+            "and repeat the corrective versioned installer."
+        )
+    command = [
+        str(release / "venv" / "bin" / "python"),
+        "-I",
+        "-m",
+        "garmin_coach.lifecycle",
+        "--home",
+        str(home),
+        "program",
+        "update",
+        "--runtime-root",
+        str(root),
+        "--manifest",
+        str(release / "manifest.json"),
+    ]
+    recovery = (
+        "Interrupted update recovery is incomplete. Preserve the journal and backups; "
+        "retry with the checked candidate engine: " + shlex.join(command)
+    )
+    try:
+        code = execute(command)
+        observed = read_state(root)
+    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        raise ValueError(recovery) from exc
+    if code != 0 or observed.get("operation"):
+        raise ValueError(recovery)
+    return observed
 
-    Args:
-        home: Explicit selected athlete installation.
-        root: Managed runtime root containing the active stable launchers.
-        clients: Comma-separated supported client identifiers.
-        setup_arguments: Optional first-run arguments forwarded to athlete onboarding.
-        execute: Terminal subprocess boundary, replaceable for offline tests.
 
-    Returns:
-        Honest stage observations, preserving incomplete setup for a repeated run.
-    """
+def _prepare_setup(
+    home: pathlib.Path, root: pathlib.Path, clients: str, execute: Any
+) -> tuple[pathlib.Path, pathlib.Path, list[str], dict[str, Any]]:
     selected = clients.split(",")
     if not selected or any(name not in ("work", "codex", "claude-code") for name in selected):
         raise ValueError("Choose clients from work,codex,claude-code.")
@@ -687,32 +1022,69 @@ def finish_setup(
     state = read_state(root)
     if state.get("selected_home") not in (None, str(home)):
         raise ValueError("This runtime already selects another athlete installation; preserve it.")
+    state = _recover_setup_operation(home, root, state, execute)
+    selected = list(dict.fromkeys([*state.get("selected_clients", []), *selected]))
     state.update({"selected_home": str(home), "selected_clients": selected})
     write_state(root, state)
+    return home, root, selected, state
+
+
+def _prepare_setup_clients(
+    command: list[str],
+    root: pathlib.Path,
+    selected: list[str],
+    onboarding: dict[str, Any],
+    execute: Any,
+) -> dict[str, Any]:
+    if onboarding["status"] != "complete":
+        return {"status": "not_run"}
+    arguments = [
+        "clients",
+        "configure",
+        "--clients",
+        ",".join(selected),
+        "--runtime-root",
+        str(root),
+    ]
+    return _client_result(command, root, selected, execute(command + arguments))
+
+
+def finish_setup(
+    home: pathlib.Path,
+    root: pathlib.Path,
+    *,
+    clients: str,
+    setup_arguments: list[str] | None = None,
+    execute: Any = _run_stage,
+) -> dict[str, Any]:
+    """Resume athlete/client setup using completed local onboarding when available.
+
+    Args:
+        home: Explicit selected athlete installation.
+        root: Managed runtime root containing the active stable launchers.
+        clients: Selected client identifiers; earlier choices are retained.
+        setup_arguments: Explicit arguments requesting another athlete onboarding run.
+        execute: Terminal subprocess boundary for offline tests.
+
+    Returns:
+        Stage observations, preserving incomplete setup for a repeated run.
+    """
+    home, root, selected, state = _prepare_setup(home, root, clients, execute)
     command = [str(root / "bin" / "garmin-coach"), "--home", str(home)]
-    before = _onboarding_files(home)
-    code = execute(command + ["setup", *(setup_arguments or [])])
-    readiness = _readiness(home)
-    onboarding = _onboarding_result(home, before, code, readiness)
-    outcome = onboarding["status"]
-    result: dict[str, Any] = {
+    onboarding, readiness = _continue_onboarding(
+        home,
+        command,
+        setup_arguments,
+        execute,
+        state.get("stages", {}).get("onboarding", {}),
+    )
+    result = {
         "onboarding": onboarding,
         "coach_read": readiness,
-        "clients": {"status": "not_run"},
+        "clients": _prepare_setup_clients(command, root, selected, onboarding, execute),
         "client_acceptance": "not_run",
     }
-    if outcome == "complete":
-        client_code = execute(
-            command + ["clients", "configure", "--clients", clients, "--runtime-root", str(root)]
-        )
-        result["clients"] = _client_result(command, root, selected, client_code)
-    result["next"] = (
-        "Repair the listed client registration problems and repeat setup."
-        if outcome == "complete" and result["clients"]["status"] == "incomplete"
-        else "Open a fresh chat in each selected client, complete its trust/activation steps, and use the first-read prompt."
-        if outcome == "complete"
-        else "Repeat this versioned installer with the same athlete installation to resume setup."
-    )
+    result["next"] = _setup_next(result)
     state = read_state(root)
     state["stages"] = result
     write_state(root, state)
@@ -747,7 +1119,8 @@ def _client_choice(args: argparse.Namespace) -> str:
 
 
 def _offer_schedule(args: argparse.Namespace, result: dict[str, Any]) -> dict[str, Any]:
-    enabled, when = args.daily is not None, args.daily or "06:00"
+    saved = read_state(args.runtime_root).get("scheduler", {})
+    enabled, when = args.daily is not None, args.daily or saved.get("time", "06:00")
     preview = configure_schedule(args.home, args.runtime_root, when, enabled=False)
     print("Daily refresh preview: " + json.dumps(preview))
     if not args.no_schedule and args.daily is None and sys.stdin.isatty():
@@ -764,7 +1137,19 @@ def _complete_setup(args: argparse.Namespace) -> int:
     if args.configure_only:
         forwarded.append("--configure-only")
     result = finish_setup(args.home, args.runtime_root, clients=clients, setup_arguments=forwarded)
-    result["scheduler"] = _offer_schedule(args, result)
+    try:
+        result["scheduler"] = _offer_schedule(args, result)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        saved = read_state(args.runtime_root).get("scheduler", {})
+        result["scheduler"] = {
+            **saved,
+            "status": "incomplete",
+            "reason": str(exc),
+            "actions": saved.get("actions") or [str(exc)],
+        }
+    state = read_state(args.runtime_root)
+    state["stages"] = result
+    write_state(args.runtime_root, state)
     print(json.dumps(result, indent=2))
     print(
         "First-read prompt: Read the coach skill, reporting reference and my profile. "
@@ -772,7 +1157,9 @@ def _complete_setup(args: argparse.Namespace) -> int:
         "and freshness. Do not refresh Garmin or write anything. End with the digest disclaimer."
     )
     complete = result["onboarding"]["status"] == "complete"
-    return 0 if complete and result["clients"]["status"] in ("ready", "needs_activation") else 1
+    clients_ready = result["clients"]["status"] in ("ready", "needs_activation")
+    schedule_ready = result["scheduler"]["status"] in ("enabled", "disabled")
+    return 0 if complete and clients_ready and schedule_ready else 1
 
 
 def _validate_existing_installation(release: pathlib.Path, home: pathlib.Path) -> None:

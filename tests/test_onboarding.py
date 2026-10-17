@@ -33,6 +33,7 @@ def test_new_athlete_configures_an_empty_installation_before_login(tmp_path, mon
     profile = (home / "memory/athlete-profile.md").read_text()
     assert "## Goals" in profile
     assert "## Decyzje" in profile
+    assert "## Otwarte wątki" in profile
     assert "Every edit" in (home / "memory/README.md").read_text()
     assert "GARMIN_PASSWORD" not in (home / ".env").read_text()
     assert "Configured" in capsys.readouterr().out
@@ -640,3 +641,254 @@ def test_an_incomplete_import_preserves_an_existing_generation_of_marts(
         (80,),
     ]
     conn.close()
+
+
+@pytest.mark.parametrize("legacy_checkpoint_missing", [False, True])
+def test_first_day_failure_is_resumed_instead_of_adopted_as_existing_history(
+    tmp_path, monkeypatch, fake_client, legacy_checkpoint_missing
+):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    activities = [
+        {
+            "activityId": 900002,
+            "startTimeLocal": "2026-09-02 10:00:00",
+            "activityType": {"typeKey": "running"},
+            "activityTrainingLoad": 80,
+        }
+    ]
+
+    class Interrupted(fake_client):
+        def get_sleep(self, date):
+            raise GarminConnectTooManyRequestsError("private-upstream-response")
+
+    monkeypatch.setattr(
+        "garmin_coach.etl.client.login", lambda settings: Interrupted(activities=activities)
+    )
+    args = ["--home", str(home), "setup", "--to", "2026-09-02"]
+    assert cli.main(args) == 2
+    if legacy_checkpoint_missing:
+        (home / "data/setup-import.json").unlink()
+
+    resumed = fake_client(activities=activities)
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: resumed)
+    answer(monkeypatch, "yes")
+    assert cli.main(args) == 0
+    assert ("sleep", "2026-09-01") in resumed.calls
+    assert ("sleep", "2026-09-02") in resumed.calls
+    reading = json.loads(next(home.glob("reports/*/setup-*/digest.json")).read_text())
+    assert reading["onboarding"]["import_complete"] is True
+    assert reading["onboarding"]["completed_through"] == "2026-09-02"
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_setup_refuses_a_saved_login_outside_the_selected_installation(
+    tmp_path, monkeypatch, capsys, fake_client, symlink
+):
+    home = tmp_path / "athlete"
+    home.mkdir()
+    external = tmp_path / "another athlete tokens"
+    external.mkdir()
+    (external / "oauth1_token.json").write_text("private-token")
+    tokens = external
+    if symlink:
+        tokens = home / ".garminconnect"
+        tokens.symlink_to(external, target_is_directory=True)
+    config = f"DATA_START_DATE=2026-09-01\nWEEKLY_TEMPLATE=none\nGARMINTOKENS={tokens}\n"
+    (home / ".env").write_text(config)
+    answer(monkeypatch, "yes")
+    logins = []
+
+    def login(settings):
+        logins.append(settings)
+        return fake_client()
+
+    monkeypatch.setattr("garmin_coach.etl.client.login", login)
+
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 2
+    assert not logins
+    assert (home / ".env").read_text() == config
+    assert (external / "oauth1_token.json").read_text() == "private-token"
+    assert not (home / "data/garmin.db").exists()
+    assert "GARMINTOKENS" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "variable,value",
+    [
+        ("DATA_START_DATE", "2026-06-08"),
+        ("WEEKLY_TEMPLATE", "rest,easy,tempo,rest,easy,strength,rest"),
+    ],
+)
+def test_resume_refuses_inherited_athlete_choices_before_read_or_import(
+    tmp_path, monkeypatch, fake_client, capsys, variable, value
+):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    transport = fake_client()
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    args = ["--home", str(home), "setup", "--to", "2026-09-02"]
+    assert cli.main(args) == 0
+    checkpoint = (home / "data/setup-import.json").read_bytes()
+    transport.calls.clear()
+    answer(monkeypatch, "yes")
+    monkeypatch.setenv(variable, value)
+
+    assert cli.main(args) == 2
+    assert not transport.calls
+    assert (home / "data/setup-import.json").read_bytes() == checkpoint
+    error = capsys.readouterr().err
+    assert variable in error
+    assert value not in error
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["get_activity_weather", "get_activity_exercise_sets", "get_lactate_threshold"]
+)
+def test_optional_endpoint_rate_limit_keeps_import_incomplete_and_retryable(
+    tmp_path, monkeypatch, fake_client, endpoint
+):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    activities = [
+        {
+            "activityId": 900003,
+            "startTimeLocal": "2026-09-01 10:00:00",
+            "activityType": {"typeKey": "running"},
+        }
+    ]
+    transport = fake_client(activities=activities)
+
+    def limited(*args, **kwargs):
+        raise GarminConnectTooManyRequestsError("private-upstream-response")
+
+    monkeypatch.setattr(transport, endpoint, limited)
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    args = ["--home", str(home), "setup", "--to", "2026-09-02"]
+    assert cli.main(args) == 2
+    assert not list(home.glob("reports/*/setup-*/digest.json"))
+    assert json.loads((home / "data/setup-import.json").read_text())["completed_through"] is None
+
+    resumed = fake_client(activities=activities)
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: resumed)
+    answer(monkeypatch, "yes")
+    assert cli.main(args) == 0
+    expected = (
+        "lactate"
+        if endpoint == "get_lactate_threshold"
+        else "weather"
+        if endpoint == "get_activity_weather"
+        else "sets"
+    )
+    assert any(call[0] == expected for call in resumed.calls)
+
+
+def test_optional_missing_enrichment_still_allows_a_complete_initial_import(
+    tmp_path, monkeypatch, fake_client
+):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    transport = fake_client(
+        activities=[
+            {
+                "activityId": 900004,
+                "startTimeLocal": "2026-09-01 10:00:00",
+                "activityType": {"typeKey": "running"},
+            }
+        ]
+    )
+
+    def unsupported(*args, **kwargs):
+        raise RuntimeError("404 optional endpoint unsupported")
+
+    monkeypatch.setattr(transport, "get_activity_weather", unsupported)
+    monkeypatch.setattr(transport, "get_activity_exercise_sets", unsupported)
+    monkeypatch.setattr(transport, "get_lactate_threshold", unsupported)
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 0
+    reading = json.loads(next(home.glob("reports/*/setup-*/digest.json")).read_text())
+    assert reading["onboarding"]["import_complete"] is True
+
+
+def test_setup_does_not_echo_raw_saved_login_failure_or_library_logs(tmp_path, monkeypatch, capsys):
+    import io
+    import logging
+
+    from garmin_coach.etl import client
+
+    home = tmp_path / "athlete"
+    (home / ".garminconnect").mkdir(parents=True)
+    (home / ".garminconnect/oauth1_token.json").write_text("{}")
+    (home / ".env").write_text("DATA_START_DATE=2026-09-01\nWEEKLY_TEMPLATE=none\n")
+    answer(monkeypatch, "yes", "athlete@example.invalid")
+    monkeypatch.setattr(client.getpass, "getpass", lambda prompt: "typed-password")
+    monkeypatch.setattr(client, "_RESUME_DELAYS_S", ())
+
+    class Rejected:
+        def __init__(self, **kwargs):
+            pass
+
+        def login(self, tokenstore):
+            logging.getLogger("garminconnect").warning("RAW-UPSTREAM-TOKEN response body")
+            raise RuntimeError("RAW-UPSTREAM-TOKEN exception body")
+
+    monkeypatch.setattr(client, "Garmin", Rejected)
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    try:
+        assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 2
+    finally:
+        root_logger.removeHandler(handler)
+    output = capsys.readouterr()
+    assert "RAW-UPSTREAM-TOKEN" not in stream.getvalue() + output.out + output.err
+    assert "Garmin login failed" in output.err
+
+
+def test_repeating_setup_for_earlier_range_preserves_current_athlete_standing(
+    tmp_path, monkeypatch, fake_client
+):
+    home = tmp_path / "athlete"
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    transport = fake_client(
+        activities=[
+            {
+                "activityId": 900005,
+                "startTimeLocal": "2026-09-02 10:00:00",
+                "activityType": {"typeKey": "running"},
+            }
+        ],
+        by_day={"hrv": {"2026-09-13": {"hrvSummary": {"lastNightAvg": 40}}}},
+    )
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-13"]) == 0
+    conn = db.connect(str(home / "data/garmin.db"))
+    assert conn.execute("SELECT computed_at FROM athlete_status").fetchone() == ("2026-09-13",)
+    conn.close()
+
+    answer(monkeypatch, "yes")
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-06"]) == 0
+    conn = db.connect(str(home / "data/garmin.db"))
+    assert conn.execute("SELECT computed_at FROM athlete_status").fetchone() == ("2026-09-13",)
+    assert conn.execute("SELECT computed_at FROM athlete_zones").fetchone() == ("2026-09-13",)
+    conn.close()
+
+
+def test_adopting_manual_database_requires_an_explicit_history_cutoff(
+    tmp_path, monkeypatch, capsys
+):
+    home = tmp_path / "athlete"
+    (home / "data").mkdir(parents=True)
+    (home / ".env").write_text("")
+    conn = db.connect(str(home / "data/garmin.db"))
+    db.bootstrap(conn)
+    db.upsert_daily(conn, "hrv_nightly", {"date": "2026-09-01", "avg_hrv": 40})
+    conn.commit()
+    conn.close()
+    answer(monkeypatch, "yes")
+
+    assert cli.main(["--home", str(home), "setup", "--to", "2026-09-02"]) == 2
+    assert (home / ".env").read_text() == ""
+    assert not list(home.glob("reports/*/setup-*/digest.json"))
+    assert "DATA_START_DATE" in capsys.readouterr().err

@@ -51,6 +51,8 @@ task run FROM=2026-06-08 # local backfill; optional TO=YYYY-MM-DD
   developer gotchas, testing seams, deferred backlog).
 - **Operating the system** -> `docs/OPERATIONS.md` (running the pipeline, exit-code
   contract, logs, rate limits, generating a coach report).
+- **Managed install or daily job** -> `docs/DISTRIBUTION.md`; **assistant plugins** ->
+  `docs/CLIENT_SETUP.md`; **diagnosis, updates, recovery or removal** -> `docs/LIFECYCLE.md`.
 - **Domain vocabulary** -> `docs/glossary.md` (single source of truth for terms).
 
 ## Agent skills

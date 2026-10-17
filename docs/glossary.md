@@ -3,6 +3,27 @@
 Shared vocabulary for the garmin-coach project. Use these terms consistently in
 code, docstrings, PRDs, and ADRs.
 
+## Installation and maintenance
+
+**Athlete installation**: One athlete's personal records and configuration, selected explicitly for a run.
+_Avoid_: athlete home, athlete folder.
+
+**Runtime root**: The program's private installation, separate from personal athlete records.
+_Avoid_: program root, program folder.
+
+**Program receipt**: The record of runtime ownership, the selected athlete installation and outstanding program operations.
+
+**Integration receipt**: The record of generated assistant assets and the preparation state of their native registration.
+
+**Client binding**: The user-wide association between an assistant host and one athlete installation through one runtime root.
+
+**Recovery backup**: A preserved copy of the athlete database, configuration and prior program state made before maintenance.
+_Avoid_: recovery snapshot.
+
+**Stable launcher**: A program entry point that follows the active release while keeping its command location unchanged.
+
+**Client acceptance**: A verified fresh assistant conversation using the intended athlete's coach skill and tools; preparation alone is insufficient.
+
 ## Data layers (medallion)
 
 - **raw** - append-only `raw_payloads`; original Garmin JSON, never overwritten. A row's

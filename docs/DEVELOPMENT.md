@@ -61,6 +61,13 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
   (the complete plan import outcome shared by CLI, MCP and the nightly run), and
   `retention.py` (manual report-file retention, with no DB or transport access).
 
+`onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
+existing-installation adoption, confirmed terminal login, resumable initial backfill and
+the first local digest. Its checkpoint is separate from nightly sync watermarks; the ETL
+calls back only after all daily streams commit. Templates under `templates/` contain no
+athlete observations. The schema seeds policy defaults and reference mappings only;
+existing personal HRV overrides and weekly templates are preserved in place.
+
 `scripts/coach_project.py` selects the source checkout's Poetry interpreter before
 entering `project.py`, including from GUI clients or an unrelated working directory.
 The guarded launch rejects conflicting database/plan environment paths and uses
@@ -93,6 +100,11 @@ The agreed boundaries a test exercises -- prefer the highest existing seam, add 
 ones sparingly:
 
 - Test normalizers through pure model functions (`core/models.py`).
+- Test onboarding through `cli.main` on temporary installations
+  (`tests/test_onboarding.py`): explicit history/template choices, empty observations,
+  adopted data and file preservation, terminal login/MFA, failures and resumption. The
+  shared `conn` fixture represents an existing athlete with an explicitly agreed weekly
+  template; fresh-install tests bootstrap their own unseeded databases.
 - Test persistence through `core/db.py` helpers and observable SQLite state.
 - Test project setup through `scripts/coach_project.py` and real stdio MCP on
   temporary installations (`tests/test_coach_project.py`): selected configuration,
@@ -158,6 +170,39 @@ ones sparingly:
   file needs no `@` import in `CLAUDE.md`; Codex reads the files directly.
 
 ## Gotchas (developer, learned the hard way)
+
+### First-run seed audit (issue #84)
+
+The packaged schema and `coach.thresholds.DEFAULTS` were checked separately from athlete
+observations. Fresh databases no longer receive `hrv_baseline_ms=68`, `hrv_sd_ms=11` or
+the original weekly template. Existing rows remain historical overrides. `data_start`
+and the optional weekly shape are explicit first-run choices, including a manual `.env`
+without a database. Empty profile templates contain no athlete facts.
+
+The retained keys below are configurable model policy, not observations about a new
+athlete. Their initial calibration does not establish validation for another athlete or
+population; derived loads and signals remain estimates from the documented model.
+
+| Retained keys | Reason and provenance |
+|---|---|
+| `hrv_low_k_sd`, `hrv_sleep_r_min`, `hrv_sleep_min_pairs` | Signal sensitivity and evidence gates; the baseline and SD themselves must come from the athlete's data (ADR 0003). |
+| `acwr_risk_low`, `acwr_sweet_hi`, `acwr_risk_high`, `acwr_min_chronic_days` | Configurable load-ratio policy and minimum history, not measured individual risk limits (ADRs 0002/0003). |
+| `hard_te_load`, `hard_rpe`, `monotony_high` | Model classification thresholds. ADR 0010 scales strength load to the existing 150-unit currency; it does not make 150 a personal biometric. |
+| `aero_low_target_share` | Fallback when Garmin publishes no lower bound; not an observed aerobic share (ADR 0027). |
+| `deload_load_rise_weeks`, `deload_min_history_weeks`, `deload_drop_pct` | Retrospective signal policy and history guards (ADR 0005). |
+| `z1_hi_pct_lthr`, `z2_hi_pct_lthr`, `z3_hi_pct_lthr`, `z4_hi_pct_lthr`, `z2_pace_fallback_mult` | Formula coefficients applied to the athlete's own LTHR/pace; without an anchor the bands stay unknown (ADR 0007). |
+| `zones_regression_min_runs`, `zones_regression_min_r2`, `zones_heat_temp_c`, `zones_stale_days` | Fit-quality, heat and age gates; no pre-seeded athlete anchor or regression (ADR 0007). |
+| `snapshot_vo2max_lookback_days`, `snapshot_weight_lookback_days`, `snapshot_hrv_lookback_days`, `snapshot_trend_min_span_days` | Observation windows and minimum measurable trend span (ADR 0009). |
+| `srpe_load_scale`, `sila_default_rpe` | Provisional 0.3 scale and RPE 7 fallback, initially calibrated on the owner's strength sessions; estimates never inserted as reported RPE (ADR 0010). |
+| `niggle_active_days`, `niggle_reduced_mode_severity` | Duration and response policy; no injury or pain score is pre-seeded (ADR 0010). |
+| `pattern_load_floor`, `pattern_overlap_high` | Provisional 20/40 overlap cutoffs, explicitly placeholders rather than athlete measurements (ADR 0011). |
+| `taper_weeks`, `peak_weeks`, `build_weeks`, `deload_every_n_weeks`, `race_proximity_weeks`, `replan_missed_sessions` | Planning defaults, not a seeded race date or an agreed training plan (ADRs 0012/0015). |
+
+The shared exercise-pattern mapping is reference vocabulary. The separate cardio split
+weights from ADR 0027 were fitted on the original athlete and remain model coefficients,
+not another athlete's observed distribution; issue #84 does not claim general validation
+or retune them. This distinguishes provenance from personal-data leakage without silently
+changing the established training model.
 
 Operational gotchas (rate limits, backfill window, idempotency) live in
 `docs/OPERATIONS.md`. These are implementation gotchas:

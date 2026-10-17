@@ -455,7 +455,12 @@ def _plan_missing_signal(conn: sqlite3.Connection, to_date: str | None) -> dict 
         return None
     tomorrow = (_dt.date.fromisoformat(to_date) + _dt.timedelta(days=1)).isoformat()
     week_start = _weeks.monday(tomorrow).isoformat()
-    return _signals.plan_missing(_plan.has_override(conn, week_start), week_start)
+    day = _plan.resolve_day(conn, tomorrow)
+    return _signals.plan_missing(
+        _plan.has_override(conn, week_start),
+        week_start,
+        source=day["source"] if day else None,
+    )
 
 
 def _plan_section(conn: sqlite3.Connection, to_date: str | None) -> dict | None:

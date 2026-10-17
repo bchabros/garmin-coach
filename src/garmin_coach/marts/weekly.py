@@ -24,8 +24,7 @@ def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
 def _plan_intents(conn: sqlite3.Connection, monday: _dt.date) -> dict[int, str | None]:
     """The week's planned intents by weekday, from the plan-of-record resolver.
 
-    A day reads None only when neither the authored week nor the template has it -
-    possible but not expected, since the template seeds all seven weekdays.
+    A day reads None when neither the authored week nor an agreed template has it.
     """
     return {day["dow"]: day.get("intent") for day in _plan.resolve_week(conn, monday.isoformat())}
 
@@ -108,7 +107,11 @@ def _intent_rows(
                 "actual": actual,
                 # Compare what the mart can observe, not the raw label: the planned
                 # intent names the session, the actual is only ever a load class.
-                "match": _plan.intent_class(planned) == _plan.intent_class(actual),
+                "match": (
+                    _plan.intent_class(planned) == _plan.intent_class(actual)
+                    if planned is not None
+                    else None
+                ),
             }
         )
     return out
@@ -132,7 +135,9 @@ def plan_vs_actual(conn: sqlite3.Connection, week_start: str, hard: float) -> li
                 "date": date,
                 "planned": planned,
                 "actual": actual,
-                "match": bool(matched),
+                # Old caches store a required integer; absence of a plan makes
+                # that placeholder unassessable, not a failed training day.
+                "match": bool(matched) if planned is not None else None,
             }
             for dow, date, planned, actual, matched in stored
         ]
@@ -235,7 +240,9 @@ def _week_row(
         "monotony": monotony,
         "strain": strain,
         "max_consec_hard": _max_consec_hard(loads, hard),
-        "plan_adherence": matches / 7,
+        "plan_adherence": matches / 7
+        if all(row["planned"] is not None for row in intent_rows)
+        else None,
         "n_sessions": sum(1 for x in loads if x > 0),
         "n_quality": sum(1 for a in actual if a == "quality"),
         "n_rest_days": sum(1 for a in actual if a == "rest"),

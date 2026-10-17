@@ -440,10 +440,9 @@ CREATE TABLE IF NOT EXISTS coach_thresholds (
   value  REAL,
   note   TEXT
 );
--- seed defaults derived from this athlete's data (edit as history grows)
+-- Algorithm policy defaults, not observations about an athlete. Existing personal
+-- overrides remain in installed databases; fresh databases have no borrowed HRV band.
 INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
- ('hrv_baseline_ms',       68, 'median nightly HRV, 09.06-04.07 window'),
- ('hrv_sd_ms',             11, 'std of nightly HRV'),
  ('hrv_low_k_sd',           1, 'flag if hrv < baseline - k*SD'),
  ('acwr_risk_high',       1.5, 'injury-risk ceiling'),
  ('acwr_risk_low',        0.8, 'detraining floor'),
@@ -491,14 +490,8 @@ CREATE TABLE IF NOT EXISTS plan_template (
   planned     TEXT,                        -- free text label
   intent      TEXT                         -- rest|quality|easy|hyrox|tempo
 );
-INSERT OR IGNORE INTO plan_template(dow,planned,intent) VALUES
- (0,'rest','rest'),
- (1,'FBB + Hyrox','quality'),
- (2,'bieganie easy/long','easy'),
- (3,'rest','rest'),
- (4,'Crossfit + Hyrox','quality'),
- (5,'Hyrox lub tempo bieg','quality'),
- (6,'czasem easy/long run','easy');
+-- Populated only from the athlete's explicit first-run choice. Bootstrap never
+-- recreates an owner's week or changes a template already stored in an installation.
 
 -- Per-week plan override: the authored plan of record for one week, ingested from
 -- plans/<monday>_week.md (issue #21). The Markdown file stays the human-authored

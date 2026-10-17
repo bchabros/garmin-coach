@@ -316,11 +316,21 @@ def backfill(
     conn: sqlite3.Connection,
     from_date: str,
     to_date: str | None = None,
+    *,
+    on_day_complete: Callable[[str], None] | None = None,
 ) -> None:
     """Backfill the inclusive date range from `from_date` to `to_date`.
 
     to_date defaults to yesterday because today is incomplete; HRV and sleep
     land after the night.
+
+    Args:
+        client: Injected Garmin read transport.
+        conn: Bootstrapped database connection.
+        from_date: First day to fetch, inclusive.
+        to_date: Last day to fetch, inclusive; defaults to yesterday.
+        on_day_complete: Optional checkpoint callback, called only after a whole
+            day's streams have committed. It never changes sync watermarks.
     """
     start = dt.date.fromisoformat(from_date)
     end = _default_end(to_date)
@@ -339,6 +349,8 @@ def backfill(
         for stream in _DAY_STREAMS:
             stream.store(conn, date, stream.fetch(client, date))
         conn.commit()
+        if on_day_complete is not None:
+            on_day_complete(date)
 
 
 def _stream_start(ctx: SyncContext, stream: str, core_table: str) -> dt.date:

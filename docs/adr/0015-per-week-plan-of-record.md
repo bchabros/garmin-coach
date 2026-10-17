@@ -4,6 +4,8 @@
 
 Accepted
 
+Amended for optional first-run templates in issue #84; see the dated amendment below.
+
 ## Context
 
 Until issue #21 the only planned-intent source was `plan_template`: a static
@@ -98,3 +100,17 @@ the stored grid keeps what was meant beside what happened.
   the status quo. Rejected because the athlete wants the distinction machine-readable,
   and the intent-class mapping makes it cost nothing in adherence while fixing the
   pre-existing `tempo`/`hyrox` hole.
+
+## Amendment — 2026-10-14, issue #84
+
+The repeating template is now an explicit, optional athlete choice. The authored week
+still wins, but a new installation can have neither source; fresh databases must not
+borrow the original athlete's week. Existing templates and authored files are retained.
+Without a planned intent the public daily comparison is `match: null`, weekly adherence
+is unknown, and the recommender cannot count a missed session. Existing integer cache
+rows remain compatible: the reader treats their placeholder as unknown when the planned
+intent is absent, without a destructive schema migration.
+
+`PLAN_MISSING` continues to mean no authored weekly plan. Its `source` is `plan_template`
+only when that fallback actually answers, and null otherwise. Confirming a repeating
+shape during setup does not turn it into an authored, dated weekly plan.

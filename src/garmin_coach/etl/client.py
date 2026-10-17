@@ -17,7 +17,12 @@ import time
 from collections.abc import Iterator
 from typing import Any, Callable
 
-from garminconnect import Garmin
+from garminconnect import (
+    Garmin,
+    GarminConnectAuthenticationError,
+    GarminConnectConnectionError,
+    GarminConnectTooManyRequestsError,
+)
 
 from ..core.config import Settings, get_settings
 
@@ -32,6 +37,19 @@ _REASON_MAX_CHARS = 300
 
 class LoginUnavailableError(RuntimeError):
     """Login needs an answer typed at a terminal, and no terminal is attached."""
+
+
+def failure_kind(exc: BaseException) -> str:
+    """Classify transport failures without interpreting or exposing exception messages."""
+    if isinstance(exc, KeyboardInterrupt):
+        return "interrupted"
+    if isinstance(exc, GarminConnectTooManyRequestsError):
+        return "rate_limited"
+    if isinstance(exc, (GarminConnectAuthenticationError, LoginUnavailableError)):
+        return "authentication"
+    if isinstance(exc, (GarminConnectConnectionError, TimeoutError, ConnectionError, OSError)):
+        return "unavailable"
+    return "failed"
 
 
 def _tokenstore(settings: Settings) -> str:

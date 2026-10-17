@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Backfill / storage.
     data_start_date: str = "2026-06-08"
     db_path: str = "./data/garmin.db"
+    # Explicit first-run choice; None is an adopted installation's existing DB policy.
+    weekly_template: str | None = None
 
     # Re-check window (ADR 0026): the trailing days, ending yesterday, that every
     # incremental sync pulls again. A day is recorded as final on the last of them.

@@ -7,6 +7,7 @@ definitions live in `docs/glossary.md`; deep design detail for the nightly path 
 
 The golden rule still holds here: this layer reads the finished DB. Only `backfill`,
 `sync`, `refresh-today`, and `daily` talk to Garmin (plus the out-of-seam `push`);
+interactive `setup` invokes the same backfill after explicit confirmation.
 `features` and `report` never do.
 
 ## Directory map (what lives where)
@@ -28,6 +29,95 @@ The golden rule still holds here: this layer reads the finished DB. Only `backfi
 - `docs/` -- system docs (this runbook, `DEVELOPMENT.md`, `PROJECT.md`, `glossary.md`, PRDs,
   ADRs). `skills/coach/` -- the coach skill (narrative layer over the digest).
 - `data/garmin.db` -- SQLite system-of-record. `logs/` -- nightly run logs.
+
+## Guided first-run setup (macOS)
+
+The runtime must already be available. From a source checkout, install its dependencies
+with Poetry, then run in an interactive terminal:
+
+```bash
+poetry run garmin-coach --home ~/GarminCoach setup
+```
+
+`--home` goes before `setup`. Unlike ordinary commands, setup requires `--home` or
+`GARMIN_COACH_HOME` explicitly, including when launched from a source checkout. A new
+destination must be absent or empty. It is created atomically, with private folder
+permissions, `data/`, `plans/`, `reports/`, `logs/`, and an empty `memory/athlete-profile.md`
+plus the profile editing rules. No existing athlete's files or database rows are copied.
+
+1. Enter the first date with your real Garmin history; there is no suggested owner date.
+2. Enter seven comma-separated intents, Monday through Sunday, from
+   `rest,easy,tempo,strength,hyrox,crossfit,quality`, or enter `none` for no agreed template.
+   For example, `rest,easy,strength,easy,rest,tempo,easy` is a possible explicit choice,
+   never a recommendation or an automatic default.
+3. Review the destination and choices, then type `yes` to create the installation.
+4. Review the inclusive import range, then type `yes` to start. Enter your own Garmin
+   email, password (hidden terminal input), and MFA code if requested. Login uses the
+   existing transport and saves tokens inside this installation's `.garminconnect/`.
+5. Setup imports the range, rebuilds marts, prints observation counts and a first local
+   read, and writes `reports/<end>/setup-<unique>/digest.json` plus `snapshot.json` when
+   available. Every run gets its own directory, so prior reports and receipts survive.
+
+The default end is yesterday; today's history is incomplete. `setup --to YYYY-MM-DD`
+chooses an earlier end. `setup --configure-only` stops before login and creates no DB.
+Declining the import leaves valid configuration for a later run. Exit 0 means the
+requested stage completed (including an empty response); exit 2 means refusal, failure
+or interruption. An empty response is not proof of an empty training history.
+
+**Recovery and resumption.** Re-run setup with the same `--home` and `--to` shown in
+the failure message. A checkpoint in `data/setup-import.json` advances only after every
+daily stream for that date has committed. The first incomplete day is fetched again;
+completed days and core rows remain intact. Checkpoints are bound to the history start
+and database identity; extending the end date (including running a day later) resumes
+after the last committed day. Missing, invalid or mismatched checkpoints cause a safe
+repeat of the full range. Nightly sync watermarks are never written by setup. Once a
+range is complete, repeating it rebuilds the local read without logging in again; use
+the normal `sync`/`backfill` commands for a fresh fetch. After a rate limit, wait before
+retrying; setup stops at the failed request rather than automatically retrying it.
+Diagnostics report the failed stage, exception class, failure category and last complete
+day without logging exception messages, credentials or token contents. Rate-limit,
+authentication, connection and interruption outcomes are distinguished from unknown failures.
+
+**Existing installations.** A `.env` identifies adoption: setup loads the selected
+installation's configuration and uses its existing paths. Without a setup checkpoint,
+an existing history is inspected read-only: setup shows the observed coverage and offers
+`yes` for a local read or `import` to explicitly request a history fetch. Local adoption
+does not log in, and `onboarding.import_complete` is null rather than inferring complete
+history from a maximum date. The local read ends at the latest actual observation within
+the requested window; date-only rows do not extend it. An ongoing setup import instead
+resumes its checkpoint.
+Setup does not
+rewrite the `.env`, profile, profile rules, authored plans, reports, receipts or existing
+DB overrides/templates. Schema bootstrap retains its existing non-destructive migration
+behavior. `WEEKLY_TEMPLATE` is a first-DB choice, not a way to revise an existing plan;
+authored weekly files retain precedence through the normal plan resolver/import path.
+Clear contradictory exported path/account settings before selecting another installation.
+For a new athlete, also unset inherited `DATA_START_DATE`, `WEEKLY_TEMPLATE` and
+`GARMIN_PASSWORD`; the guided choices and terminal login establish their own identity.
+If a manual `.env` has no database and omits the history start or weekly choice, setup
+asks for those missing choices and previews the lines to append. Other configuration
+bytes and paths are preserved, and declining leaves the file unchanged. An existing
+database retains its compatibility defaults and historical settings.
+
+**Honest missing data.** Fresh schemas contain algorithm policy defaults and shared
+exercise mappings, without the owner's HRV baseline/SD or training week. Existing
+personal rows retain their historical meaning. Date-only payload rows and negative
+availability flags are not counted as measurements. The first digest records import
+completion, missing streams and days with observations under `onboarding`; sparse or
+partial evidence is named in the terminal. An incomplete import writes a distinct
+`setup-<unique>/status.json`, leaves existing marts untouched and produces no coaching
+digest, snapshot or recommendation until resumption completes. No agreed plan means unknown adherence and
+no invented missed sessions. The legacy `DATA_START_DATE` default remains for adopted
+installations; new setup always records the athlete's explicit choice.
+
+**Separate user-operated live acceptance.** Automated checks use temporary storage and
+fake Garmin transport. To validate a real first login on supported macOS, the operator
+chooses a new empty installation, runs setup in Terminal, verifies their own login/MFA,
+selected history, first read and same-range re-run, then records the OS/runtime versions
+and result without credentials or personal records. For adoption, verify the existing
+configuration and personal files remain unchanged. This live check is not performed by
+development tests. Client registration, packaged clean-Mac bootstrap and daily scheduling
+remain #85/#86 rather than part of setup.
 
 ## The athlete installation (where every run reads and writes)
 
@@ -70,7 +160,8 @@ The saved Garmin login defaults to the installation so two installations never s
 account; the owner's `.env` names `~/.garminconnect` explicitly and keeps using it.
 
 **Only an import creates the database.** `backfill` and `sync` may create a missing
-database; every other command, `daily` and the coach server refuse.
+database, as may `setup` after its confirmed initial backfill; other commands, `daily`
+and the coach server refuse.
 
 **Refusals** stop before any data is read or written; commands exit 2 and the server exits
 before serving:
@@ -78,7 +169,7 @@ before serving:
 | Message starts with | Cause | What to do |
 |---|---|---|
 | `No athlete installation selected` | no `--home`, no `GARMIN_COACH_HOME`, and the starting folder has no `.env` | name the installation, or start inside it |
-| `Not an athlete installation` | the named folder has no `.env` (often a typo) | name the right folder; a new installation needs a `.env` (`cp .env.example .env`) |
+| `Not an athlete installation` | the named folder has no `.env` (often a typo) | name the right folder; for a new athlete run `garmin-coach --home <empty-folder> setup` |
 | `Installation conflict: --home and GARMIN_COACH_HOME` | the two name different folders | drop one, or make them agree |
 | `Installation conflict: DB_PATH` (or `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS`, `GARMIN_EMAIL`) | an environment value disagrees with the installation's `.env` | unset it, or write the intended value into that `.env` |
 | `No database at ...` | the installation has never been imported | `garmin-coach backfill --from YYYY-MM-DD` (or `sync`) |
@@ -567,7 +658,7 @@ Which clients pick it up and how is covered in "Registering the server" below â€
   not know come back as `unmapped`.
 - **Plan of record** â€” `get_plan(week_start?)` returns the resolved week with a
   per-day `source` (`plan_week` = the athlete authored it, `plan_template` = the
-  fallback shape answered) and `has_plan`. When a week is unplanned the digest also
+  fallback shape answered, null = no source exists) and `has_plan`. When a week is unplanned the digest also
   carries the `PLAN_MISSING` signal. To plan it: compose seven `{planned, intent}`
   days from the athlete's history and standing, call `plan_preview(week_start, days)`
   to validate and **show the table to the athlete**, then `plan_confirm(week_start,

@@ -18,6 +18,25 @@ Claude Cowork points at the same DB and runs the coach skill. See
 [docs/PROJECT.md](docs/PROJECT.md) for the full brief — the phased build history
 that got the system here. New work is tracked as GitHub issues.
 
+## First run for a new athlete (macOS)
+
+With the runtime available (`poetry install` in a source checkout), run this in Terminal:
+
+```bash
+poetry run garmin-coach --home ~/GarminCoach setup
+```
+
+Choose your real-data start and your own weekly template, or explicitly choose no
+template yet. Setup creates an empty private installation, guides Garmin login/MFA,
+imports history through yesterday and prints the first local coach read. It can resume
+an interrupted import without resetting data. An existing installation is adopted in
+place; configuration, plans, profile and reports are preserved.
+
+Use `--configure-only` to stop before login or `--to YYYY-MM-DD` to bound the initial
+import. Assistant registration and clean-Mac runtime installation are separate work
+(#85 and #86). See [the setup runbook](docs/OPERATIONS.md#guided-first-run-setup-macos)
+for recovery, missing-data semantics and the separate live acceptance checklist.
+
 ## How work is tracked
 
 New work lives as [GitHub issues](https://github.com/bchabros/garmin-coach/issues),
@@ -130,25 +149,25 @@ poetry install                 # or: task install (also installs the pre-commit 
 `poetry install`, enable it once with `poetry run pre-commit install`.
 
 Every athlete installation needs a `.env`: it is what marks the folder as the
-installation a run acts on (ADR 0031). In a fresh clone run `cp .env.example .env`
-before the first import; credentials are still prompted on the first login and every
-other setting has a sensible default, so uncomment only what you need. To act on an
+installation a run acts on (ADR 0031). New athletes use the guided `setup` above;
+`.env.example` remains a reference for existing/manual installations, including the
+owner's legacy history cutoff. To act on an
 installation in another folder, pass `--home <folder>` or set `GARMIN_COACH_HOME`
 (see "The athlete installation" in `docs/OPERATIONS.md`).
 
 ### Athlete-specific configuration (lives in the DB)
 
-Two tables are seeded with defaults on first schema bootstrap (`INSERT OR IGNORE`,
-so your edits survive re-runs) and are meant to be edited to fit the athlete:
+Policy defaults are seeded with `INSERT OR IGNORE`, preserving installed overrides.
+Personal observations and training choices are never borrowed from another athlete:
 
-- **`coach_thresholds`** — every coach tunable as a `key/value/note` row: HRV
-  baseline and SD, ACWR bands, the "hard session" load cutoff, zone percentages,
-  deload rules. The seeds were derived from this athlete's first weeks of data;
-  after your own backfill, review them (each row's `note` says what it means).
+- **`coach_thresholds`** — coach policy as `key/value/note` rows: ACWR bands,
+  the "hard session" load cutoff, zone percentages and deload rules. Fresh databases
+  have no seeded personal HRV baseline/SD; marts compute them from imported nights.
+  Existing personal overrides remain unchanged.
 - **`plan_template`** — your intended weekly pattern, one row per day of week
-  (`dow` 0 = Monday) with a free-text label and an intent (`rest | quality |
-  easy`). Weekly plan-vs-actual and `plan_adherence` are measured against
-  this table, so it should reflect *your* plan, not the seeded one.
+  (`dow` 0 = Monday), populated from your explicit setup choice when the database
+  is first created. An empty template means no agreed plan, with unknown adherence;
+  authored weekly plans take precedence through the normal resolver.
 
 Edit both with plain SQL (`sqlite3 data/garmin.db`), then re-run
 `garmin-coach features` — marts are recomputed, never authoritative.

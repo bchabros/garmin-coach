@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic_settings import DotEnvSettingsSource
 
-from . import db
+from . import db, plan
 from .config import Settings
 
 HOME_VARIABLE = "GARMIN_COACH_HOME"
@@ -113,23 +113,33 @@ def reports_dir() -> pathlib.Path:
 def open_database(settings: Settings, *, create: bool = False) -> sqlite3.Connection:
     """Open the selected installation's database, bootstrapping its schema.
 
-    Only a manual import may create a missing database: everything else refuses, so a
-    run started in the wrong place says so instead of coaching from an empty history.
+    Only a manual import (including confirmed setup) may create a missing database.
+    Other commands started in the wrong place refuse to coach from an empty history.
 
     Args:
         settings: The selected installation's settings.
-        create: Whether a missing database may be created (``backfill`` and ``sync``).
+        create: Whether a missing database may be created (manual import or setup).
 
     Raises:
         InstallationError: The database is missing and ``create`` is False.
     """
     path = pathlib.Path(settings.db_path)
+    is_new = not path.exists()
+    template = (
+        plan.parse_template(settings.weekly_template) if is_new and settings.weekly_template else []
+    )
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
         require_database(settings)
     conn = db.connect(str(path))
     db.bootstrap(conn)
+    if is_new and template:
+        conn.executemany(
+            "INSERT INTO plan_template(dow, planned, intent) VALUES (?, ?, ?)",
+            [(dow, intent, intent) for dow, intent in enumerate(template)],
+        )
+        conn.commit()
     return conn
 
 
@@ -145,6 +155,27 @@ def require_database(settings: Settings) -> None:
             f"No database at {path}; import the athlete's history first with "
             f"`garmin-coach backfill --from YYYY-MM-DD` (or `garmin-coach sync`)."
         )
+
+
+def read_database(settings: Settings) -> sqlite3.Connection:
+    """Inspect an existing installation without creating, seeding or migrating it.
+
+    Args:
+        settings: The selected athlete installation's resolved settings.
+
+    Raises:
+        InstallationError: The selected database does not exist.
+        sqlite3.DatabaseError: Its schema needs an explicit migration first.
+    """
+    require_database(settings)
+    uri = pathlib.Path(settings.db_path).as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        db.validate_schema(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
 
 
 def load(root: pathlib.Path) -> Settings:

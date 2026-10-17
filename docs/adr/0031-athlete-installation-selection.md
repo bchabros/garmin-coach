@@ -6,6 +6,8 @@ Accepted. Generalizes the guarded project launch of issue
 [#82](https://github.com/bchabros/garmin-coach/issues/82) to every entry point
 (issue [#83](https://github.com/bchabros/garmin-coach/issues/83)).
 
+Amended by issue #84 for explicit initial setup and adoption; see the dated amendment.
+
 ## Context
 
 Until now every path the program touched - the database, plans, reports, logs, and the
@@ -73,3 +75,22 @@ a nightly launchd job, Claude Desktop, Claude Code and Work - none of which may 
   owner's installation.
 - Creating a new installation from a template, with a guided Garmin login, belongs to
   issue #84; telling a packaged client's chat where the profile lives belongs to #85.
+
+## Amendment — 2026-10-14, issue #84
+
+`setup` is the explicit creation path: it requires a named destination, creates the
+empty installation's `.env` from reviewed athlete choices, and may create its database
+after confirmation of the initial import. Other entry points keep the original refusal
+rules. A manually created `.env` without a database must also establish its own history
+start and template choice; the compatibility cutoff is not a new-athlete default.
+
+An existing database without a setup checkpoint is inspected read-only. The user can
+reuse recorded history locally or explicitly request a history fetch; neither existing
+rows nor a maximum date prove that every historical day is present. Local adoption
+therefore names the available horizon and coverage, with import completeness unknown.
+
+Setup checkpoints record committed full days independently of sync watermarks. The same
+database and history start can resume with a later end date, avoiding a full historical
+fetch on the next day; normal `sync` retains ownership of trailing-day rechecks. Invalid
+checkpoints or a replaced database never authorize skipping an import. Personal files,
+configuration overrides, existing measurements and templates are preserved in place.

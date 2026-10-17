@@ -193,7 +193,9 @@ def _replan(digest: dict[str, Any], thresholds: dict[str, float]) -> dict[str, A
     if not weekly or not weekly.get("plan_vs_actual"):
         return None
     missed = sum(
-        1 for row in weekly["plan_vs_actual"] if row["planned"] != "rest" and not row["match"]
+        1
+        for row in weekly["plan_vs_actual"]
+        if row["planned"] not in (None, "rest") and not row["match"]
     )
     if missed < thresholds["replan_missed_sessions"]:
         return None

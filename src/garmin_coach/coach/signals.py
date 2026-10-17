@@ -351,8 +351,10 @@ def deload_advised(weekly_rows: list[dict], thresholds: dict[str, float]) -> dic
     }
 
 
-def plan_missing(has_plan: bool, week_start: str | None) -> dict | None:
-    """The current week has no authored plan of record, so the template answers for it.
+def plan_missing(
+    has_plan: bool, week_start: str | None, *, source: str | None = "plan_template"
+) -> dict | None:
+    """The current week has no authored plan; name the fallback, if one exists.
 
     A statement of fact, not an instruction: the template is a repeating shape, not
     a plan the athlete agreed to, and every planned-intent read this week is a guess
@@ -361,6 +363,7 @@ def plan_missing(has_plan: bool, week_start: str | None) -> dict | None:
     Args:
         has_plan: Whether the week has an authored ``plan_week`` override.
         week_start: The current week's Monday, or None when there is no horizon.
+        source: The resolver's fallback source, or None when no plan is agreed.
 
     Returns:
         The signal, or None when the week is authored / there is no week at all.
@@ -370,7 +373,7 @@ def plan_missing(has_plan: bool, week_start: str | None) -> dict | None:
     return {
         "code": "PLAN_MISSING",
         "severity": "info",
-        "facts": {"week_start": week_start, "source": "plan_template"},
+        "facts": {"week_start": week_start, "source": source},
     }
 
 

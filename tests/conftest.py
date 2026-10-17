@@ -62,11 +62,24 @@ def fixture():
 
 @pytest.fixture
 def conn():
-    """A fresh in-memory SQLite connection with the package schema applied."""
+    """An existing athlete's DB, with an explicitly agreed historical weekly template."""
     from garmin_coach.core import db
 
     c = db.connect(":memory:")
     db.bootstrap(c)
+    c.executemany(
+        "INSERT INTO plan_template(dow, planned, intent) VALUES (?, ?, ?)",
+        [
+            (0, "rest", "rest"),
+            (1, "FBB + Hyrox", "quality"),
+            (2, "bieganie easy/long", "easy"),
+            (3, "rest", "rest"),
+            (4, "Crossfit + Hyrox", "quality"),
+            (5, "Hyrox lub tempo bieg", "quality"),
+            (6, "czasem easy/long run", "easy"),
+        ],
+    )
+    c.commit()
     yield c
     c.close()
 

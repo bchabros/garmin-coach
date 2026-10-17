@@ -61,6 +61,16 @@ _DAY_ABBREVS = ("Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd")
 _EXISTS_MSG = "{path} already exists; revise it manually and re-import"
 
 
+def parse_template(value: str) -> list[str]:
+    """Validate a first-run weekly choice: seven Monday-Sunday intents or ``none``."""
+    if value == "none":
+        return []
+    days = [day.strip() for day in value.split(",")]
+    if len(days) != 7 or any(day not in INTENTS for day in days):
+        raise ValueError("Choose seven valid intents, or 'none'.")
+    return days
+
+
 def intent_class(intent: str | None) -> str | None:
     """Collapse a planned intent to the measurable class adherence compares on.
 
@@ -271,7 +281,16 @@ def resolve_week(conn: sqlite3.Connection, week_start: str) -> list[dict]:
     days = []
     for dow in range(7):
         date = (monday + _dt.timedelta(days=dow)).isoformat()
-        days.append(resolve_day(conn, date) or {"date": date, "dow": dow})
+        days.append(
+            resolve_day(conn, date)
+            or {
+                "date": date,
+                "dow": dow,
+                "planned": None,
+                "intent": None,
+                "source": None,
+            }
+        )
     return days
 
 

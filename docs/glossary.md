@@ -666,3 +666,6 @@ code, docstrings, PRDs, and ADRs.
 - **setup checkpoint** - the last full day committed by the initial history import for
   the same athlete history start and database. It survives an extension of the import
   horizon and is independent of nightly sync watermarks.
+- **managed runtime** - the installed program and its versioned coach resources, kept
+  separate from every athlete installation. Replacing or removing it does not remove
+  the athlete's personal state. Not a source checkout or an athlete installation.

@@ -13,6 +13,7 @@ import argparse
 import os
 import pathlib
 import sqlite3
+from contextlib import closing
 from typing import Any
 
 from pydantic_settings import DotEnvSettingsSource
@@ -176,6 +177,32 @@ def read_database(settings: Settings) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def backup_database(settings: Settings, destination: pathlib.Path) -> None:
+    """Save a private consistent SQLite snapshot without migrating its source.
+
+    Older schemas are deliberately accepted: recovery must be possible before an
+    upgrade. SQLite's backup API includes committed WAL records. The destination
+    must not exist, and its parent directory must already have been prepared.
+
+    Args:
+        settings: Selected athlete installation's resolved settings.
+        destination: New snapshot file, created with private permissions.
+
+    Raises:
+        InstallationError: The selected source database is missing.
+        OSError: The destination already exists or cannot be created.
+        sqlite3.Error: SQLite could not complete the snapshot.
+    """
+    require_database(settings)
+    descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(descriptor)
+    source = pathlib.Path(settings.db_path).as_uri() + "?mode=ro"
+    target = destination.resolve().as_uri() + "?mode=rw"
+    with closing(sqlite3.connect(source, uri=True)) as original:
+        with closing(sqlite3.connect(target, uri=True)) as snapshot:
+            original.backup(snapshot)
 
 
 def load(root: pathlib.Path) -> Settings:

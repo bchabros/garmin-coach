@@ -72,6 +72,14 @@ preparation; users never need a compiler. Standalone Python and its licenses com
 Checksums fetched from the same release establish content consistency; the initial
 installer remains trusted code obtained over GitHub HTTPS.
 
+Intel macOS uses a platform-specific lock for `cryptography` 48.0.1, the last
+[official universal2 wheel](https://pypi.org/project/cryptography/48.0.1/#files); the
+existing 49.0.0 lock remains on other platforms. Upstream
+[removed Intel support in 49](https://cryptography.io/en/49.0.0/changelog/). This
+compatibility ceiling needs maintenance review before future release promotion; it
+is not a source-build fallback. The complete locked Intel wheelhouse must still pass
+the native installation and stdio checks.
+
 Each architecture has a dedicated installer. It uses macOS-provided shell, curl, tar
 and shasum. It provisions Python privately and does not modify system Python, install
 Homebrew/Poetry/Xcode, or edit shell profiles. A client must already be installed and

@@ -57,3 +57,12 @@ A consumer clean-Mac test with the selected clients remains separate from CI/dev
 isolation smoke. Program update/removal must preserve the athlete installation and use
 the same manifest/ownership records. Third-party Python/dependency license notices must
 stay in released artifacts. This first release does not silently auto-update or migrate.
+
+## Intel binary compatibility
+
+Native CI on 2026-10-17 rejected cryptography 49.0.0 because upstream removed
+Intel macOS wheels. The Poetry lock selects 48.0.1 only on macOS x86_64 and keeps
+49.0.0 elsewhere. The last official universal2 wheel supplies the Intel candidate;
+release preparation still refuses source builds. This platform ceiling requires
+maintenance review before future promotion. See [upstream removal](https://cryptography.io/en/49.0.0/changelog/)
+and [published 48.0.1 wheels](https://pypi.org/project/cryptography/48.0.1/#files).

@@ -9,6 +9,7 @@ check recorded with the change.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import pathlib
 import shutil
@@ -94,8 +95,48 @@ def test_the_package_carries_the_schema_and_both_commands_and_nothing_personal(w
     assert "garmin_coach/core/schema.sql" in names
     assert b"garmin-coach=" in entry_points.replace(b" ", b"")
     assert b"garmin-coach-mcp=" in entry_points.replace(b" ", b"")
-    personal = (".env", "garmin.db", "athlete-profile", "plans/", "reports/", "skills/")
+    personal = (".env", "garmin.db", "athlete-profile", "plans/", "reports/")
     assert not [name for name in names if any(part in name for part in personal)]
+    assert {name for name in names if name.startswith("skills/")} == {
+        "skills/coach/SKILL.md",
+        "skills/coach/references/report.md",
+        "skills/coach/references/planning.md",
+        "skills/coach/references/authoring.md",
+    }
+
+
+def test_installed_client_setup_carries_all_references_without_a_source_checkout(
+    environment,
+    tmp_path,
+):
+    home = make_installation(tmp_path / "athlete")
+    runtime = tmp_path / "program"
+    env = _clean_environment()
+    env["PATH"] = ""
+    result = subprocess.run(
+        [
+            str(environment / "bin/python"),
+            "-m",
+            "garmin_coach.clients",
+            "--home",
+            str(home),
+            "--runtime-root",
+            str(runtime),
+            "configure",
+            "--clients",
+            "codex",
+        ],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    package = pathlib.Path(output["integration_root"]) / "plugin"
+    assert (package / "skills/coach/references/report.md").is_file()
+    assert output["clients"]["codex"]["state"] == "client_missing"
 
 
 def test_the_installed_program_is_the_built_package(environment):

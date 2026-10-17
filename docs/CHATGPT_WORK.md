@@ -1,5 +1,9 @@
 # Local coaching and development in Work, Codex, and Claude Code
 
+For a packaged runtime and a separate athlete installation, use
+[local assistant setup](CLIENT_SETUP.md). The workflow below covers source-checkout
+integration and its separate recorded acceptance.
+
 This setup uses the current macOS Poetry checkout. The folder serves coaching and
 development requests; start separate chats for distinct outcomes. The coach router
 and all references remain canonical under `skills/coach/`. Codex discovery through

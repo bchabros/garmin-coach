@@ -68,6 +68,14 @@ calls back only after all daily streams commit. Templates under `templates/` con
 athlete observations. The schema seeds policy defaults and reference mappings only;
 existing personal HRV overrides and weekly templates are preserved in place.
 
+`clients.py` prepares local Work/Codex and Claude Code plugins from the canonical
+coach resources carried by the Python distribution. Generated local marketplaces
+and atomic registration receipts belong to the managed runtime, outside athlete
+records; their server commands name the installation explicitly. Test its CLI and
+generated packages on temporary installations with fake client executables, and
+verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
+check documented in `docs/CLIENT_SETUP.md`.
+
 `scripts/coach_project.py` selects the source checkout's Poetry interpreter before
 entering `project.py`, including from GUI clients or an unrelated working directory.
 The guarded launch rejects conflicting database/plan environment paths and uses

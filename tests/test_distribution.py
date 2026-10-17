@@ -48,8 +48,8 @@ def test_bad_release_download_never_activates_or_changes_the_existing_runtime(tm
     assert not (root / "install-state.json").exists()
 
 
-def _release_fixture(tmp_path):
-    """A tiny executable package keeps installer tests offline without borrowed dependencies."""
+def _release_fixture(tmp_path, *, broken_mcp=False):
+    """Build real app code offline; only test dependencies are borrowed, like test_package."""
     import io
     import sys
     import tarfile
@@ -59,11 +59,14 @@ def _release_fixture(tmp_path):
     wheels.mkdir()
     wheel = wheels / "garmin_coach-0.2.0-py3-none-any.whl"
     with zipfile.ZipFile(wheel, "w") as archive:
-        for name in ("", "core/", "mcp/"):
-            archive.writestr(f"garmin_coach/{name}__init__.py", "")
-        archive.writestr("garmin_coach/cli.py", "print('fixture CLI 0.2.0')\n")
-        archive.writestr("garmin_coach/mcp/server.py", "print('fixture MCP 0.2.0')\n")
-        archive.writestr("garmin_coach/core/schema.sql", "CREATE TABLE sample (id INTEGER);\n")
+        source = pathlib.Path(__file__).resolve().parents[1] / "src" / "garmin_coach"
+        for path in source.rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts:
+                relative = pathlib.Path("garmin_coach") / path.relative_to(source)
+                if broken_mcp and relative.as_posix() == "garmin_coach/mcp/server.py":
+                    archive.writestr(str(relative), "print('not an MCP server')\n")
+                else:
+                    archive.write(path, str(relative))
         prefix = "garmin_coach-0.2.0.dist-info/"
         archive.writestr(
             prefix + "METADATA", "Metadata-Version: 2.1\nName: garmin-coach\nVersion: 0.2.0\n"
@@ -83,7 +86,20 @@ def _release_fixture(tmp_path):
         archive.add(requirements, arcname="requirements.txt")
     python = tmp_path / "python.tar.gz"
     with tarfile.open(python, "w:gz") as archive:
-        executable = f"#!/bin/sh\nexec '{sys.executable}' \"$@\"\n".encode()
+        import sysconfig
+
+        borrowed = sysconfig.get_paths()["purelib"]
+        wrapper = (
+            f"#!{sys.executable}\n"
+            "import pathlib, subprocess, sys\n"
+            "result = subprocess.run([sys.executable, *sys.argv[1:]], check=False)\n"
+            "if result.returncode == 0 and sys.argv[1:4] == ['-I', '-m', 'venv']:\n"
+            "    python = pathlib.Path(sys.argv[4]) / 'bin' / 'python'\n"
+            "    library = subprocess.check_output([str(python), '-I', '-c', \"import sysconfig; print(sysconfig.get_paths()['purelib'])\"], text=True).strip()\n"
+            f"    pathlib.Path(library, 'borrowed.pth').write_text({borrowed!r} + '\\n')\n"
+            "raise SystemExit(result.returncode)\n"
+        )
+        executable = wrapper.encode()
         entry = tarfile.TarInfo("python/bin/python3")
         entry.mode, entry.size = 0o755, len(executable)
         archive.addfile(entry, io.BytesIO(executable))
@@ -122,10 +138,13 @@ def test_private_runtime_is_prepared_activated_and_reused_from_an_unrelated_fold
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     result = subprocess.run(
-        [str(root / "bin" / "garmin-coach")], cwd=elsewhere, capture_output=True, text=True
+        [str(root / "bin" / "garmin-coach"), "--help"],
+        cwd=elsewhere,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "fixture CLI 0.2.0"
+    assert "usage: " in result.stdout
     assert distribution.read_state(root)["release"] == "0.2.0"
     assert distribution.prepare_release(manifest, root) == release
     assert list(elsewhere.iterdir()) == []
@@ -223,6 +242,17 @@ def test_interrupted_scheduler_registration_can_resume_without_rewriting_the_job
         distribution.configure_schedule(
             home, root, "06:00", enabled=True, agents_dir=agents, execute=failed
         )
+    record = distribution.read_state(root)["scheduler"]
+    path = pathlib.Path(record["path"])
+    content = path.read_bytes()
+    path.unlink()
+    missing = distribution.configure_schedule(home, root, "06:00", enabled=False, agents_dir=agents)
+    assert missing["status"] == "missing"
+    path.write_bytes(content)
+    restored = distribution.configure_schedule(
+        home, root, "06:00", enabled=False, agents_dir=agents
+    )
+    assert restored["status"] == "prepared"
     result = distribution.configure_schedule(
         home, root, "06:00", enabled=True, agents_dir=agents, execute=lambda args: None
     )
@@ -313,7 +343,25 @@ def test_missing_client_is_reported_even_when_configuration_command_exits_zero(t
     launcher = root / "bin" / "garmin-coach"
     launcher.write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({payload!r}))\n")
     launcher.chmod(0o755)
-    result = distribution.finish_setup(home, root, clients="codex", execute=lambda command: 0)
+
+    def completed_stage(command):
+        if command[-1] == "setup":
+            output = home / "reports" / "2026-07-03" / "setup-complete"
+            output.mkdir(parents=True)
+            (output / "digest.json").write_text(
+                json.dumps(
+                    {
+                        "onboarding": {
+                            "import_complete": True,
+                            "read_ready": True,
+                            "completed_through": "2026-07-03",
+                        }
+                    }
+                )
+            )
+        return 0
+
+    result = distribution.finish_setup(home, root, clients="codex", execute=completed_stage)
     assert result["clients"]["status"] == "incomplete"
     assert result["clients"]["by_client"]["codex"]["state"] == "client_missing"
     assert result["clients"]["by_client"]["codex"]["actions"] == ["Install Codex and repeat setup."]
@@ -359,3 +407,104 @@ def test_ownership_inventory_allows_only_known_python_cache_changes(tmp_path):
     with pytest.raises(ValueError, match="inventory|Unknown"):
         distribution.verify_release_inventory(release)
     assert personal.read_bytes() == b"personal database"
+
+
+@pytest.mark.parametrize("change,expected", [("remove", "missing"), ("edit", "changed")])
+def test_skipped_scheduler_revalidates_saved_job_and_preserves_its_choice(
+    tmp_path, change, expected
+):
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    home.mkdir()
+    calls = []
+    saved = distribution.configure_schedule(
+        home, root, "06:30", enabled=True, agents_dir=agents, execute=calls.append
+    )
+    path = pathlib.Path(saved["path"])
+    if change == "remove":
+        path.unlink()
+    else:
+        path.write_text("edited job, preserve it")
+    result = distribution.configure_schedule(
+        home, root, "06:30", enabled=False, agents_dir=agents, execute=calls.append
+    )
+    assert result["status"] == expected
+    assert result["choice"] == "enabled"
+    assert result["actions"]
+    assert distribution.read_state(root)["scheduler"] == result
+    repeated = distribution.configure_schedule(
+        home, root, "06:30", enabled=False, agents_dir=agents, execute=calls.append
+    )
+    assert repeated == result
+    assert len(calls) == 1
+    assert path.read_text() == "edited job, preserve it" if change == "edit" else not path.exists()
+
+
+def test_schedule_preview_names_the_exact_log_destinations_before_consent(tmp_path):
+    home, root = tmp_path / "athlete", tmp_path / "runtime"
+    preview = distribution.configure_schedule(
+        home, root, "06:00", enabled=False, agents_dir=tmp_path / "agents"
+    )
+    assert preview["stdout_path"] == str(home / "logs" / "launchd.out.log")
+    assert preview["stderr_path"] == str(home / "logs" / "launchd.err.log")
+    assert not home.exists()
+
+
+def test_broken_mcp_protocol_is_refused_before_readiness_or_activation(tmp_path):
+    import subprocess
+
+    manifest = _release_fixture(tmp_path, broken_mcp=True)
+    root = tmp_path / "runtime"
+    with pytest.raises(subprocess.SubprocessError):
+        distribution.prepare_release(manifest, root)
+    assert not (root / "releases" / "0.2.0-arm64" / "ready.json").exists()
+    assert not (root / "current").exists()
+
+
+def test_adopted_incompatible_database_is_refused_before_activation(tmp_path):
+    import sqlite3
+
+    manifest = _release_fixture(tmp_path)
+    root, home = tmp_path / "runtime", tmp_path / "athlete"
+    home.mkdir()
+    (home / ".env").write_text("DB_PATH=./data/garmin.db\n")
+    (home / "data").mkdir()
+    with sqlite3.connect(home / "data" / "garmin.db") as conn:
+        conn.execute("CREATE TABLE incompatible (value TEXT)")
+    before = (home / "data" / "garmin.db").read_bytes()
+    assert (
+        distribution.main(
+            [
+                "install",
+                "--manifest",
+                str(manifest),
+                "--runtime-root",
+                str(root),
+                "--home",
+                str(home),
+                "--prepare-only",
+            ]
+        )
+        == 2
+    )
+    assert not (root / "current").exists()
+    assert (home / "data" / "garmin.db").read_bytes() == before
+
+
+def test_declining_import_with_an_empty_compatible_database_is_not_completion(tmp_path):
+    from garmin_coach.core import db
+
+    home, root = tmp_path / "athlete", tmp_path / "runtime"
+    home.mkdir()
+    (home / ".env").write_text("DB_PATH=./data/garmin.db\n")
+    (home / "data").mkdir()
+    conn = db.connect(str(home / "data" / "garmin.db"))
+    db.bootstrap(conn)
+    conn.close()
+    calls = []
+    result = distribution.finish_setup(
+        home, root, clients="codex", execute=lambda command: calls.append(command) or 0
+    )
+    assert result["onboarding"]["status"] == "configured"
+    assert result["onboarding"]["import_complete"] is None
+    assert result["clients"]["status"] == "not_run"
+    assert len(calls) == 1

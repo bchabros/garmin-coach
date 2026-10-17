@@ -259,6 +259,76 @@ def prepare_release(manifest: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
     return release
 
 
+RUNTIME_PROBE = """
+import asyncio
+import pathlib
+import json
+import sys
+from garmin_coach.core import db
+from garmin_coach.marts import snapshot
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+home = pathlib.Path(sys.argv[1])
+server_command = json.loads(sys.argv[2])
+home.mkdir()
+(home / '.env').write_text('DB_PATH=./data/garmin.db\\nDATA_START_DATE=2026-06-08\\n')
+(home / 'data').mkdir()
+conn = db.connect(str(home / 'data' / 'garmin.db'))
+db.bootstrap(conn)
+db.upsert_daily(conn, 'daily_metrics', {'date': '2026-07-03', 'hrv': 61, 'load_day': 80})
+snapshot.rollup(conn)
+conn.commit()
+conn.close()
+async def probe():
+    params = StdioServerParameters(command=server_command[0], args=server_command[1:] + ['--home', str(home)])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            for tool in ('get_digest', 'get_snapshot'):
+                result = await session.call_tool(tool, {})
+                assert not result.isError, result
+                assert result.structuredContent['freshness']['data_through'] == '2026-07-03'
+asyncio.run(asyncio.wait_for(probe(), timeout=45))
+print('packaged stdio digest and snapshot: passed; client_acceptance: not_run')
+"""
+
+
+def _probe_environment() -> dict[str, str]:
+    excluded = {
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+        "GARMIN_COACH_HOME",
+        "DB_PATH",
+        "PLANS_DIR",
+        "LOG_PATH",
+        "GARMINTOKENS",
+        "GARMIN_EMAIL",
+        "GARMIN_PASSWORD",
+    }
+    result = {key: value for key, value in os.environ.items() if key not in excluded}
+    return {**result, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
+
+
+def check_runtime_protocol(release: pathlib.Path, *, launcher: pathlib.Path | None = None) -> None:
+    """Read synthetic digest/snapshot through the candidate's real stdio MCP server.
+
+    Args:
+        release: Candidate runtime; no personal installation is read or changed.
+        launcher: Optional stable server launcher for the post-activation release smoke.
+    """
+    python = str(release / "venv" / "bin" / "python")
+    command = [str(launcher)] if launcher else [python, "-I", "-m", "garmin_coach.mcp.server"]
+    with tempfile.TemporaryDirectory(prefix="coach-candidate-probe-") as temporary:
+        folder = pathlib.Path(temporary)
+        subprocess.run(
+            [python, "-I", "-c", RUNTIME_PROBE, str(folder / "athlete"), json.dumps(command)],
+            cwd=folder,
+            env=_probe_environment(),
+            check=True,
+            timeout=60,
+        )
+
+
 def _runtime_check(release: pathlib.Path, metadata: dict[str, Any]) -> None:
     script = (
         "import importlib.metadata as m; from importlib.resources import files; "
@@ -267,6 +337,7 @@ def _runtime_check(release: pathlib.Path, metadata: dict[str, Any]) -> None:
         "assert files('garmin_coach.core').joinpath('schema.sql').is_file()"
     )
     subprocess.run([str(release / "venv" / "bin" / "python"), "-I", "-c", script], check=True)
+    check_runtime_protocol(release)
 
 
 def _guard_active_pointer(root: pathlib.Path) -> None:
@@ -338,6 +409,30 @@ def _execute(arguments: list[str]) -> None:
     subprocess.run(arguments, check=True)
 
 
+def _schedule_observation(previous: dict[str, Any], path: pathlib.Path) -> dict[str, Any]:
+    activation = previous.get("activation_status", previous.get("status", "unknown"))
+    result = {
+        **previous,
+        "status": activation,
+        "activation_status": activation,
+        "choice": previous.get("choice", "enabled"),
+        "actions": [],
+    }
+    if not path.is_file():
+        result.update(
+            status="missing",
+            actions=["Re-enable daily refresh explicitly to recreate its missing job."],
+        )
+    elif (
+        previous.get("path") != str(path)
+        or previous.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest()
+    ):
+        result.update(
+            status="changed", actions=["Review the changed scheduler job; it has been preserved."]
+        )
+    return result
+
+
 def _existing_schedule(
     path: pathlib.Path, state: dict[str, Any], when: str, execute: Any
 ) -> dict[str, Any] | None:
@@ -349,7 +444,7 @@ def _existing_schedule(
         if previous.get("time") == when:
             if previous.get("status") != "enabled":
                 execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
-                previous["status"] = "enabled"
+                previous.update(status="enabled", activation_status="enabled")
                 state["scheduler"] = previous
             return previous
         raise ValueError("Schedule already enabled at another time; remove it explicitly first.")
@@ -383,6 +478,8 @@ def _schedule_record(
         "plist_path": str(path),
         "selected_home": str(home),
         "command": command,
+        "stdout_path": str(home / "logs" / "launchd.out.log"),
+        "stderr_path": str(home / "logs" / "launchd.err.log"),
     }
 
 
@@ -399,7 +496,9 @@ def _enable_schedule(
     (home / "logs").mkdir(parents=True, exist_ok=True)
     content = _schedule_content(home, command, label, when)
     path.write_bytes(content)
-    record.update({"status": "prepared", "sha256": hashlib.sha256(content).hexdigest()})
+    record.update(
+        {"status": "prepared", "choice": "enabled", "sha256": hashlib.sha256(content).hexdigest()}
+    )
     state["scheduler"] = record
     write_state(root, state)
     execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
@@ -442,7 +541,11 @@ def configure_schedule(
     state = read_state(root)
     previous = state.get("scheduler", {})
     if not enabled:
-        return previous if previous.get("status") == "enabled" else record
+        if previous.get("choice") == "enabled" or previous.get("status") in ("enabled", "prepared"):
+            record = _schedule_observation(previous, path)
+            state["scheduler"] = record
+            write_state(root, state)
+        return record
     existing = _existing_schedule(path, state, when, execute)
     if existing is not None:
         state["scheduler"] = existing
@@ -507,8 +610,10 @@ def _onboarding_result(
             pass
     if code != 0 or metadata.get("import_complete") is False:
         status = "partial" if metadata.get("completed_through") else "incomplete"
+    elif not metadata.get("read_ready"):
+        status = "configured"
     else:
-        status = "configured" if readiness == "not_ready" else "complete"
+        status = "incomplete" if readiness == "not_ready" else "complete"
     return {"status": status, "exit_code": code, **metadata}
 
 
@@ -670,6 +775,23 @@ def _complete_setup(args: argparse.Namespace) -> int:
     return 0 if complete and result["clients"]["status"] in ("ready", "needs_activation") else 1
 
 
+def _validate_existing_installation(release: pathlib.Path, home: pathlib.Path) -> None:
+    if not (home / ".env").is_file():
+        return
+    script = (
+        "import pathlib, sys; from garmin_coach.core import installation; "
+        "settings = installation.activate(sys.argv[1]); "
+        "path = pathlib.Path(settings.db_path); "
+        "connection = installation.read_database(settings) if path.exists() else None; "
+        "connection.close() if connection is not None else None"
+    )
+    subprocess.run(
+        [str(release / "venv" / "bin" / "python"), "-I", "-c", script, str(home)],
+        check=True,
+        timeout=60,
+    )
+
+
 def _install(args: argparse.Namespace, argv: list[str] | None) -> int:
     args.runtime_root = args.runtime_root.expanduser().resolve()
     state = read_state(args.runtime_root)
@@ -681,6 +803,7 @@ def _install(args: argparse.Namespace, argv: list[str] | None) -> int:
     if state.get("selected_home") not in (None, str(home)):
         raise ValueError("This runtime already selects another athlete installation; preserve it.")
     release = prepare_release(args.manifest, args.runtime_root)
+    _validate_existing_installation(release, home)
     activate_release(release, args.runtime_root)
     if args.prepare_only:
         print(json.dumps({"runtime": "ready", "release": str(release), "onboarding": "not_run"}))

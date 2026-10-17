@@ -54,7 +54,8 @@ Poetry export plugin; the workflow provisions pinned Poetry 2.2.1 and
 3. Run **macOS release candidate** with that existing tag and publication disabled.
    Both native jobs build a locked binary wheelhouse, audit the wheel, install the
    actual bundle with a private standalone Python, and call digest/snapshot through
-   the packaged real stdio server. No developer dependencies are borrowed.
+   the packaged real stdio server. The same synthetic digest/snapshot probe must pass
+   before a candidate is marked ready or activated. No developer dependencies are borrowed.
 4. Review the native results, then run the workflow with publication enabled to
    publish that tested tag as a prerelease. It uploads architecture-specific runtime
    bundles, manifests, installer scripts and SHA-256 lists.
@@ -100,9 +101,12 @@ and `--no-schedule`. First-run data choices are terminal prompts in athlete onbo
 existing choices are preserved when setup resumes.
 
 Setup reads only newly written onboarding result metadata after each terminal run;
-a nonzero exit without a new result is incomplete with unknown import outcome. It
-checks the client status command after registration and preserves each selected
-client's state and required actions, including missing apps and failed registration.
+a nonzero exit without a new result is incomplete with unknown import outcome. A
+declined or configuration-only run without fresh coach-read evidence remains configured.
+Before changing the active runtime, the candidate also validates any existing athlete
+database through its read-only schema boundary. It neither migrates nor creates that
+database. Setup checks the client status command after registration and preserves each
+selected client's state and required actions, including missing apps and failed registration.
 
 Setup records actual stages in the program root's `install-state.json`, including
 versions, selected installation, client preparation and scheduler ownership. This
@@ -130,7 +134,9 @@ Scheduling defaults off. Setup shows the local daily time (06:00 by default), se
 installation, exact command and log destinations before asking to enable it. `--daily
 HH:MM` is an explicit opt-in; `--no-schedule` skips the offer. Leaving it off is a
 completed setup. Repeating setup leaves an already-owned enabled job in place;
-removing a job is a separate lifecycle operation.
+removing a job is a separate lifecycle operation. Skipping the offer rechecks the owned
+plist: a missing or changed file is reported with an action, while the original enabled
+choice and any changed file are preserved.
 
 One installation-specific user LaunchAgent invokes the absolute stable CLI launcher
 with `--home <athlete installation> daily`. It does not run immediately or continuously.

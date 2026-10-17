@@ -20,9 +20,10 @@ that got the system here. New work is tracked as GitHub issues.
 
 ## First run for a new athlete (macOS)
 
-For a tester on macOS 15+, use the
-[published v0.1.0 installer](docs/DISTRIBUTION.md#install-v010-from-terminal).
-It supplies its own Python runtime and guides account onboarding and assistant setup.
+For a tester on macOS 15+, check [release availability](docs/DISTRIBUTION.md) first.
+Independent review found retry and ownership bugs in the published v0.1.0 installer;
+the corrective source is version 0.1.1. Wait for its checked versioned package before
+new-athlete onboarding through the installer. See [review corrections](docs/REVIEW_RECOVERY.md).
 
 From a source checkout, run `poetry install` first, then run this in Terminal:
 
@@ -37,7 +38,7 @@ an interrupted import without resetting data. An existing installation is adopte
 place; configuration, plans, profile and reports are preserved.
 
 Use `--configure-only` to stop before login or `--to YYYY-MM-DD` to bound the initial
-import. The [versioned installer](docs/DISTRIBUTION.md#install-v010-from-terminal)
+import. The [versioned installer](docs/DISTRIBUTION.md)
 guides runtime installation, onboarding and selected assistant preparation together.
 See [the setup runbook](docs/OPERATIONS.md#guided-first-run-setup-macos)
 for recovery, missing-data semantics and the separate live acceptance checklist.

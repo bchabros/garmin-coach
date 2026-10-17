@@ -17,6 +17,16 @@ def supported_host(monkeypatch):
     monkeypatch.setattr(distribution.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(distribution.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(distribution.platform, "mac_ver", lambda: ("15.0", (), ""))
+    import subprocess
+
+    real_run = subprocess.run
+
+    def run(command, *args, **kwargs):
+        if command[:2] == ["/bin/launchctl", "print"]:
+            return subprocess.CompletedProcess(command, 113, stdout="", stderr="No such service")
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
 
 
 def test_bad_release_download_never_activates_or_changes_the_existing_runtime(tmp_path):
@@ -49,7 +59,9 @@ def test_bad_release_download_never_activates_or_changes_the_existing_runtime(tm
     assert not (root / "install-state.json").exists()
 
 
-def _release_fixture(tmp_path, *, broken_mcp=False, fake_cli=False, architecture="arm64"):
+def _release_fixture(
+    tmp_path, *, broken_mcp=False, fake_cli=False, fake_recovery=False, architecture="arm64"
+):
     """Build real app code offline; only test dependencies are borrowed, like test_package."""
     import io
     import sys
@@ -66,6 +78,8 @@ def _release_fixture(tmp_path, *, broken_mcp=False, fake_cli=False, architecture
                 relative = pathlib.Path("garmin_coach") / path.relative_to(source)
                 if fake_cli and relative.as_posix() == "garmin_coach/cli.py":
                     archive.writestr(str(relative), _FAKE_SETUP_CLI)
+                elif fake_recovery and relative.as_posix() == "garmin_coach/lifecycle.py":
+                    archive.writestr(str(relative), _FAKE_RECOVERY_LIFECYCLE)
                 elif broken_mcp and relative.as_posix() == "garmin_coach/mcp/server.py":
                     archive.writestr(str(relative), "print('not an MCP server')\n")
                 else:
@@ -102,7 +116,9 @@ def _release_fixture(tmp_path, *, broken_mcp=False, fake_cli=False, architecture
             "result = subprocess.run([sys.executable, *sys.argv[1:]], check=False)\n"
             "if result.returncode == 0 and sys.argv[1:4] == ['-I', '-m', 'venv']:\n"
             "    python = pathlib.Path(sys.argv[4]) / 'bin' / 'python'\n"
-            "    library = subprocess.check_output([str(python), '-I', '-c', \"import sysconfig; print(sysconfig.get_paths()['purelib'])\"], text=True).strip()\n"
+            "    library = subprocess.check_output([str(python), '-I"
+            "', '-c', \"import sysconfig; print(sysconfig.get_paths()"
+            "['purelib'])\"], text=True).strip()\n"
             f"    pathlib.Path(library, 'borrowed.pth').write_text({borrowed!r} + '\\n')\n"
             "raise SystemExit(result.returncode)\n"
         )
@@ -157,19 +173,31 @@ def test_private_runtime_is_prepared_activated_and_reused_from_an_unrelated_fold
     assert list(elsewhere.iterdir()) == []
 
 
-def test_opt_in_schedule_uses_explicit_installation_and_reuses_only_its_owned_job(tmp_path):
+def test_opt_in_schedule_uses_explicit_installation_and_reuses_only_its_owned_job(
+    tmp_path, monkeypatch
+):
     import plistlib
 
     home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
     home.mkdir()
+    import subprocess
+
+    native = _FakeLaunchctl()
+    native.interrupt = False
+    monkeypatch.setattr(subprocess, "run", native.readback)
     calls = []
+
+    def execute(command):
+        calls.append(command)
+        native.execute(command)
+
     preview = distribution.configure_schedule(
-        home, root, "06:30", enabled=False, agents_dir=agents, execute=calls.append
+        home, root, "06:30", enabled=False, agents_dir=agents, execute=execute
     )
     assert preview["status"] == "disabled"
     assert not agents.exists()
     result = distribution.configure_schedule(
-        home, root, "06:30", enabled=True, agents_dir=agents, execute=calls.append
+        home, root, "06:30", enabled=True, agents_dir=agents, execute=execute
     )
     job = pathlib.Path(result["path"])
     plist = plistlib.loads(job.read_bytes())
@@ -184,13 +212,13 @@ def test_opt_in_schedule_uses_explicit_installation_and_reuses_only_its_owned_jo
     assert "GARMIN_PASSWORD" not in job.read_text()
     assert result["status"] == "enabled"
     distribution.configure_schedule(
-        home, root, "06:30", enabled=True, agents_dir=agents, execute=calls.append
+        home, root, "06:30", enabled=True, agents_dir=agents, execute=execute
     )
     assert len(calls) == 1
     job.write_text("unrelated or edited job")
     with pytest.raises(ValueError, match="changed|owned"):
         distribution.configure_schedule(
-            home, root, "06:30", enabled=True, agents_dir=agents, execute=calls.append
+            home, root, "06:30", enabled=True, agents_dir=agents, execute=execute
         )
     assert job.read_text() == "unrelated or edited job"
 
@@ -782,7 +810,7 @@ failed = sys.argv[1] == 'fail'
 def run(command, *args, **kwargs):
     if command[0] == '/bin/launchctl':
         if command[1] == 'print':
-            return subprocess.CompletedProcess(command, 1)
+            return subprocess.CompletedProcess(command, 113, stdout='', stderr='No such service')
         if failed:
             raise subprocess.CalledProcessError(5, command)
         return subprocess.CompletedProcess(command, 0)
@@ -927,3 +955,375 @@ def test_pending_activation_can_roll_back_to_recorded_release_after_pointer_swit
     assert (root / "current").resolve() == previous
     assert distribution.read_state(root)["release_dir"] == str(previous)
     assert not distribution.read_state(root).get("pending_activation")
+
+
+_FAKE_RECOVERY_LIFECYCLE = """
+import json, os, pathlib, sys
+root = pathlib.Path(sys.argv[sys.argv.index('--runtime-root') + 1])
+home = pathlib.Path(sys.argv[sys.argv.index('--home') + 1])
+manifest = pathlib.Path(sys.argv[sys.argv.index('--manifest') + 1])
+assert manifest.parent.parent == root / 'releases'
+assert 'current' not in manifest.parts
+assert sys.argv[sys.argv.index('--home') + 2:][:2] == ['program', 'update']
+(root / 'recovery-command.json').write_text(json.dumps(sys.argv[1:]))
+state_path = root / 'install-state.json'
+state = json.loads(state_path.read_text())
+mode = os.environ.get('COACH_TEST_RECOVERY_RESULT', 'clear')
+if mode == 'clear':
+    state.pop('operation')
+    state_path.write_text(json.dumps(state))
+raise SystemExit(2 if mode == 'fail' else 0)
+"""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Private-runtime setup requires native macOS.")
+@pytest.mark.parametrize("mode", ["clear", "fail", "stuck"])
+def test_installer_recovers_old_update_journal_before_onboarding_or_client_changes(
+    tmp_path, mode, monkeypatch
+):
+    import os
+    import subprocess
+
+    monkeypatch.setattr(distribution.platform, "machine", lambda: os.uname().machine)
+    manifest = _release_fixture(
+        tmp_path, fake_cli=True, fake_recovery=True, architecture=os.uname().machine
+    )
+    root, athlete = tmp_path / "runtime with spaces", tmp_path / "athlete"
+    home = tmp_path / "system-home"
+    home.mkdir()
+    backup = athlete / "backups/program/prior/recovery.json"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("preserved prior recovery evidence")
+    release = distribution.prepare_release(manifest, root)
+    distribution.activate_release(release, root)
+    state = distribution.read_state(root)
+    operation = {"kind": "update", "phase": "activating", "backup": str(backup.parent)}
+    state.update(operation=operation, selected_home=str(athlete), selected_clients=["claude-code"])
+    distribution.write_state(root, state)
+    source = pathlib.Path(__file__).resolve().parents[1] / "src"
+    environment = {
+        **os.environ,
+        "HOME": str(home),
+        "PYTHONPATH": str(source),
+        "COACH_TEST_RECOVERY_RESULT": mode,
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "garmin_coach.distribution",
+            "install",
+            "--manifest",
+            str(manifest),
+            "--runtime-root",
+            str(root),
+            "--home",
+            str(athlete),
+            "--clients",
+            "codex",
+            "--no-schedule",
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert backup.read_text() == "preserved prior recovery evidence"
+    observed = distribution.read_state(root)
+    if mode == "clear":
+        assert result.returncode == 0, result.stderr
+        assert "operation" not in observed
+        assert (athlete / "data/garmin.db").exists()
+        assert observed["selected_clients"] == ["claude-code", "codex"]
+    else:
+        assert result.returncode == 2, result.stderr
+        assert observed["operation"] == operation
+        assert observed["selected_clients"] == ["claude-code"]
+        assert not (athlete / "data").exists()
+        assert str(release / "venv/bin/python") in result.stderr
+        assert str(release / "manifest.json") in result.stderr
+        assert "preserve" in result.stderr.lower()
+    invoked = json.loads((root / "recovery-command.json").read_text())
+    assert invoked == [
+        "--home",
+        str(athlete),
+        "program",
+        "update",
+        "--runtime-root",
+        str(root),
+        "--manifest",
+        str(release / "manifest.json"),
+    ]
+    assert not (home / "Library/LaunchAgents").exists()
+
+
+@pytest.mark.parametrize("mode", ["clear", "fail", "stuck"])
+def test_setup_requires_successful_candidate_recovery_before_writing_setup_choices(tmp_path, mode):
+    home, root = tmp_path / "athlete", tmp_path / "runtime with spaces"
+    home.mkdir()
+    candidate = root / "releases/corrective"
+    candidate.mkdir(parents=True)
+    (candidate / "ready.json").write_text("{}")
+    operation = {"kind": "update", "phase": "activating", "backup": str(home / "backup")}
+    distribution.write_state(
+        root,
+        {
+            "selected_home": str(home),
+            "selected_clients": ["claude-code"],
+            "release_dir": str(candidate),
+            "operation": operation,
+        },
+    )
+    invoked = []
+
+    def run(command):
+        invoked.append(command)
+        if "garmin_coach.lifecycle" in command:
+            if mode == "clear":
+                saved = distribution.read_state(root)
+                saved.pop("operation")
+                distribution.write_state(root, saved)
+            return 2 if mode == "fail" else 0
+        return 0
+
+    if mode == "clear":
+        result = distribution.finish_setup(home, root, clients="codex", execute=run)
+        assert result["onboarding"]["status"] == "configured"
+        assert "operation" not in distribution.read_state(root)
+        assert len(invoked) == 2
+    else:
+        with pytest.raises(ValueError, match="Preserve the journal and backups"):
+            distribution.finish_setup(home, root, clients="codex", execute=run)
+        saved = distribution.read_state(root)
+        assert saved["operation"] == operation
+        assert saved["selected_clients"] == ["claude-code"]
+        assert "stages" not in saved
+        assert len(invoked) == 1
+    assert invoked[0] == [
+        str(candidate / "venv/bin/python"),
+        "-I",
+        "-m",
+        "garmin_coach.lifecycle",
+        "--home",
+        str(home),
+        "program",
+        "update",
+        "--runtime-root",
+        str(root),
+        "--manifest",
+        str(candidate / "manifest.json"),
+    ]
+
+
+class _FakeLaunchctl:
+    def __init__(self):
+        self.loaded = None
+        self.bootstraps = 0
+        self.interrupt = True
+
+    def execute(self, command):
+        import plistlib
+        import subprocess
+
+        if self.loaded is not None:
+            raise subprocess.CalledProcessError(5, command, stderr="service already loaded")
+        self.bootstraps += 1
+        path = pathlib.Path(command[-1])
+        self.loaded = {**plistlib.loads(path.read_bytes()), "path": str(path)}
+        if self.interrupt:
+            self.interrupt = False
+            raise KeyboardInterrupt
+
+    def readback(self, command, **kwargs):
+        import os
+        import subprocess
+
+        assert command[:2] == ["/bin/launchctl", "print"]
+        if self.loaded is None:
+            return subprocess.CompletedProcess(command, 113, stdout="", stderr="No such service")
+        record = self.loaded
+        arguments = "\n".join("\t\t" + value for value in record["ProgramArguments"])
+        schedule = record["StartCalendarInterval"]
+        calendar = "\n".join(
+            f'                "{key}" => {value}' for key, value in schedule.items()
+        )
+        content = f"""gui/{os.getuid()}/{record["Label"]} = {{
+    active count = 0
+    path = {record["path"]}
+    type = LaunchAgent
+    state = not running
+    program = {record["ProgramArguments"][0]}
+    arguments = {{
+{arguments}
+    }}
+    working directory = {record["WorkingDirectory"]}
+    stdout path = {record["StandardOutPath"]}
+    stderr path = {record["StandardErrorPath"]}
+    event triggers = {{
+        {record["Label"]}.268435498 => {{
+            stream = com.apple.launchd.calendarinterval
+            descriptor = {{
+{calendar}
+            }}
+        }}
+    }}
+}}
+"""
+        return subprocess.CompletedProcess(command, 0, stdout=content, stderr="")
+
+
+def test_schedule_retry_recognizes_owned_job_loaded_before_interruption(tmp_path, monkeypatch):
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    monkeypatch.setattr(subprocess, "run", native.readback)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+    assert distribution.read_state(root)["scheduler"]["status"] == "prepared"
+    result = distribution.configure_schedule(
+        home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+    )
+    assert result["status"] == "enabled"
+    assert result["activation_status"] == "enabled"
+    assert result["actions"] == []
+    assert native.bootstraps == 1
+
+
+def test_owned_job_loaded_at_login_is_reconciled_without_second_bootstrap(tmp_path, monkeypatch):
+    import plistlib
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    monkeypatch.setattr(subprocess, "run", native.readback)
+
+    def failed(command):
+        raise subprocess.CalledProcessError(5, command, stderr="failed to connect")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=failed
+        )
+    record = distribution.read_state(root)["scheduler"]
+    job = pathlib.Path(record["path"])
+    before = job.read_bytes()
+    native.loaded = {**plistlib.loads(before), "path": str(job)}
+    result = distribution.configure_schedule(
+        home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+    )
+    assert result["status"] == "enabled"
+    assert native.bootstraps == 0
+    assert job.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "change", ["path", "arguments", "home", "program", "schedule", "extra_schedule"]
+)
+def test_conflicting_loaded_job_is_preserved_and_never_adopted(tmp_path, monkeypatch, change):
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    monkeypatch.setattr(subprocess, "run", native.readback)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+    job = pathlib.Path(distribution.read_state(root)["scheduler"]["path"])
+    before = job.read_bytes()
+    if change == "path":
+        native.loaded["path"] = str(tmp_path / "another.plist")
+    elif change == "home":
+        native.loaded["WorkingDirectory"] = str(tmp_path / "another-athlete")
+    elif change == "program":
+        native.loaded["ProgramArguments"][0] = str(tmp_path / "another-runtime/bin/garmin-coach")
+    elif change == "arguments":
+        native.loaded["ProgramArguments"][2] = str(tmp_path / "another-athlete")
+    elif change == "schedule":
+        native.loaded["StartCalendarInterval"]["Hour"] = 8
+    else:
+        native.loaded["StartCalendarInterval"]["Weekday"] = 1
+    with pytest.raises(ValueError, match="identity could not be verified"):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+    assert native.bootstraps == 1
+    assert native.loaded is not None
+    assert job.read_bytes() == before
+    assert distribution.read_state(root)["scheduler"]["activation_status"] == "failed"
+
+
+def test_enabled_receipt_with_unloaded_job_is_registered_again(tmp_path, monkeypatch):
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    native.interrupt = False
+    monkeypatch.setattr(subprocess, "run", native.readback)
+    distribution.configure_schedule(
+        home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+    )
+    native.loaded = None
+    result = distribution.configure_schedule(
+        home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+    )
+    assert result["status"] == "enabled"
+    assert native.bootstraps == 2
+
+
+@pytest.mark.parametrize("state", ["unknown_format", "permission_denied"])
+def test_unverified_loaded_readback_never_becomes_enabled(tmp_path, monkeypatch, state):
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    monkeypatch.setattr(subprocess, "run", native.readback)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+
+    def readback(command, **kwargs):
+        if state == "unknown_format":
+            return subprocess.CompletedProcess(
+                command, 0, stdout="Changed diagnostic format", stderr=""
+            )
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="Operation not permitted")
+
+    monkeypatch.setattr(subprocess, "run", readback)
+    with pytest.raises(ValueError, match="inspect|verified"):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+    assert distribution.read_state(root)["scheduler"]["status"] == "prepared"
+    assert native.bootstraps == 1
+    assert native.loaded is not None
+
+
+def test_first_enable_refuses_foreign_loaded_label_before_creating_a_job(tmp_path, monkeypatch):
+    import subprocess
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    native = _FakeLaunchctl()
+    preview = distribution.configure_schedule(home, root, "07:00", enabled=False, agents_dir=agents)
+    native.loaded = {
+        "Label": preview["label"],
+        "path": str(tmp_path / "foreign.plist"),
+        "ProgramArguments": ["/usr/bin/true"],
+        "WorkingDirectory": str(home),
+        "StandardOutPath": preview["stdout_path"],
+        "StandardErrorPath": preview["stderr_path"],
+        "StartCalendarInterval": {"Hour": 7, "Minute": 0},
+    }
+    monkeypatch.setattr(subprocess, "run", native.readback)
+    with pytest.raises(ValueError, match="identity could not be verified"):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=native.execute
+        )
+    assert not root.exists()
+    assert not agents.exists()
+    assert native.bootstraps == 0

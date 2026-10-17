@@ -474,7 +474,8 @@ def _log_window_days_without_activity(ctx: SyncContext) -> None:
     with_activity = {
         row[0]
         for row in ctx.conn.execute(
-            "SELECT DISTINCT date(start_local) FROM activities WHERE date(start_local) BETWEEN ? AND ?",
+            "SELECT DISTINCT date(start_local) FROM activities "
+            "WHERE date(start_local) BETWEEN ? AND ?",
             (first.isoformat(), ctx.end.isoformat()),
         )
     }

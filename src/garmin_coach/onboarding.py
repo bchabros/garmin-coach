@@ -489,7 +489,8 @@ def _describe_read(
         print(f"Recorded activities: {activities}.")
         headline = reading["headline"]
         print(
-            f"HRV baseline: {headline['hrv_baseline']}; HRV SD: {headline['hrv_sd']} (None = unknown)."
+            f"HRV baseline: {headline['hrv_baseline']}; "
+            f"HRV SD: {headline['hrv_sd']} (None = unknown)."
         )
     if missing:
         print(f"No observations for: {', '.join(missing)}; these are not zero measurements.")

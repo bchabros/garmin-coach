@@ -6,7 +6,6 @@ import json
 import hashlib
 import fcntl
 import pathlib
-import os
 import plistlib
 import sqlite3
 import subprocess
@@ -16,6 +15,54 @@ import shlex
 import pytest
 
 from garmin_coach.core import db
+
+
+class NativeClients:
+    """Fake only documented client inventory and mutation commands."""
+
+    def __init__(self):
+        self.plugins = {"codex": [], "claude": []}
+        self.marketplaces = {"codex": [], "claude": []}
+
+    def __call__(self, command, **kwargs):
+        host = pathlib.Path(command[0]).name
+        args = command[1:]
+        if host not in self.plugins:
+            return subprocess.CompletedProcess(command, 0, "")
+        if args[:3] == ["plugin", "marketplace", "list"]:
+            value = self.marketplaces[host]
+            return subprocess.CompletedProcess(
+                command, 0, json.dumps(value if host == "claude" else {"marketplaces": value})
+            )
+        if args[:2] == ["plugin", "list"]:
+            value = self.plugins[host]
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(value if host == "claude" else {"installed": value, "available": []}),
+            )
+        if args[:3] == ["plugin", "marketplace", "add"]:
+            root = pathlib.Path(args[3])
+            name = "garmin-coach-" + root.name
+            self.marketplaces[host] = [
+                {"name": name, "source": "directory", "path": str(root), "root": str(root)}
+            ]
+        elif args[:2] in (["plugin", "add"], ["plugin", "install"], ["plugin", "update"]):
+            self.plugins[host] = [
+                {"id": args[2], "pluginId": args[2], "scope": "user", "enabled": True}
+            ]
+        elif args[:2] in (["plugin", "remove"], ["plugin", "uninstall"]):
+            self.plugins[host] = []
+        elif args[:3] == ["plugin", "marketplace", "remove"]:
+            self.marketplaces[host] = []
+        else:
+            raise AssertionError(f"Unexpected client command: {command}")
+        return subprocess.CompletedProcess(command, 0, "{}")
+
+
+@pytest.fixture
+def native_clients():
+    return NativeClients()
 
 
 def make_home(path: pathlib.Path) -> pathlib.Path:
@@ -81,6 +128,8 @@ def test_explicit_live_auth_hides_transport_output_and_does_not_sync(tmp_path, m
     from garmin_coach import lifecycle
 
     home = make_home(tmp_path / "athlete")
+    (home / ".garminconnect").mkdir()
+    (home / ".garminconnect/tokens.json").write_text("fake saved tokens")
     calls = []
 
     def login_probe(command, **kwargs):
@@ -114,50 +163,43 @@ def test_explicit_live_auth_hides_transport_output_and_does_not_sync(tmp_path, m
     assert "sync(" not in calls[0][0][-2]
 
 
-def test_live_auth_ignores_a_shadow_package_in_the_starting_folder(tmp_path, monkeypatch, capsys):
-    from garmin_coach import lifecycle
+def test_doctor_probes_real_stdio_without_importing_a_shadow_package(tmp_path, monkeypatch, capsys):
+    from garmin_coach import distribution, lifecycle
 
     home = make_home(tmp_path / "athlete")
+    root, old, _ = managed_program(tmp_path)
+    python = old / "venv/bin/python"
+    python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n')
+    inventory_path = old / "inventory.json"
+    inventory = json.loads(inventory_path.read_text())
+    inventory["entries"]["venv/bin/python"]["sha256"] = hashlib.sha256(
+        python.read_bytes()
+    ).hexdigest()
+    inventory_path.write_text(json.dumps(inventory))
+    digest = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+    ready = json.loads((old / "ready.json").read_text())
+    ready["inventory_sha256"] = digest
+    (old / "ready.json").write_text(json.dumps(ready))
+    state = distribution.read_state(root)
+    state["managed_release_inventories"][str(old)] = digest
+    distribution.write_state(root, state)
     start = tmp_path / "unrelated"
     package = start / "garmin_coach"
-    for folder in (package, package / "core", package / "etl"):
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / "__init__.py").write_text("")
-    (package / "core" / "installation.py").write_text(
-        "class Settings:\n    def model_copy(self, update): return self\n"
-        "def select(home): return home\ndef load(home): return Settings()\n"
-    )
+    package.mkdir(parents=True)
     marker = tmp_path / "shadow-executed"
-    (package / "etl" / "client.py").write_text(
-        "from pathlib import Path\ndef login_api(settings):\n"
-        f"    Path({str(marker)!r}).write_text('shadow imported')\n"
+    (package / "__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('shadow imported')\n"
     )
     monkeypatch.chdir(start)
-    real_run = subprocess.run
+    monkeypatch.setenv("PYTHONPATH", str(start))
+    before = (home / "data/garmin.db").read_bytes()
 
-    def auth_process(command, **kwargs):
-        # The real installed seam refuses this child-only conflict before login.
-        # The shadow package ignores it, which made the old check falsely succeed.
-        kwargs["env"] = dict(os.environ, GARMIN_COACH_HOME=str(tmp_path / "different-athlete"))
-        return real_run(command, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", auth_process)
-    assert (
-        lifecycle.main(
-            [
-                "--home",
-                str(home),
-                "doctor",
-                "--runtime-root",
-                str(tmp_path / "runtime"),
-                "--live-auth",
-            ]
-        )
-        == 1
-    )
+    assert lifecycle.main(["--home", str(home), "doctor", "--runtime-root", str(root)]) == 0
 
     result = json.loads(capsys.readouterr().out)
-    assert result["checks"]["login"]["state"] == "unverified"
+    assert result["checks"]["runtime"]["state"] == "ready"
+    assert result["checks"]["protocol"]["state"] == "ready"
+    assert (home / "data/garmin.db").read_bytes() == before
     assert not marker.exists()
 
 
@@ -363,7 +405,7 @@ def test_program_removal_previews_then_removes_only_owned_resources(tmp_path, ca
 
 @pytest.mark.parametrize("setting", ["DB_PATH", "PLANS_DIR", "GARMINTOKENS", "LOG_PATH"])
 def test_removal_refuses_external_personal_paths_inside_a_release_before_native_changes(
-    tmp_path, monkeypatch, capsys, setting
+    tmp_path, monkeypatch, capsys, setting, native_clients
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -374,7 +416,7 @@ def test_removal_refuses_external_personal_paths_inside_a_release_before_native_
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda command, **kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0),
+        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs),
     )
     clients.configure(home, root, ["codex", "claude-code"])
     calls.clear()
@@ -441,7 +483,7 @@ def test_removal_refuses_modified_owned_launcher_before_deleting_release(tmp_pat
 
 @pytest.mark.parametrize("change", ["added_note", "edited_program"])
 def test_removal_preserves_unknown_or_edited_release_contents_before_native_changes(
-    tmp_path, monkeypatch, capsys, change
+    tmp_path, monkeypatch, capsys, change, native_clients
 ):
     from garmin_coach import clients, lifecycle
 
@@ -452,7 +494,7 @@ def test_removal_preserves_unknown_or_edited_release_contents_before_native_chan
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda command, **kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0),
+        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs),
     )
     clients.configure(home, root, ["codex", "claude-code"])
     calls.clear()
@@ -496,7 +538,9 @@ def test_removal_resolves_fixed_personal_directories_before_deleting_a_release(
     assert old.exists()
 
 
-def test_one_client_removal_retains_other_host_and_program(tmp_path, monkeypatch, capsys):
+def test_one_client_removal_retains_other_host_and_program(
+    tmp_path, monkeypatch, capsys, native_clients
+):
     from garmin_coach import clients, lifecycle
 
     home = make_home(tmp_path / "athlete")
@@ -506,7 +550,7 @@ def test_one_client_removal_retains_other_host_and_program(tmp_path, monkeypatch
 
     def native(command, **kwargs):
         calls.append(command)
-        return subprocess.CompletedProcess(command, 0)
+        return native_clients(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", native)
     clients.configure(home, root, ["work", "codex", "claude-code"])
@@ -627,7 +671,7 @@ def test_doctor_reports_versions_integrations_and_interrupted_operation(
 
 
 def test_doctor_preserves_each_clients_interrupted_registration_state(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, native_clients
 ):
     from garmin_coach import clients, lifecycle
 
@@ -635,7 +679,7 @@ def test_doctor_preserves_each_clients_interrupted_registration_state(
     root, _, _ = managed_program(tmp_path)
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
     monkeypatch.setattr(
-        subprocess, "run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0)
+        subprocess, "run", lambda command, **kwargs: native_clients(command, **kwargs)
     )
     clients.configure(home, root, ["work", "codex", "claude-code"])
     receipt = clients.integration_root(home, root) / "registration.json"
@@ -656,7 +700,7 @@ def test_doctor_preserves_each_clients_interrupted_registration_state(
 
 @pytest.mark.parametrize("rollback_failure", [False, True])
 def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state(
-    tmp_path, monkeypatch, capsys, rollback_failure
+    tmp_path, monkeypatch, capsys, rollback_failure, native_clients
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -666,16 +710,32 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
     monkeypatch.setattr(distribution, "prepare_release", lambda manifest, location: new)
     configure_attempts = []
+    refresh_attempts = []
+    phase = "initial"
+    import importlib.metadata
+
+    package_version = importlib.metadata.version
 
     def native(command, **kwargs):
+        nonlocal phase
         calls.append(command)
         if "garmin_coach.clients" in command:
             configure_attempts.append(command[0])
-            if len(configure_attempts) == 1 or rollback_failure:
-                raise subprocess.CalledProcessError(1, command, stderr="secret-value")
-            result = clients.configure(home, root, ["codex", "claude-code"])
+            phase = "candidate"
+            with monkeypatch.context() as candidate:
+                candidate.setattr(
+                    importlib.metadata,
+                    "version",
+                    lambda name: "0.1.1" if name == "garmin-coach" else package_version(name),
+                )
+                result = clients.configure(home, root, ["codex", "claude-code"])
+            phase = "rollback"
             return subprocess.CompletedProcess(command, 0, json.dumps(result))
-        return subprocess.CompletedProcess(command, 0)
+        if pathlib.Path(command[0]).name == "claude" and command[1:3] == ["plugin", "update"]:
+            refresh_attempts.append(phase)
+            if phase == "candidate" or rollback_failure:
+                return subprocess.CompletedProcess(command, 1, "secret-value", "private output")
+        return native_clients(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", native)
     clients.configure(home, root, ["codex", "claude-code"])
@@ -701,7 +761,8 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
     result = json.loads(output.out)
     assert result["state"] == ("recovery_required" if rollback_failure else "rolled_back")
     assert (root / "current").resolve() == old
-    assert len(configure_attempts) == 2
+    assert len(configure_attempts) == 1
+    assert refresh_attempts == ["candidate", "rollback"]
     if rollback_failure:
         assert distribution.read_state(root)["operation"]["phase"] == "recovery_required"
     else:
@@ -712,8 +773,8 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
 
 
 @pytest.mark.parametrize("incomplete", ["client_missing", "preparing"])
-def test_incomplete_client_update_rolls_back_even_when_the_client_cli_exits_zero(
-    tmp_path, monkeypatch, capsys, incomplete
+def test_missing_client_is_accepted_but_preparing_rolls_back_after_cli_success(
+    tmp_path, monkeypatch, capsys, incomplete, native_clients
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -736,28 +797,26 @@ def test_incomplete_client_update_rolls_back_even_when_the_client_cli_exits_zero
             else:
                 result = clients.configure(home, root, ["codex", "claude-code"])
             return subprocess.CompletedProcess(command, 0, json.dumps(result))
-        return subprocess.CompletedProcess(command, 0)
+        return native_clients(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", native)
     clients.configure(home, root, ["codex", "claude-code"])
-    assert (
-        lifecycle.main(
-            [
-                "--home",
-                str(home),
-                "program",
-                "update",
-                "--runtime-root",
-                str(root),
-                "--manifest",
-                str(new / "manifest.json"),
-            ]
-        )
-        == 2
-    )
+    assert lifecycle.main(
+        [
+            "--home",
+            str(home),
+            "program",
+            "update",
+            "--runtime-root",
+            str(root),
+            "--manifest",
+            str(new / "manifest.json"),
+        ]
+    ) == (0 if incomplete == "client_missing" else 2)
 
-    assert json.loads(capsys.readouterr().out)["state"] == "rolled_back"
-    assert (root / "current").resolve() == old
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == ("updated" if incomplete == "client_missing" else "rolled_back")
+    assert (root / "current").resolve() == (new if incomplete == "client_missing" else old)
     assert clients.status(home, root)["selected_clients"] == ["codex", "claude-code"]
 
 
@@ -791,7 +850,7 @@ def test_repeating_active_release_is_verified_without_rewriting_athlete_state(
     )
 
     assert json.loads(capsys.readouterr().out)["state"] == "unchanged"
-    assert verified == [old / "manifest.json"]
+    assert verified == []
     assert (root / "install-state.json").read_bytes() == state
     assert not (home / "backups").exists()
 

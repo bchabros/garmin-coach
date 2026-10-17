@@ -28,7 +28,7 @@ def _schema_sql() -> str:
 
 
 def validate_schema(conn: sqlite3.Connection) -> None:
-    """Require the packaged tables, views, columns and primary keys without writing.
+    """Require packaged schema objects and policy keys without changing athlete values.
 
     Args:
         conn: Connection to the installation being checked, which may be read-only.
@@ -55,6 +55,23 @@ def validate_schema(conn: sqlite3.Connection) -> None:
             }
             if installed_key != required_key:
                 raise sqlite3.DatabaseError(f"Incompatible schema: primary key of {name} differs.")
+        _validate_schema_definitions(conn, expected)
+        for table, key in (("coach_thresholds", "key"), ("exercise_pattern", "subcategory")):
+            required_keys = {row[0] for row in expected.execute(f'SELECT "{key}" FROM "{table}"')}
+            installed_keys = {row[0] for row in conn.execute(f'SELECT "{key}" FROM "{table}"')}
+            if not required_keys <= installed_keys:
+                raise sqlite3.DatabaseError(f"Incompatible schema: missing policy keys in {table}.")
+
+
+def _validate_schema_definitions(conn: sqlite3.Connection, expected: sqlite3.Connection) -> None:
+    query = "SELECT name, sql FROM sqlite_schema WHERE type IN ('index', 'trigger', 'view')"
+    installed = dict(conn.execute(query))
+    for name, definition in expected.execute(query):
+        actual = installed.get(name)
+        if name not in installed or (
+            definition is not None and (actual is None or actual.split() != definition.split())
+        ):
+            raise sqlite3.DatabaseError(f"Incompatible schema: definition of {name} differs.")
 
 
 def _schema_columns(conn: sqlite3.Connection, name: str) -> dict[str, tuple[str, int, int]]:

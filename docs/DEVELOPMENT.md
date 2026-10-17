@@ -55,7 +55,7 @@ the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
 `thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
 (`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
 `publish.py` for account policy and the only Garmin write) - `mcp/`
-(`server.py`/`tools.py`)
+(`server.py`/`tools.py`/`probe.py` for bounded local stdio diagnosis)
 - top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `project.py`
   (guarded local coach launch, configuration, diagnostics and synthetic fixtures), `plan_changes.py`
   (the complete plan import outcome shared by CLI, MCP and the nightly run), and
@@ -76,7 +76,9 @@ generated packages on temporary installations with fake client executables, and
 verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
 check documented in `docs/CLIENT_SETUP.md`.
 
-`distribution.py` owns verified versioned runtime preparation, stable launchers and
+`distribution.py` is standard-library-only: release tooling ships it as the standalone
+bootstrap before application dependencies exist. It owns verified versioned runtime
+preparation, stable launchers and
 opt-in scheduling. `lifecycle.py` consumes those ownership receipts for diagnosis,
 backup, staged update/rollback and removal. Durable database reads and SQLite backup
 remain in `core/installation.py`; maintenance refuses incompatible schemas and
@@ -87,7 +89,8 @@ recovery and the separate native/client acceptance checks.
 entering `project.py`, including from GUI clients or an unrelated working directory.
 The guarded launch rejects conflicting database/plan environment paths and uses
 `core.db.validate_schema()` to compare the existing installation's tables, views,
-columns and primary keys with the packaged schema in memory. It never migrates
+columns, primary keys, index/view/trigger definitions and required policy keys with
+the packaged schema in memory; installed policy values remain authoritative. It never migrates
 the installation; recovery uses the explicit offline `garmin-coach features` command.
 
 `plan_changes.import_plans()` owns the plan import outcome and its consequences:
@@ -120,6 +123,17 @@ ones sparingly:
   adopted data and file preservation, terminal login/MFA, failures and resumption. The
   shared `conn` fixture represents an existing athlete with an explicitly agreed weekly
   template; fresh-install tests bootstrap their own unseeded databases.
+- Test client generation through its public CLI on temporary HOME and athlete/runtime
+  roots (`tests/test_clients.py`), using fake executables with realistic native inventory
+  JSON and interruption points. A copied plugin cache must bind its explicit installation
+  through real stdio; client acceptance remains manual.
+- Test bootstrap through its standard-library API and rendered installer shell
+  (`tests/test_distribution.py`): checksum failures, interrupted sibling builds,
+  activation journals, synthetic first setup, native command failures and resumable jobs.
+- Test maintenance through public CLI commands (`tests/test_lifecycle*.py`): verified
+  ownership, backups including WAL, interrupted updates, rollback, non-mutating identical
+  updates and preview/confirmed removal. Native subprocesses are faked; the doctor stdio
+  test reads a temporary database through a real isolated server without login.
 - Test persistence through `core/db.py` helpers and observable SQLite state.
 - Test project setup through `scripts/coach_project.py` and real stdio MCP on
   temporary installations (`tests/test_coach_project.py`): selected configuration,
@@ -132,7 +146,7 @@ ones sparingly:
   (`tests/test_installation_server.py`), and the built package installed into a fresh
   environment with borrowed dependencies (`tests/test_package.py`, skipped without
   Poetry). An autouse guard in `tests/conftest.py` scrubs the selection and path
-  variables and starts every test in an empty folder, so no test can fall back to the
+  variables, isolates HOME/XDG directories and starts every test in an empty folder, so no test can fall back to the
   owner's checkout; a test that needs settings selects `athlete_home`.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
 - Test the complete workout push through `workouts.push.push_for_date` with real
@@ -186,6 +200,9 @@ ones sparingly:
 
 ## Gotchas (developer, learned the hard way)
 
+Operational gotchas (rate limits, backfill window, idempotency) live in
+`docs/OPERATIONS.md`. These are implementation gotchas:
+
 ### First-run seed audit (issue #84)
 
 The packaged schema and `coach.thresholds.DEFAULTS` were checked separately from athlete
@@ -219,8 +236,7 @@ not another athlete's observed distribution; issue #84 does not claim general va
 or retune them. This distinguishes provenance from personal-data leakage without silently
 changing the established training model.
 
-Operational gotchas (rate limits, backfill window, idempotency) live in
-`docs/OPERATIONS.md`. These are implementation gotchas:
+### Implementation gotchas
 
 - **garminconnect 0.3.6 token API:** persist tokens by calling `api.login(tokenstore)`
   -- it auto-dumps via `api.client.dump(path)`. There is **no** `api.garth` attribute.

@@ -5,7 +5,15 @@ lives in `~/Library/Application Support/Garmin Coach`; the athlete installation 
 to `~/GarminCoach`. Settings, the database, saved Garmin login, plans, reports and the
 profile stay in the athlete installation when the program changes.
 
-## Install v0.1.0 from Terminal
+## Published v0.1.0 reference
+
+Independent review found confirmed retry and ownership bugs in v0.1.0. Corrections
+are tracked in [#97](https://github.com/bchabros/garmin-coach/issues/97) and described in
+[REVIEW_RECOVERY.md](REVIEW_RECOVERY.md). The immutable v0.1.0 assets below do not
+contain them. Wait for a corrected versioned candidate before new-athlete onboarding;
+this command is retained as the published release record. The corrective source
+package is version 0.1.1; its installer URL will be documented after native checks
+and publication, without changing the existing v0.1.0 tag.
 
 The [v0.1.0 prerelease](https://github.com/bchabros/garmin-coach/releases/tag/v0.1.0)
 is available for macOS 15+ on Apple Silicon and Intel. Install and sign into your
@@ -96,7 +104,8 @@ Poetry export plugin; the workflow provisions pinned Poetry 2.2.1 and
 5. Verify the uploaded installer asset exists. Copy its exact versioned download URL
    into the acceptance record and user instructions, with the required architecture.
    The command consists of downloading that **existing** `install-arm64.sh` or
-   `install-x86_64.sh` asset with curl and passing it to `/bin/sh -s --` in Terminal.
+   `install-x86_64.sh` asset with curl to a local file and running `/bin/sh "$coach_installer"` in Terminal,
+   using the same command form shown above.
    Do not use a moving branch or latest release URL as if it were an immutable version.
 
 The installer verifies Python, bundle and manifest hashes before execution. Runtime

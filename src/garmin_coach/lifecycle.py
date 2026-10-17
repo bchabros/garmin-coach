@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
 import fcntl
 import hashlib
@@ -12,6 +13,7 @@ import os
 import pathlib
 import plistlib
 import shutil
+import shlex
 import sqlite3
 import subprocess
 import sys
@@ -26,10 +28,14 @@ from .core import installation
 from .core.config import Settings
 
 
+class LifecycleError(ValueError):
+    """A maintenance refusal whose message is safe to show without transport output."""
+
+
 def _root(value: str | None) -> pathlib.Path:
-    return (
-        pathlib.Path(value or "~/Library/Application Support/Garmin Coach").expanduser().resolve()
-    )
+    from .distribution import default_runtime_root
+
+    return pathlib.Path(value).expanduser().resolve() if value else default_runtime_root().resolve()
 
 
 def _check(state: str, recovery: str = "") -> dict[str, str]:
@@ -71,17 +77,13 @@ def _database(settings: Settings) -> dict[str, str]:
 
 
 def _read_state(root: pathlib.Path) -> dict[str, Any]:
-    path = root / "install-state.json"
-    if not path.exists():
-        return {}
+    from . import distribution
+
     try:
-        state = json.loads(path.read_text())
-        if not isinstance(state, dict) or state.get("schema_version") != 1:
-            raise ValueError
-        return state
+        return distribution.read_state(root)
     except (OSError, ValueError):
-        raise ValueError(
-            "Program receipt unreadable; recover using the pinned bootstrap command."
+        raise LifecycleError(
+            "Program receipt unreadable; preserve it and recover using the pinned bootstrap."
         ) from None
 
 
@@ -111,10 +113,14 @@ def _runtime(root: pathlib.Path, state: dict[str, Any]) -> dict[str, str]:
         return _check(
             "changed", "Preserve unknown or edited runtime files before repair or removal."
         )
+    return _runtime_import(root)
+
+
+def _runtime_import(root: pathlib.Path) -> dict[str, str]:
     try:
         subprocess.run(
             [
-                str(root / "current" / "venv" / "bin" / "python"),
+                str(root / "current/venv/bin/python"),
                 "-I",
                 "-c",
                 "import garmin_coach.cli, garmin_coach.mcp.server",
@@ -126,30 +132,48 @@ def _runtime(root: pathlib.Path, state: dict[str, Any]) -> dict[str, str]:
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
+        return _check("unusable", "Rerun the pinned bootstrap to repair the managed runtime.")
+    return _check("ready")
+
+
+def _protocol_check(
+    home: pathlib.Path, root: pathlib.Path, runtime: dict[str, str]
+) -> dict[str, str]:
+    if runtime["state"] != "ready":
+        return _check("not_run", "Repair the verified runtime before a stdio probe.")
+    from .mcp import probe
+
+    try:
+        asyncio.run(probe.check(root / "current" / "venv" / "bin" / "python", home))
+    except Exception:
         return _check(
-            "unusable", "Rerun the pinned bootstrap command to repair the managed runtime."
+            "failed", "Run the selected installation's MCP server and inspect local setup."
         )
     return _check("ready")
+
+
+def _skill_check() -> dict[str, str]:
+    folder = pathlib.Path(__file__).resolve().parents[2] / "skills" / "coach"
+    required = {
+        "SKILL.md",
+        "references/report.md",
+        "references/planning.md",
+        "references/authoring.md",
+    }
+    packaged = {str(name) for name in importlib.metadata.files("garmin-coach") or []}
+    available = all((folder / name).is_file() for name in required) or all(
+        f"skills/coach/{name}" in packaged for name in required
+    )
+    return _check("ready" if available else "missing", "Reinstall complete coach skill assets.")
 
 
 def _integration_checks(
     home: pathlib.Path, root: pathlib.Path
 ) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
     if not (clients.integration_root(home, root) / "registration.json").is_file():
-        folder = pathlib.Path(__file__).resolve().parents[2] / "skills" / "coach"
-        required = {
-            "SKILL.md",
-            "references/report.md",
-            "references/planning.md",
-            "references/authoring.md",
-        }
-        packaged = {str(name) for name in importlib.metadata.files("garmin-coach") or []}
-        available = all((folder / name).is_file() for name in required) or all(
-            f"skills/coach/{name}" in packaged for name in required
-        )
         return (
             _check("not_selected", "Run clients configure to select an assistant."),
-            _check("ready" if available else "missing", "Reinstall complete coach skill assets."),
+            _skill_check(),
             {},
         )
 
@@ -158,6 +182,19 @@ def _integration_checks(
     except (OSError, ValueError):
         return _check("changed", "Repair the integration receipt."), _check("unverified"), {}
     observations = _client_observations(status)
+    if status["integrity"] == "preparing":
+        return (
+            _check("preparing", "Retry clients configure to finish the owned generation."),
+            _check("preparing"),
+            observations,
+        )
+    ownership = status.get("ownership", {})
+    if ownership.get("state") in {"conflict", "unverified"}:
+        return (
+            _check(ownership["state"], " ".join(ownership.get("actions", []))),
+            _check("unverified"),
+            observations,
+        )
     if (
         status["integrity"] == "changed"
         or not status.get("version_matches", True)
@@ -213,6 +250,11 @@ def _client_observations(status: dict[str, Any]) -> dict[str, Any]:
 def _schedule_check(
     home: pathlib.Path, root: pathlib.Path, state: dict[str, Any]
 ) -> dict[str, str]:
+    legacy = pathlib.Path.home() / "Library/LaunchAgents/com.garmincoach.daily.plist"
+    if legacy.exists():
+        return _check(
+            "legacy_conflict", "Inspect the legacy daily job before enabling another schedule."
+        )
     if not state.get("scheduler"):
         return _check(
             "not_scheduled", "Existing manually configured jobs are not adopted automatically."
@@ -252,10 +294,17 @@ def diagnose(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
         Redacted readiness checks and manual acceptance status.
     """
     settings = installation.load(home)
-    state = _read_state(root)
+    receipt_error = None
+    try:
+        state = _read_state(root)
+    except LifecycleError as exc:
+        state, receipt_error = {}, str(exc)
     tokens = pathlib.Path(settings.garmintokens)
     saved = tokens.is_dir() and any(tokens.iterdir())
     client_check, skill_check, observations = _integration_checks(home, root)
+    runtime = (
+        _check("receipt_unreadable", receipt_error) if receipt_error else _runtime(root, state)
+    )
     return {
         "installation": str(home),
         "runtime_root": str(root),
@@ -267,7 +316,8 @@ def diagnose(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
             "source_commit": state.get("source_commit", "unmanaged"),
         },
         "checks": {
-            "runtime": _runtime(root, state),
+            "runtime": runtime,
+            "protocol": _protocol_check(home, root, runtime),
             "database": _database(settings),
             "storage": _storage_check(home, root, settings),
             "login": _check(
@@ -308,6 +358,9 @@ def _doctor(args: argparse.Namespace) -> int:
 
 
 def _live_auth(home: pathlib.Path) -> dict[str, str]:
+    tokens = pathlib.Path(installation.load(home).garmintokens)
+    if not tokens.is_dir() or not any(tokens.iterdir()):
+        return _check("missing", "Run setup in a terminal to save this installation's login.")
     script = (
         "import sys; from garmin_coach.core import installation; "
         "from garmin_coach.etl.client import login_api; "
@@ -339,7 +392,7 @@ def _backup(home: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
     installation.require_database(settings)
     parent = home / "backups" / "program"
     if not parent.resolve().is_relative_to(home):
-        raise ValueError("Recovery backup must stay inside the athlete installation.")
+        raise LifecycleError("Recovery backup must stay inside the athlete installation.")
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = parent / f"{stamp}-{uuid.uuid4().hex[:8]}"
@@ -370,14 +423,14 @@ def _program_backup(args: argparse.Namespace) -> int:
 
 def _managed(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
     if _storage_check(home, root, installation.load(home))["state"] != "ready":
-        raise ValueError("Personal records overlap the program root; move them before maintenance.")
+        raise LifecycleError(
+            "Personal records overlap the program root; move them before maintenance."
+        )
     state = _read_state(root)
     if state.get("managed_by") != "garmin-coach":
-        raise ValueError("Unmanaged program; retain the source checkout workflow.")
+        raise LifecycleError("Unmanaged program; retain the source checkout workflow.")
     if state.get("selected_home") and pathlib.Path(state["selected_home"]).resolve() != home:
-        raise ValueError("The managed runtime belongs to a different athlete installation.")
-    if state.get("operation"):
-        raise ValueError("An interrupted operation needs recovery before another update.")
+        raise LifecycleError("The managed runtime belongs to a different athlete installation.")
     return state
 
 
@@ -438,15 +491,16 @@ def _require_client_preparation(output: str, selected: list[str]) -> None:
     try:
         result = json.loads(output)
     except (ValueError, TypeError):
-        raise ValueError("Client registration returned an unreadable result.") from None
+        raise LifecycleError("Client registration returned an unreadable result.") from None
     details = result.get("clients") if isinstance(result, dict) else None
     if not isinstance(details, dict) or set(details) != set(selected):
-        raise ValueError("Client registration did not report every selected assistant.")
+        raise LifecycleError("Client registration did not report every selected assistant.")
     if any(
-        not isinstance(value, dict) or value.get("state") not in {"ready", "needs_activation"}
+        not isinstance(value, dict)
+        or value.get("state") not in {"ready", "needs_activation", "client_missing"}
         for value in details.values()
     ):
-        raise ValueError("Client registration is incomplete; restore the prior integration.")
+        raise LifecycleError("Client registration is incomplete; restore the prior integration.")
 
 
 def _restore(
@@ -458,24 +512,24 @@ def _restore(
 ) -> None:
     from . import distribution
 
-    pointer = root / ".rollback-next"
-    pointer.unlink(missing_ok=True)
-    pointer.symlink_to(previous.relative_to(root))
-    os.replace(pointer, root / "current")
-    if (backup / "launchers").exists():
-        shutil.copytree(backup / "launchers", root / "bin", dirs_exist_ok=True)
-    integration = clients.integration_root(home, root)
+    distribution.activate_release(previous, root)
     if (backup / "integration").exists():
-        _remove_clients(home, root, None, True)
-        if integration.exists():
-            shutil.rmtree(integration)
-        shutil.copytree(backup / "integration", integration)
-        receipt = integration / "registration.json"
-        record = json.loads(receipt.read_text())
-        record["registrations"] = {}
-        receipt.write_text(json.dumps(record, indent=2) + "\n")
-    distribution.write_state(root, state)
-    _refresh_clients(home, root, previous)
+        restored = clients.restore(home, root, backup / "integration")
+        _require_client_preparation(json.dumps(restored), restored["selected_clients"])
+    _restore_program_receipt(root, state)
+
+
+def _restore_program_receipt(root: pathlib.Path, prior: dict[str, Any]) -> None:
+    from . import distribution
+
+    current = distribution.read_state(root)
+    restored = dict(current, **prior)
+    for key in ("builds", "managed_releases", "managed_release_inventories"):
+        restored[key] = {**current.get(key, {}), **prior.get(key, {})}
+    restored["owned_launchers"] = current.get("owned_launchers", prior.get("owned_launchers", {}))
+    restored.pop("operation", None)
+    restored.pop("pending_activation", None)
+    distribution.write_state(root, restored)
 
 
 def _prepare_update(
@@ -487,9 +541,24 @@ def _prepare_update(
 ) -> pathlib.Path:
     from . import distribution
 
-    journal = dict(state, operation={"kind": "update", "phase": "preparing", "backup": str(backup)})
+    journal = dict(
+        state,
+        operation={
+            "schema_version": 1,
+            "kind": "update",
+            "phase": "preparing",
+            "backup": str(backup),
+            "home": str(home),
+            "previous": str((root / "current").resolve()),
+            "manifest": str(manifest.resolve()),
+        },
+    )
     distribution.write_state(root, journal)
     candidate = distribution.prepare_release(manifest, root)
+    journal = distribution.read_state(root)
+    journal["operation"]["candidate"] = str(candidate)
+    journal["operation"]["phase"] = "validating_candidate"
+    distribution.write_state(root, journal)
     _read_candidate(candidate, home)
     return candidate
 
@@ -499,13 +568,16 @@ def _activate_update(home: pathlib.Path, root: pathlib.Path, candidate: pathlib.
 
     receipt = clients.integration_root(home, root) / "registration.json"
     selected = json.loads(receipt.read_text())["selected_clients"] if receipt.exists() else []
-    if selected:
-        _remove_clients(home, root, None, True)
     journal = distribution.read_state(root)
     journal["operation"]["phase"] = "activating"
     distribution.write_state(root, journal)
     distribution.activate_release(candidate, root)
+    journal = distribution.read_state(root)
+    journal["operation"]["phase"] = "validating"
+    distribution.write_state(root, journal)
     _read_candidate(root / "current", home)
+    journal["operation"]["phase"] = "configuring_clients"
+    distribution.write_state(root, journal)
     _refresh_clients(home, root, root / "current", selected)
     ready = distribution.read_state(root)
     ready.pop("operation", None)
@@ -526,32 +598,75 @@ def _recover_update(
         if touched:
             _restore(root, home, previous, state, backup)
         else:
-            distribution.write_state(root, state)
+            _restore_program_receipt(root, state)
         return True
     except (OSError, ValueError, subprocess.SubprocessError):
+        current = distribution.read_state(root)
         distribution.write_state(
             root,
             dict(
-                state,
-                operation={"kind": "update", "phase": "recovery_required", "backup": str(backup)},
+                current,
+                operation={
+                    **current.get("operation", {}),
+                    "kind": "update",
+                    "phase": "recovery_required",
+                    "backup": str(backup),
+                    "home": str(home),
+                    "previous": str(previous),
+                    "candidate": current.get("operation", {}).get("candidate"),
+                },
             ),
         )
         return False
 
 
-def _program_update(args: argparse.Namespace) -> int:
+def _recover_interrupted(
+    home: pathlib.Path, root: pathlib.Path, state: dict[str, Any]
+) -> dict[str, Any]:
     from . import distribution
 
+    operation = state.get("operation")
+    if not operation:
+        return state
+    if operation.get("kind") != "update" or operation.get("schema_version") not in (None, 1):
+        raise LifecycleError("Unknown interrupted operation; preserve its receipt and backup.")
+    backup = pathlib.Path(operation["backup"]).resolve()
+    if not backup.is_relative_to(home / "backups" / "program"):
+        raise LifecycleError("Recovery backup does not belong to this athlete installation.")
+    record = json.loads((backup / "recovery.json").read_text())
+    prior = json.loads((backup / "install-state.json").read_text())
+    if record.get("home") != str(home) or operation.get("home", str(home)) != str(home):
+        raise LifecycleError("Recovery journal belongs to another athlete installation.")
+    _verified_releases(root, prior)
+    previous = pathlib.Path(operation.get("previous", prior["release_dir"]))
+    if str(previous) not in prior.get("managed_releases", {}):
+        raise LifecycleError("Prior runtime is not in the saved ownership inventory.")
+    # v0.1.0 could detach clients while its journal still reported preparing.
+    if not _recover_update(
+        home,
+        root,
+        previous,
+        prior,
+        backup,
+        operation.get("schema_version") is None
+        or operation.get("phase") not in {"preparing", "validating_candidate"},
+    ):
+        raise LifecycleError("Recovery incomplete; preserve the backup and retry program update.")
+    return distribution.read_state(root)
+
+
+def _program_update(args: argparse.Namespace) -> int:
     home, root = installation.select(args.home), _root(args.runtime_root)
-    state = _managed(home, root)
+    manifest = pathlib.Path(args.manifest).expanduser().resolve()
+    state = _recover_interrupted(home, root, _managed(home, root))
     _verified_files(root, state)
     _verified_releases(root, state)
     previous = (root / "current").resolve()
     if previous.parent != root / "releases" or not (previous / "ready.json").is_file():
-        raise ValueError("The prior release is unavailable; repair the runtime before updating.")
-    manifest = pathlib.Path(args.manifest).expanduser()
+        raise LifecycleError(
+            "The prior release is unavailable; repair the runtime before updating."
+        )
     if json.loads(manifest.read_text()) == json.loads((previous / "manifest.json").read_text()):
-        distribution.prepare_release(manifest, root)
         print(json.dumps({"state": "unchanged", "client_acceptance": "not_run"}))
         return 0
     backup, touched = _backup(home, root), False
@@ -559,21 +674,52 @@ def _program_update(args: argparse.Namespace) -> int:
         candidate = _prepare_update(home, root, state, backup, manifest)
         touched = True
         _activate_update(home, root, candidate)
-    except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError):
+    except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError, KeyboardInterrupt):
+        phase = _read_state(root).get("operation", {}).get("phase", "preparing")
         recovered = _recover_update(home, root, previous, state, backup, touched)
-        print(
-            json.dumps(
-                {
-                    "state": "rolled_back" if recovered else "recovery_required",
-                    "backup": str(backup),
-                    "client_acceptance": "not_run",
-                    "recovery": "Keep the backup and prior release. Run doctor; incompatible schema requires explicit offline recovery.",
-                }
-            )
+        retry = shlex.join(
+            [
+                sys.executable,
+                "-I",
+                "-m",
+                "garmin_coach.lifecycle",
+                "--home",
+                str(home),
+                "program",
+                "update",
+                "--runtime-root",
+                str(root),
+                "--manifest",
+                str(manifest),
+            ]
         )
+        _report_update_failure(recovered, backup, phase, retry)
         return 2
     print(json.dumps({"state": "updated", "backup": str(backup), "client_acceptance": "not_run"}))
     return 0
+
+
+def _report_update_failure(recovered: bool, backup: pathlib.Path, phase: str, retry: str) -> None:
+    actions = {
+        "preparing": "Check the release assets and runtime prerequisites.",
+        "validating_candidate": "Check candidate compatibility with the existing database.",
+        "activating": "Run doctor and inspect runtime and launcher ownership.",
+        "validating": "Check the activated candidate's local database read.",
+        "configuring_clients": "Run clients status and repair the affected native client CLI.",
+    }
+    result = {
+        "state": "rolled_back" if recovered else "recovery_required",
+        "backup": str(backup),
+        "client_acceptance": "not_run",
+        "failed_phase": phase,
+        "recovery": (
+            ("Prior runtime restored. " if recovered else "Preserve both runtimes. ")
+            + actions.get(phase, "Inspect the recorded operation and client status.")
+            + " Keep the recovery backup, then retry using the checked engine."
+        ),
+        "retry_command": retry,
+    }
+    print(json.dumps(result))
 
 
 @contextmanager
@@ -596,6 +742,9 @@ def _dispatch(args: argparse.Namespace) -> int:
             return (
                 _program_update(args) if args.program_command == "update" else _program_remove(args)
             )
+    except LifecycleError as exc:
+        print(f"lifecycle: {exc}", file=sys.stderr)
+        return 2
     except (
         ValueError,
         OSError,
@@ -606,7 +755,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         tarfile.TarError,
     ):
         print(
-            "lifecycle: operation refused; inspect doctor, ownership receipts and any recovery backup.",
+            "lifecycle: operation refused; inspect doctor, ownership receipts "
+            "and any recovery backup.",
             file=sys.stderr,
         )
         return 2
@@ -617,9 +767,11 @@ def _verified_files(root: pathlib.Path, state: dict[str, Any]) -> list[pathlib.P
     for name, expected in state.get("owned_launchers", {}).items():
         path = pathlib.Path(name)
         if path.parent != root / "bin" or path.is_symlink() or (root / "bin").is_symlink():
-            raise ValueError("Launcher ownership is inconsistent; preserve the program.")
+            raise LifecycleError("Launcher ownership is inconsistent; preserve the program.")
         if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            raise ValueError("A launcher was modified; preserve it and resolve ownership first.")
+            raise LifecycleError(
+                "A launcher was modified; preserve it and resolve ownership first."
+            )
         paths.append(path)
     return paths
 
@@ -635,19 +787,19 @@ def _verified_releases(root: pathlib.Path, state: dict[str, Any]) -> list[pathli
             or path.is_symlink()
             or (root / "releases").is_symlink()
         ):
-            raise ValueError("Release ownership is inconsistent; preserve the program.")
+            raise LifecycleError("Release ownership is inconsistent; preserve the program.")
         if path.exists():
             manifest = path / "manifest.json"
             if (
                 not manifest.is_file()
                 or hashlib.sha256(manifest.read_bytes()).hexdigest() != expected
             ):
-                raise ValueError(
+                raise LifecycleError(
                     "A release manifest changed; preserve it and resolve ownership first."
                 )
             inventory = state.get("managed_release_inventories", {}).get(name)
             if not inventory:
-                raise ValueError(
+                raise LifecycleError(
                     "Release inventory is unverified; preserve it and choose a new runtime root."
                 )
             distribution.verify_release_inventory(path, inventory)
@@ -660,23 +812,30 @@ def _owned_schedule(
 ) -> pathlib.Path | None:
     schedule = state.get("scheduler") or {}
     if not schedule.get("path") and not schedule.get("plist_path"):
+        if schedule.get("label"):
+            raise LifecycleError(
+                "Daily job ownership has no recorded plist path; preserve its label."
+            )
         return None
     path = pathlib.Path(schedule.get("plist_path") or schedule["path"])
     if path.is_symlink():
-        raise ValueError("Scheduled job is a symlink; preserve it and resolve ownership first.")
+        raise LifecycleError("Scheduled job is a symlink; preserve it and resolve ownership first.")
     if not path.exists():
+        label = "com.garmincoach.daily." + hashlib.sha256(str(home).encode()).hexdigest()[:12]
+        if schedule.get("label") != label or path.name != label + ".plist":
+            raise LifecycleError("Missing daily job has no verifiable installation-specific label.")
         return None
     if hashlib.sha256(path.read_bytes()).hexdigest() != schedule.get("sha256"):
-        raise ValueError("Scheduled job changed; preserve it and resolve ownership first.")
+        raise LifecycleError("Scheduled job changed; preserve it and resolve ownership first.")
     job = plistlib.loads(path.read_bytes())
     expected = [str(root / "bin" / "garmin-coach"), "--home", str(home), "daily"]
     if job.get("Label") != schedule.get("label") or job.get("ProgramArguments") != expected:
-        raise ValueError("Scheduled job does not address the selected athlete installation.")
+        raise LifecycleError("Scheduled job does not address the selected athlete installation.")
     return path
 
 
 def _remove_schedule(state: dict[str, Any], path: pathlib.Path | None) -> None:
-    if path is None:
+    if not state.get("scheduler", {}).get("label"):
         return
     label = state["scheduler"]["label"]
     result = subprocess.run(
@@ -688,8 +847,9 @@ def _remove_schedule(state: dict[str, Any], path: pathlib.Path | None) -> None:
         check=False,
     )
     if result.returncode not in (0, 3, 113):
-        raise ValueError("Could not stop the owned daily job; preserve the runtime and retry.")
-    path.unlink()
+        raise LifecycleError("Could not stop the owned daily job; preserve the runtime and retry.")
+    if path is not None:
+        path.unlink(missing_ok=True)
 
 
 def _remove_clients(
@@ -700,10 +860,54 @@ def _remove_clients(
 
     result = clients.remove(home, root, selected, confirm=confirm)
     if result.get("state") in ("failed", "conflict"):
-        raise ValueError(
+        raise LifecycleError(
             "Client removal failed; preserve the runtime and recover client ownership."
         )
     return result
+
+
+def _remove_runtime(
+    home: pathlib.Path, root: pathlib.Path, state: dict[str, Any], confirm: bool
+) -> dict[str, Any]:
+    from . import distribution
+
+    launchers = _verified_files(root, state)
+    releases = _verified_releases(root, state)
+    schedule = _owned_schedule(home, root, state)
+    selection = _remove_clients(home, root, None, confirm)
+    resources = {
+        "launchers": [str(path) for path in launchers],
+        "releases": [str(path) for path in releases],
+        "scheduler": state.get("scheduler", {}),
+        "clients": selection.get("remove_clients", []),
+    }
+    if confirm:
+        _remove_schedule(state, schedule)
+        for path in launchers:
+            path.unlink(missing_ok=True)
+        pointer = root / "current"
+        if pointer.is_symlink() and pointer.resolve() in releases:
+            pointer.unlink()
+        for path in releases:
+            if path.exists():
+                shutil.rmtree(path)
+        state.update(
+            removed=True,
+            owned_launchers={},
+            managed_releases={},
+            managed_release_inventories={},
+            scheduler={},
+            selected_clients=[],
+        )
+        distribution.write_state(root, state)
+    return {"state": "removed" if confirm else "preview", "resources": resources}
+
+
+def _retained_paths(home: pathlib.Path) -> list[str]:
+    settings = installation.load(home)
+    paths = {home, home / "backups", home / "memory", home / "reports"}
+    paths.update(pathlib.Path(getattr(settings, key)) for key in installation.PATH_SETTINGS)
+    return sorted(str(path) for path in paths)
 
 
 def _program_remove(args: argparse.Namespace) -> int:
@@ -711,40 +915,24 @@ def _program_remove(args: argparse.Namespace) -> int:
 
     home, root = installation.select(args.home), _root(args.runtime_root)
     state = _managed(home, root)
+    if state.get("operation"):
+        raise LifecycleError(
+            "Retry program update to recover the interrupted operation before removal."
+        )
     if args.client:
-        _remove_clients(home, root, [args.client], args.confirm)
-        result = {"state": "removed" if args.confirm else "preview", "client": args.client}
-    else:
-        launchers = _verified_files(root, state)
-        releases = _verified_releases(root, state)
-        schedule = _owned_schedule(home, root, state)
-        if schedule is None and state.get("scheduler", {}).get("status") == "enabled":
-            raise ValueError(
-                "The enabled daily job has no owned plist; repair scheduling before removal."
-            )
-        _remove_clients(home, root, None, args.confirm)
+        selection = _remove_clients(home, root, [args.client], args.confirm)
         if args.confirm:
-            _remove_schedule(state, schedule)
-            for path in launchers:
-                path.unlink(missing_ok=True)
-            pointer = root / "current"
-            if pointer.is_symlink() and pointer.resolve() in releases:
-                pointer.unlink()
-            for path in releases:
-                if path.exists():
-                    shutil.rmtree(path)
-            state.update(
-                {
-                    "removed": True,
-                    "owned_launchers": {},
-                    "managed_releases": {},
-                    "managed_release_inventories": {},
-                    "scheduler": {},
-                }
-            )
+            state["selected_clients"] = clients.status(home, root)["selected_clients"]
             distribution.write_state(root, state)
-        result = {"state": "removed" if args.confirm else "preview"}
+        result = {
+            "state": "removed" if args.confirm else "preview",
+            "client": args.client,
+            "resources": {"clients": selection.get("remove_clients", [args.client])},
+        }
+    else:
+        result = _remove_runtime(home, root, state, args.confirm)
     result["retained_installation"] = str(home)
+    result["retained_paths"] = _retained_paths(home)
     print(json.dumps(result, indent=2))
     return 0
 

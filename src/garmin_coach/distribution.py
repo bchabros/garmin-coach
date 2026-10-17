@@ -10,6 +10,7 @@ import pathlib
 import platform
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -597,9 +598,7 @@ def _existing_schedule(
         if previous.get("path") != str(path) or previous.get("sha256") != digest:
             raise ValueError("Existing scheduler job is not owned or has changed; preserve it.")
         if previous.get("time") == when:
-            if previous.get("status") != "enabled":
-                _bootstrap_schedule(root=root, record=previous, state=state, execute=execute)
-            return previous
+            return _bootstrap_schedule(root=root, record=previous, state=state, execute=execute)
         raise ValueError("Schedule already enabled at another time; remove it explicitly first.")
     return None
 
@@ -636,16 +635,78 @@ def _schedule_record(
     }
 
 
+def _printed_schedule_matches(record: dict[str, Any], output: str) -> bool:
+    # launchctl documents this as diagnostic output, not a stable machine API.
+    # Accept only a complete known identity; changed/missing formats fail closed.
+    target = f"gui/{os.getuid()}/{record['label']} = {{"
+    if not output.splitlines() or output.splitlines()[0].strip() != target:
+        return False
+    fields = {
+        "path": record["path"],
+        "program": record["command"][0],
+        "working directory": record["selected_home"],
+        "stdout path": record["stdout_path"],
+        "stderr path": record["stderr_path"],
+    }
+    for key, expected in fields.items():
+        found = re.findall(r"(?m)^[ \t]*" + re.escape(key) + r" = (.*)$", output)
+        if found != [expected]:
+            return False
+    blocks = re.findall(r"(?ms)^[ \t]*arguments = \{\n(.*?)^[ \t]*\}", output)
+    if len(blocks) != 1 or [line.strip() for line in blocks[0].splitlines()] != record["command"]:
+        return False
+    return _printed_schedule_time(record, output)
+
+
+def _printed_schedule_time(record: dict[str, Any], output: str) -> bool:
+    streams = re.findall(r"(?m)^[ \t]*stream = (.*)$", output)
+    descriptors = re.findall(r"(?ms)^[ \t]*descriptor = \{\n(.*?)^[ \t]*\}", output)
+    if streams != ["com.apple.launchd.calendarinterval"] or len(descriptors) != 1:
+        return False
+    lines = [line.strip() for line in descriptors[0].splitlines() if line.strip()]
+    matches = [re.fullmatch(r'"([A-Za-z]+)" => ([0-9]+)', line) for line in lines]
+    if len(matches) != 2 or any(match is None for match in matches):
+        return False
+    pairs = [(match.group(1), match.group(2)) for match in matches if match is not None]
+    hour, minute = map(int, record["time"].split(":"))
+    return dict(pairs) == {"Hour": str(hour), "Minute": str(minute)}
+
+
+def _owned_schedule_is_loaded(record: dict[str, Any]) -> bool:
+    result = subprocess.run(
+        ["/bin/launchctl", "print", f"gui/{os.getuid()}/{record['label']}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        if re.search(r"Could not find service|No such (?:process|service)", result.stderr or ""):
+            return False
+        raise ValueError(
+            "Could not inspect the daily job; preserve it and check launchd before retrying."
+        )
+    if not _printed_schedule_matches(record, result.stdout):
+        raise ValueError(
+            "Loaded daily job identity could not be verified; preserve it and inspect its "
+            "path, arguments and schedule before retrying."
+        )
+    return True
+
+
 def _bootstrap_schedule(
     root: pathlib.Path, record: dict[str, Any], state: dict[str, Any], execute: Any
 ) -> dict[str, Any]:
     try:
-        execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", record["path"]])
-    except (OSError, subprocess.SubprocessError):
+        if not _owned_schedule_is_loaded(record):
+            execute(["/bin/launchctl", "bootstrap", f"gui/{os.getuid()}", record["path"]])
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
         record.update(
             status="prepared",
             activation_status="failed",
-            actions=[
+            actions=[str(exc)]
+            if isinstance(exc, ValueError)
+            else [
                 "Daily refresh activation failed; the saved job may load at the next login. "
                 "Repeat setup to retry, or explicitly remove the owned scheduler job."
             ],
@@ -659,6 +720,20 @@ def _bootstrap_schedule(
     return record
 
 
+def _guard_new_schedule(record: dict[str, Any], state: dict[str, Any], content: bytes) -> None:
+    if not _owned_schedule_is_loaded(record):
+        return
+    previous = state.get("scheduler", {})
+    if (
+        previous.get("path") != record["path"]
+        or previous.get("sha256") != hashlib.sha256(content).hexdigest()
+    ):
+        raise ValueError(
+            "Loaded daily job has no matching ownership receipt; preserve it and inspect "
+            "launchd before creating another job."
+        )
+
+
 def _enable_schedule(
     home: pathlib.Path,
     root: pathlib.Path,
@@ -669,6 +744,7 @@ def _enable_schedule(
     path = pathlib.Path(record["path"])
     command, label, when = record["command"], record["label"], record["time"]
     content = _schedule_content(home, command, label, when)
+    _guard_new_schedule(record, state, content)
     record.update(
         status="preparing",
         activation_status="not_run",
@@ -896,26 +972,48 @@ def _setup_next(result: dict[str, Any]) -> str:
     )
 
 
-def finish_setup(
-    home: pathlib.Path,
-    root: pathlib.Path,
-    *,
-    clients: str,
-    setup_arguments: list[str] | None = None,
-    execute: Any = _run_stage,
+def _recover_setup_operation(
+    home: pathlib.Path, root: pathlib.Path, state: dict[str, Any], execute: Any
 ) -> dict[str, Any]:
-    """Run or resume athlete/client setup, reusing already completed local onboarding.
+    if not state.get("operation"):
+        return state
+    release = pathlib.Path(state["release_dir"]).resolve()
+    if release.parent != root / "releases" or not (release / "ready.json").is_file():
+        raise ValueError(
+            "Interrupted update needs a checked corrective runtime. Preserve the journal/backups "
+            "and repeat the corrective versioned installer."
+        )
+    command = [
+        str(release / "venv" / "bin" / "python"),
+        "-I",
+        "-m",
+        "garmin_coach.lifecycle",
+        "--home",
+        str(home),
+        "program",
+        "update",
+        "--runtime-root",
+        str(root),
+        "--manifest",
+        str(release / "manifest.json"),
+    ]
+    recovery = (
+        "Interrupted update recovery is incomplete. Preserve the journal and backups; "
+        "retry with the checked candidate engine: " + shlex.join(command)
+    )
+    try:
+        code = execute(command)
+        observed = read_state(root)
+    except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        raise ValueError(recovery) from exc
+    if code != 0 or observed.get("operation"):
+        raise ValueError(recovery)
+    return observed
 
-    Args:
-        home: Explicit selected athlete installation.
-        root: Managed runtime root containing the active stable launchers.
-        clients: Comma-separated supported client identifiers; earlier choices are retained.
-        setup_arguments: Optional explicit arguments requesting another athlete onboarding run.
-        execute: Terminal subprocess boundary, replaceable for offline tests.
 
-    Returns:
-        Honest stage observations, preserving incomplete setup for a repeated run.
-    """
+def _prepare_setup(
+    home: pathlib.Path, root: pathlib.Path, clients: str, execute: Any
+) -> tuple[pathlib.Path, pathlib.Path, list[str], dict[str, Any]]:
     selected = clients.split(",")
     if not selected or any(name not in ("work", "codex", "claude-code") for name in selected):
         raise ValueError("Choose clients from work,codex,claude-code.")
@@ -924,9 +1022,54 @@ def finish_setup(
     state = read_state(root)
     if state.get("selected_home") not in (None, str(home)):
         raise ValueError("This runtime already selects another athlete installation; preserve it.")
+    state = _recover_setup_operation(home, root, state, execute)
     selected = list(dict.fromkeys([*state.get("selected_clients", []), *selected]))
     state.update({"selected_home": str(home), "selected_clients": selected})
     write_state(root, state)
+    return home, root, selected, state
+
+
+def _prepare_setup_clients(
+    command: list[str],
+    root: pathlib.Path,
+    selected: list[str],
+    onboarding: dict[str, Any],
+    execute: Any,
+) -> dict[str, Any]:
+    if onboarding["status"] != "complete":
+        return {"status": "not_run"}
+    arguments = [
+        "clients",
+        "configure",
+        "--clients",
+        ",".join(selected),
+        "--runtime-root",
+        str(root),
+    ]
+    return _client_result(command, root, selected, execute(command + arguments))
+
+
+def finish_setup(
+    home: pathlib.Path,
+    root: pathlib.Path,
+    *,
+    clients: str,
+    setup_arguments: list[str] | None = None,
+    execute: Any = _run_stage,
+) -> dict[str, Any]:
+    """Resume athlete/client setup using completed local onboarding when available.
+
+    Args:
+        home: Explicit selected athlete installation.
+        root: Managed runtime root containing the active stable launchers.
+        clients: Selected client identifiers; earlier choices are retained.
+        setup_arguments: Explicit arguments requesting another athlete onboarding run.
+        execute: Terminal subprocess boundary for offline tests.
+
+    Returns:
+        Stage observations, preserving incomplete setup for a repeated run.
+    """
+    home, root, selected, state = _prepare_setup(home, root, clients, execute)
     command = [str(root / "bin" / "garmin-coach"), "--home", str(home)]
     onboarding, readiness = _continue_onboarding(
         home,
@@ -935,25 +1078,12 @@ def finish_setup(
         execute,
         state.get("stages", {}).get("onboarding", {}),
     )
-    result: dict[str, Any] = {
+    result = {
         "onboarding": onboarding,
         "coach_read": readiness,
-        "clients": {"status": "not_run"},
+        "clients": _prepare_setup_clients(command, root, selected, onboarding, execute),
         "client_acceptance": "not_run",
     }
-    if onboarding["status"] == "complete":
-        code = execute(
-            command
-            + [
-                "clients",
-                "configure",
-                "--clients",
-                ",".join(selected),
-                "--runtime-root",
-                str(root),
-            ]
-        )
-        result["clients"] = _client_result(command, root, selected, code)
     result["next"] = _setup_next(result)
     state = read_state(root)
     state["stages"] = result

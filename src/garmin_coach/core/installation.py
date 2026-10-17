@@ -126,9 +126,16 @@ def open_database(settings: Settings, *, create: bool = False) -> sqlite3.Connec
     """
     path = pathlib.Path(settings.db_path)
     is_new = not path.exists()
-    template = (
-        plan.parse_template(settings.weekly_template) if is_new and settings.weekly_template else []
-    )
+    try:
+        template = (
+            plan.parse_template(settings.weekly_template)
+            if is_new and settings.weekly_template
+            else []
+        )
+    except ValueError:
+        raise InstallationError(
+            "WEEKLY_TEMPLATE must contain seven valid intents, or 'none'."
+        ) from None
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
     else:

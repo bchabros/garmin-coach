@@ -118,8 +118,9 @@ chooses a new empty installation, runs setup in Terminal, verifies their own log
 selected history, first read and same-range re-run, then records the OS/runtime versions
 and result without credentials or personal records. For adoption, verify the existing
 configuration and personal files remain unchanged. This live check is not performed by
-development tests. Client registration, packaged clean-Mac bootstrap and daily scheduling
-remain #85/#86 rather than part of setup.
+development tests. Client registration is described in [CLIENT_SETUP.md](CLIENT_SETUP.md), and managed
+bootstrap/scheduling in [DISTRIBUTION.md](DISTRIBUTION.md). Their real-client and clean-Mac
+acceptance remain separate from offline setup verification.
 
 ## The athlete installation (where every run reads and writes)
 

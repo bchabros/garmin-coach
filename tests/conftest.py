@@ -20,6 +20,8 @@ _INSTALLATION_VARIABLES = (
     "GARMINTOKENS",
     "GARMIN_EMAIL",
     "GARMIN_PASSWORD",
+    "DATA_START_DATE",
+    "WEEKLY_TEMPLATE",
 )
 
 
@@ -36,6 +38,14 @@ def _no_real_installation(tmp_path_factory, monkeypatch):
     for name in _INSTALLATION_VARIABLES:
         monkeypatch.setenv(name, "")
         monkeypatch.delenv(name)
+    user_home = tmp_path_factory.mktemp("user")
+    monkeypatch.setenv("HOME", str(user_home))
+    for name, folder in (
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_CACHE_HOME", ".cache"),
+    ):
+        monkeypatch.setenv(name, str(user_home / folder))
     monkeypatch.chdir(tmp_path_factory.mktemp("start"))
 
 

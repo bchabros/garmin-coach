@@ -104,3 +104,42 @@ def test_bootstrap_imports_and_reports_help_without_site_packages(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "--manifest" in result.stdout
+
+
+def test_plain_wheel_build_excludes_private_source_skill_files(tmp_path):
+    import os
+    import shutil
+    import subprocess
+
+    poetry = shutil.which("poetry")
+    if poetry is None:
+        pytest.skip("building the package needs Poetry")
+    source = pathlib.Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "source"
+    checkout.mkdir()
+    for name in ("pyproject.toml", "README.md"):
+        shutil.copyfile(source / name, checkout / name)
+    for name in ("src", "skills"):
+        shutil.copytree(
+            source / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__")
+        )
+    private = checkout / "skills/coach/references/context.md"
+    private.write_text("Synthetic private athlete marker")
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    subprocess.run(
+        [poetry, "build", "--format", "wheel", "--output", str(tmp_path / "dist")],
+        cwd=checkout,
+        env=environment,
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    (wheel,) = (tmp_path / "dist").glob("*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        assert "skills/coach/references/context.md" not in archive.namelist()
+        assert {name for name in archive.namelist() if name.startswith("skills/")} == {
+            "skills/coach/SKILL.md",
+            "skills/coach/references/report.md",
+            "skills/coach/references/planning.md",
+            "skills/coach/references/authoring.md",
+        }

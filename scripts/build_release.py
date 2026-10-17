@@ -8,6 +8,7 @@ import hashlib
 import json
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -30,16 +31,36 @@ def digest(path: pathlib.Path) -> str:
 
 
 def audit_wheel(path: pathlib.Path) -> None:
-    """Refuse owner files and embedded machine paths before any artifact is published."""
+    """Allow only tracked program/skill files and standard generated wheel metadata."""
+    tracked = set(
+        subprocess.check_output(
+            ["git", "ls-files", "-z", "src/garmin_coach", "skills/coach", "LICENSE"],
+            cwd=ROOT,
+        )
+        .decode()
+        .split("\0")
+    )
+    metadata_names = {"METADATA", "WHEEL", "RECORD", "entry_points.txt"}
+    machine_path = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\)")
     with zipfile.ZipFile(path) as archive:
-        for name in archive.namelist():
+        for item in archive.infolist():
+            if item.is_dir():
+                continue
+            name = item.filename
             parts = pathlib.PurePosixPath(name).parts
-            if any(
-                part in (".env", ".garminconnect", "garmin.db", "reports", "logs", "plans")
-                for part in parts
-            ):
-                raise ValueError(f"Personal file found in release wheel: {name}")
-            if b"/Users/Chabi/" in archive.read(name):
+            source = "src/" + name if parts[0] == "garmin_coach" else name
+            generated = (
+                len(parts) == 2 and parts[0].endswith(".dist-info") and parts[1] in metadata_names
+            )
+            license_file = (
+                len(parts) == 3
+                and parts[0].endswith(".dist-info")
+                and parts[1:] == ("licenses", "LICENSE")
+                and "LICENSE" in tracked
+            )
+            if source not in tracked and not generated and not license_file:
+                raise ValueError(f"Unapproved or untracked file in release wheel: {name}")
+            if machine_path.search(archive.read(name)):
                 raise ValueError(f"Machine-specific path found in release wheel: {name}")
 
 

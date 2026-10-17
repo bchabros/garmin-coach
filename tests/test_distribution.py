@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+import sys
 
 import pytest
 
@@ -48,7 +49,7 @@ def test_bad_release_download_never_activates_or_changes_the_existing_runtime(tm
     assert not (root / "install-state.json").exists()
 
 
-def _release_fixture(tmp_path, *, broken_mcp=False):
+def _release_fixture(tmp_path, *, broken_mcp=False, fake_cli=False, architecture="arm64"):
     """Build real app code offline; only test dependencies are borrowed, like test_package."""
     import io
     import sys
@@ -63,7 +64,9 @@ def _release_fixture(tmp_path, *, broken_mcp=False):
         for path in source.rglob("*"):
             if path.is_file() and "__pycache__" not in path.parts:
                 relative = pathlib.Path("garmin_coach") / path.relative_to(source)
-                if broken_mcp and relative.as_posix() == "garmin_coach/mcp/server.py":
+                if fake_cli and relative.as_posix() == "garmin_coach/cli.py":
+                    archive.writestr(str(relative), _FAKE_SETUP_CLI)
+                elif broken_mcp and relative.as_posix() == "garmin_coach/mcp/server.py":
                     archive.writestr(str(relative), "print('not an MCP server')\n")
                 else:
                     archive.write(path, str(relative))
@@ -84,6 +87,10 @@ def _release_fixture(tmp_path, *, broken_mcp=False):
     with tarfile.open(bundle, "w:gz") as archive:
         archive.add(wheels, arcname="wheels")
         archive.add(requirements, arcname="requirements.txt")
+        archive.add(
+            pathlib.Path(__file__).resolve().parents[1] / "src/garmin_coach/distribution.py",
+            arcname="bootstrap.py",
+        )
     python = tmp_path / "python.tar.gz"
     with tarfile.open(python, "w:gz") as archive:
         import sysconfig
@@ -111,7 +118,7 @@ def _release_fixture(tmp_path, *, broken_mcp=False):
                 "version": "0.2.0",
                 "source_commit": "a" * 40,
                 "platform": "darwin",
-                "architecture": "arm64",
+                "architecture": architecture,
                 "min_macos": "15.0",
                 "python": {
                     "url": python.as_uri(),
@@ -252,7 +259,8 @@ def test_interrupted_scheduler_registration_can_resume_without_rewriting_the_job
     restored = distribution.configure_schedule(
         home, root, "06:00", enabled=False, agents_dir=agents
     )
-    assert restored["status"] == "prepared"
+    assert restored["status"] == "failed"
+    assert restored["actions"]
     result = distribution.configure_schedule(
         home, root, "06:00", enabled=True, agents_dir=agents, execute=lambda args: None
     )
@@ -508,3 +516,414 @@ def test_declining_import_with_an_empty_compatible_database_is_not_completion(tm
     assert result["onboarding"]["import_complete"] is None
     assert result["clients"]["status"] == "not_run"
     assert len(calls) == 1
+
+
+def test_interrupted_first_runtime_build_can_retry_without_removing_added_files(
+    tmp_path, monkeypatch
+):
+    import subprocess
+
+    manifest = _release_fixture(tmp_path)
+    root = tmp_path / "runtime"
+    real_run = subprocess.run
+    interrupted = False
+
+    def fail_first_pip(command, *args, **kwargs):
+        nonlocal interrupted
+        if "pip" in command and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_first_pip)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.prepare_release(manifest, root)
+    incomplete = next((root / "releases").iterdir())
+    note = incomplete / "my-note.txt"
+    note.write_text("Keep this note after interruption.")
+    repaired = distribution.prepare_release(manifest, root)
+    distribution.activate_release(repaired, root)
+    assert note.read_text() == "Keep this note after interruption."
+    assert (root / "current").resolve() == repaired
+    assert repaired != incomplete
+
+
+@pytest.mark.parametrize("interruption", ["current", "garmin-coach"])
+def test_interrupted_first_activation_resumes_owned_launchers_and_pointer(
+    tmp_path, monkeypatch, interruption
+):
+    import os
+
+    root = tmp_path / "runtime"
+    release = distribution.prepare_release(_release_fixture(tmp_path), root)
+    saved = distribution.read_state(root)
+    saved["operation"] = {"kind": "update", "candidate": str(release)}
+    distribution.write_state(root, saved)
+    real_replace = os.replace
+    interrupted = False
+
+    def interrupt_pointer(source, destination):
+        nonlocal interrupted
+        real_replace(source, destination)
+        if pathlib.Path(destination).name == interruption and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "replace", interrupt_pointer)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.activate_release(release, root)
+    distribution.activate_release(release, root)
+    assert distribution.read_state(root)["release_dir"] == str(release)
+    assert (root / "current").resolve() == release
+    assert not distribution.read_state(root).get("pending_activation")
+    assert distribution.read_state(root)["operation"] == saved["operation"]
+
+
+def test_repeated_completed_setup_can_add_a_client_without_importing_again(tmp_path):
+    import sys
+    from garmin_coach.core import db
+
+    home, root = tmp_path / "athlete", tmp_path / "runtime"
+    (home / "data").mkdir(parents=True)
+    (home / ".env").write_text("DB_PATH=./data/garmin.db\n")
+    conn = db.connect(str(home / "data" / "garmin.db"))
+    db.bootstrap(conn)
+    db.upsert_daily(conn, "daily_metrics", {"date": "2026-07-03"})
+    conn.commit()
+    conn.close()
+    distribution.write_state(
+        root,
+        {
+            "selected_home": str(home),
+            "selected_clients": ["claude-code"],
+            "stages": {
+                "onboarding": {"status": "complete", "import_complete": True, "read_ready": True}
+            },
+        },
+    )
+    (root / "bin").mkdir()
+    launcher = root / "bin" / "garmin-coach"
+    payload = {
+        "integrity": "verified",
+        "runtime_available": True,
+        "clients": {
+            "codex": {"state": "needs_activation"},
+            "claude-code": {"state": "needs_activation"},
+        },
+    }
+    launcher.write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({payload!r}))\n")
+    launcher.chmod(0o755)
+    commands = []
+    result = distribution.finish_setup(
+        home, root, clients="codex", execute=lambda cmd: commands.append(cmd) or 0
+    )
+    assert result["onboarding"]["status"] == "complete"
+    assert result["clients"]["status"] == "needs_activation"
+    assert all("setup" not in cmd for cmd in commands)
+    assert distribution.read_state(root)["selected_clients"] == ["claude-code", "codex"]
+
+
+def test_scheduler_ownership_is_durable_before_plist_becomes_visible(tmp_path, monkeypatch):
+    import os
+
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    home.mkdir()
+    real_replace = os.replace
+    interrupted = False
+
+    def interrupt_plist(source, destination):
+        nonlocal interrupted
+        real_replace(source, destination)
+        if pathlib.Path(destination).suffix == ".plist" and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "replace", interrupt_plist)
+    # A crash immediately after creating the job must retain enough ownership to retry.
+    real_write = pathlib.Path.write_bytes
+
+    def interrupt_old_writer(path, data):
+        result = real_write(path, data)
+        if path.suffix == ".plist" and not interrupted:
+            raise KeyboardInterrupt
+        return result
+
+    monkeypatch.setattr(pathlib.Path, "write_bytes", interrupt_old_writer)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.configure_schedule(
+            home, root, "07:00", enabled=True, agents_dir=agents, execute=lambda command: None
+        )
+    result = distribution.configure_schedule(
+        home, root, "07:00", enabled=True, agents_dir=agents, execute=lambda command: None
+    )
+    assert result["status"] == "enabled"
+    assert result["time"] == "07:00"
+    assert len(list(agents.glob("*.plist"))) == 1
+
+
+def test_rosetta_installer_refuses_intel_runtime_on_apple_silicon(tmp_path, monkeypatch):
+    import subprocess
+
+    manifest = _release_fixture(tmp_path)
+    metadata = json.loads(manifest.read_text())
+    metadata["architecture"] = "x86_64"
+    manifest.write_text(json.dumps(metadata))
+    monkeypatch.setattr(distribution.platform, "machine", lambda: "x86_64")
+    real_run = subprocess.run
+
+    def translated(command, *args, **kwargs):
+        if command[0] == "/usr/sbin/sysctl":
+            return subprocess.CompletedProcess(command, 0, stdout="1\n", stderr="")
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", translated)
+    with pytest.raises(ValueError, match="Rosetta|native"):
+        distribution.prepare_release(manifest, tmp_path / "runtime")
+    assert not (tmp_path / "runtime").exists()
+
+
+_FAKE_SETUP_CLI = """
+import json, pathlib, sys
+from garmin_coach.core import db
+
+def main():
+    home = pathlib.Path(sys.argv[sys.argv.index('--home') + 1])
+    if 'setup' in sys.argv:
+        (home / 'data').mkdir(parents=True)
+        (home / '.env').write_text('DB_PATH=./data/garmin.db\\n')
+        connection = db.connect(str(home / 'data/garmin.db'))
+        db.bootstrap(connection)
+        db.upsert_daily(connection, 'daily_metrics', {'date': '2026-07-03'})
+        connection.commit()
+        connection.close()
+        output = home / 'reports/2026-07-03/setup-fixture'
+        output.mkdir(parents=True)
+        (output / 'digest.json').write_text(json.dumps({'onboarding': {
+            'import_complete': True, 'read_ready': True, 'completed_through': '2026-07-03'}}))
+    elif 'status' in sys.argv:
+        print(json.dumps({'integrity': 'verified', 'runtime_available': True, 'clients': {
+            name: {'state': 'needs_activation'} for name in ('codex', 'claude-code')}}))
+    return 0
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+"""
+
+
+def test_complete_installer_execs_private_runtime_and_prints_summary_with_fake_account_cli(
+    tmp_path,
+):
+    import os
+    import subprocess
+    import sys
+
+    manifest = _release_fixture(tmp_path, fake_cli=True, architecture=os.uname().machine)
+    root, athlete, home = tmp_path / "runtime", tmp_path / "athlete", tmp_path / "system-home"
+    home.mkdir()
+    source = pathlib.Path(__file__).resolve().parents[1] / "src"
+    environment = {**os.environ, "HOME": str(home), "PYTHONPATH": str(source)}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "garmin_coach.distribution",
+            "install",
+            "--manifest",
+            str(manifest),
+            "--runtime-root",
+            str(root),
+            "--home",
+            str(athlete),
+            "--clients",
+            "codex",
+            "--no-schedule",
+        ],
+        env=environment,
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stderr
+    assert '"status": "complete"' in result.stdout
+    assert '"status": "needs_activation"' in result.stdout
+    assert "First-read prompt:" in result.stdout
+    assert distribution.read_state(root)["stages"]["onboarding"]["status"] == "complete"
+    assert not (home / "Library" / "LaunchAgents").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Private-runtime setup requires native macOS.")
+def test_scheduler_failure_keeps_summary_and_repeated_setup_uses_saved_hour(tmp_path, monkeypatch):
+    import os
+    import subprocess
+
+    root, athlete, home = tmp_path / "runtime", tmp_path / "athlete", tmp_path / "system-home"
+    home.mkdir()
+    monkeypatch.setattr(distribution.platform, "machine", lambda: os.uname().machine)
+    manifest = _release_fixture(tmp_path, fake_cli=True, architecture=os.uname().machine)
+    release = distribution.prepare_release(manifest, root)
+    distribution.activate_release(release, root)
+    arguments = [
+        "install",
+        "--manifest",
+        str(manifest),
+        "--runtime-root",
+        str(root),
+        "--home",
+        str(athlete),
+        "--clients",
+        "codex",
+    ]
+    driver = """
+import builtins, subprocess, sys, types
+from garmin_coach import distribution
+real_run = subprocess.run
+failed = sys.argv[1] == 'fail'
+def run(command, *args, **kwargs):
+    if command[0] == '/bin/launchctl':
+        if command[1] == 'print':
+            return subprocess.CompletedProcess(command, 1)
+        if failed:
+            raise subprocess.CalledProcessError(5, command)
+        return subprocess.CompletedProcess(command, 0)
+    return real_run(command, *args, **kwargs)
+subprocess.run = run
+sys.stdin = types.SimpleNamespace(isatty=lambda: True)
+builtins.input = lambda prompt: 'y'
+raise SystemExit(distribution.main(sys.argv[2:]))
+"""
+    environment = {**os.environ, "HOME": str(home)}
+    python = str(release / "venv/bin/python")
+    failed = subprocess.run(
+        [python, "-I", "-c", driver, "fail", *arguments, "--daily", "07:00"],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+    assert failed.returncode == 1, failed.stderr
+    assert "First-read prompt:" in failed.stdout
+    assert '"scheduler"' in failed.stdout and '"incomplete"' in failed.stdout
+    assert "activation failed" in failed.stdout
+    assert distribution.read_state(root)["scheduler"]["time"] == "07:00"
+    repeated = subprocess.run(
+        [python, "-I", "-c", driver, "success", *arguments],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        timeout=60,
+    )
+    assert repeated.returncode == 0, repeated.stderr
+    assert distribution.read_state(root)["scheduler"]["time"] == "07:00"
+    assert distribution.read_state(root)["scheduler"]["status"] == "enabled"
+    assert distribution.read_state(root)["stages"]["onboarding"]["reused"] is True
+
+
+def test_existing_legacy_daily_job_is_preserved_and_blocks_duplicate_schedule(tmp_path):
+    home, root, agents = tmp_path / "athlete", tmp_path / "runtime", tmp_path / "agents"
+    agents.mkdir()
+    legacy = agents / "com.garmincoach.daily.plist"
+    legacy.write_text("legacy operator job")
+    calls = []
+    with pytest.raises(ValueError, match="legacy|existing daily"):
+        distribution.configure_schedule(
+            home, root, "06:00", enabled=True, agents_dir=agents, execute=calls.append
+        )
+    assert legacy.read_text() == "legacy operator job"
+    assert list(agents.iterdir()) == [legacy]
+    assert not root.exists()
+    assert not calls
+
+
+def test_interruption_before_first_manifest_write_can_retry_from_intent_receipt(
+    tmp_path, monkeypatch
+):
+    manifest = _release_fixture(tmp_path)
+    root = tmp_path / "runtime"
+    canonical = root / "releases/0.2.0-arm64"
+    real_mkdir = pathlib.Path.mkdir
+    interrupted = False
+
+    def mkdir(path, *args, **kwargs):
+        nonlocal interrupted
+        result = real_mkdir(path, *args, **kwargs)
+        if path == canonical and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        return result
+
+    monkeypatch.setattr(pathlib.Path, "mkdir", mkdir)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.prepare_release(manifest, root)
+    assert not (canonical / "manifest.json").exists()
+    repaired = distribution.prepare_release(manifest, root)
+    assert repaired != canonical
+    assert (repaired / "ready.json").is_file()
+    assert canonical.is_dir()
+
+
+def test_loaded_legacy_job_without_plist_blocks_duplicate_schedule(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    observed = []
+
+    def launchctl(command, **kwargs):
+        observed.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", launchctl)
+    root = tmp_path / "runtime"
+    with pytest.raises(ValueError, match="legacy"):
+        distribution.configure_schedule(
+            tmp_path / "athlete",
+            root,
+            "06:00",
+            enabled=True,
+            execute=lambda command: pytest.fail("unexpected bootstrap"),
+        )
+    assert observed[0][1] == "print"
+    assert not root.exists()
+    assert not (tmp_path / "Library").exists()
+
+
+def test_pending_activation_can_roll_back_to_recorded_release_after_pointer_switch(
+    tmp_path, monkeypatch
+):
+    import os
+    import shutil
+
+    root = tmp_path / "runtime"
+    previous = distribution.prepare_release(_release_fixture(tmp_path), root)
+    distribution.activate_release(previous, root)
+    candidate = previous.with_name(previous.name + "-staged")
+    shutil.copytree(previous, candidate, symlinks=True)
+    real_replace = os.replace
+    interrupted = False
+    rollback_interrupted = False
+
+    def interrupt(source, destination):
+        nonlocal interrupted, rollback_interrupted
+        real_replace(source, destination)
+        if pathlib.Path(destination) == root / "current" and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        if pathlib.Path(destination) == root / "install-state.json" and interrupted:
+            pending = distribution.read_state(root).get("pending_activation", {})
+            if pending.get("release_dir") == str(previous) and not rollback_interrupted:
+                rollback_interrupted = True
+                raise KeyboardInterrupt
+
+    monkeypatch.setattr(os, "replace", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        distribution.activate_release(candidate, root)
+    assert (root / "current").resolve() == candidate
+    with pytest.raises(KeyboardInterrupt):
+        distribution.activate_release(previous, root)
+    assert (root / "current").resolve() == candidate
+    distribution.activate_release(previous, root)
+    assert (root / "current").resolve() == previous
+    assert distribution.read_state(root)["release_dir"] == str(previous)
+    assert not distribution.read_state(root).get("pending_activation")

@@ -726,7 +726,11 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
                 candidate.setattr(
                     importlib.metadata,
                     "version",
-                    lambda name: "0.1.1" if name == "garmin-coach" else package_version(name),
+                    lambda name: (
+                        json.loads((new / "manifest.json").read_text())["version"]
+                        if name == "garmin-coach"
+                        else package_version(name)
+                    ),
                 )
                 result = clients.configure(home, root, ["codex", "claude-code"])
             phase = "rollback"
@@ -738,7 +742,17 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
         return native_clients(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", native)
-    clients.configure(home, root, ["codex", "claude-code"])
+    with monkeypatch.context() as previous:
+        previous.setattr(
+            importlib.metadata,
+            "version",
+            lambda name: (
+                json.loads((old / "manifest.json").read_text())["version"]
+                if name == "garmin-coach"
+                else package_version(name)
+            ),
+        )
+        clients.configure(home, root, ["codex", "claude-code"])
 
     assert (
         lifecycle.main(

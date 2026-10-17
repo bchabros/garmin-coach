@@ -738,6 +738,7 @@ if __name__ == '__main__':
 """
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Private-runtime setup requires native macOS.")
 def test_complete_installer_execs_private_runtime_and_prints_summary_with_fake_account_cli(
     tmp_path,
 ):

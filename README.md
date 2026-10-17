@@ -138,6 +138,10 @@ unattended and reduces the digest to log-worthy alerts.
 
 ## Setup
 
+For the versioned macOS installer, release availability and consumer acceptance, see
+[distribution setup](docs/DISTRIBUTION.md). The commands below prepare a source checkout
+for development and operation.
+
 Requires Python 3.13 and [Poetry](https://python-poetry.org/). [Task](https://taskfile.dev/) is optional but recommended; every task wraps the underlying Poetry command.
 
 ```bash

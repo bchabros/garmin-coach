@@ -11,6 +11,11 @@ include = [{ path = "skills/coach/**/*.md", format = ["sdist", "wheel"] }]
 python = "^3.13"
 garminconnect = "*"
 curl-cffi = "*"
+# cryptography 49 removed Intel macOS wheels; retain the last native binary release there.
+cryptography = [
+    { version = "48.0.1", markers = "sys_platform == 'darwin' and platform_machine == 'x86_64'" },
+    { version = "49.0.0", markers = "sys_platform != 'darwin' or platform_machine != 'x86_64'" },
+]
 pydantic = "*"
 pydantic-settings = "*"
 python-dotenv = "*"

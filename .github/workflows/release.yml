@@ -1,0 +1,79 @@
+name: macOS release candidate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "scripts/build_release.py"
+      - "scripts/install.sh.in"
+      - "scripts/smoke_release.py"
+      - "src/**"
+      - "skills/coach/**"
+      - "poetry.lock"
+      - "pyproject.toml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag matching the package version (for example v0.1.0)
+        required: true
+        type: string
+      publish:
+        description: Publish a prerelease after native package checks
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install Poetry release tools
+        run: |
+          pipx install poetry==2.2.1
+          pipx inject poetry poetry-plugin-export==1.9.0
+      - name: Build locked binary wheelhouse and installer
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          BUILD_TAG="${RELEASE_TAG:-v$(poetry version -s)}"
+          python scripts/build_release.py --tag "$BUILD_TAG" --output dist/release --release-base "https://github.com/${{ github.repository }}/releases/download/$BUILD_TAG"
+      - name: Install actual bundle into private runtime and probe package
+        run: PYTHONPATH=src python scripts/smoke_release.py --manifest "dist/release/manifest-${{ matrix.arch }}.json" --bundle "dist/release/garmin-coach-$(poetry version -s)-macos-${{ matrix.arch }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: dist/release/*
+  publish:
+    if: inputs.publish
+    needs: bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          merge-multiple: true
+          path: release
+      - name: Publish tested assets as a prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --prerelease --title "Garmin Coach $RELEASE_TAG" --notes "Native macOS package smoke passed. Consumer clean-Mac and fresh-client acceptance remain separately recorded in docs/DISTRIBUTION.md."

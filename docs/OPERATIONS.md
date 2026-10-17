@@ -8,7 +8,9 @@ definitions live in `docs/glossary.md`; deep design detail for the nightly path 
 The golden rule still holds here: this layer reads the finished DB. Only `backfill`,
 `sync`, `refresh-today`, and `daily` talk to Garmin (plus the out-of-seam `push`);
 interactive `setup` invokes the same backfill after explicit confirmation.
-`features` and `report` never do.
+`features` and `report` never do. Local `doctor` is also offline; its explicit
+`--live-auth` option only attempts the saved login. See [program maintenance](LIFECYCLE.md)
+for diagnosis, backups, staged updates and removal while preserving athlete records.
 
 ## Directory map (what lives where)
 

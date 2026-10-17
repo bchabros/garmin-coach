@@ -860,3 +860,27 @@ def test_missing_enabled_scheduler_or_concurrent_lifecycle_operation_refuses_rem
     assert lifecycle.main(args) == 2
     capsys.readouterr()
     assert old.exists()
+
+
+def test_public_cli_diagnoses_and_backs_up_the_selected_installation(tmp_path, capsys):
+    from garmin_coach import cli
+
+    home = make_home(tmp_path / "athlete")
+    runtime = tmp_path / "unmanaged-runtime"
+    arguments = ["--home", str(home)]
+    before = (home / "data" / "garmin.db").read_bytes()
+
+    assert cli.main(arguments + ["doctor", "--runtime-root", str(runtime)]) == 1
+    observed = json.loads(capsys.readouterr().out)
+    assert observed["installation"] == str(home)
+    assert observed["checks"]["database"]["state"] == "ready"
+    assert not runtime.exists()
+
+    assert cli.main(arguments + ["program", "backup", "--runtime-root", str(runtime)]) == 0
+    capsys.readouterr()
+    snapshots = list((home / "backups" / "program").glob("*/database.sqlite"))
+    assert len(snapshots) == 1
+    with sqlite3.connect(snapshots[0]) as connection:
+        assert connection.execute("SELECT date FROM daily_metrics").fetchone()[0] == "2026-10-16"
+    assert (home / "data" / "garmin.db").read_bytes() == before
+    assert not runtime.exists()

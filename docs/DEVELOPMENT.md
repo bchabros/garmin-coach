@@ -76,6 +76,13 @@ generated packages on temporary installations with fake client executables, and
 verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
 check documented in `docs/CLIENT_SETUP.md`.
 
+`distribution.py` owns verified versioned runtime preparation, stable launchers and
+opt-in scheduling. `lifecycle.py` consumes those ownership receipts for diagnosis,
+backup, staged update/rollback and removal. Durable database reads and SQLite backup
+remain in `core/installation.py`; maintenance refuses incompatible schemas and
+personal storage overlapping the program. See `docs/LIFECYCLE.md` for operator
+recovery and the separate native/client acceptance checks.
+
 `scripts/coach_project.py` selects the source checkout's Poetry interpreter before
 entering `project.py`, including from GUI clients or an unrelated working directory.
 The guarded launch rejects conflicting database/plan environment paths and uses

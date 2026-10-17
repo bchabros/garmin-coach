@@ -120,6 +120,8 @@ def _marketplace_configuration(name: str) -> dict[str, bytes]:
                 {
                     "name": name,
                     "source": {"source": "local", "path": "./plugin"},
+                    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                    "category": "Productivity",
                 }
             ],
         }
@@ -210,26 +212,30 @@ def _register(root: pathlib.Path, host: str, previous: dict[str, Any]) -> dict[s
     return {**registration, "state": "registered" if succeeded else "failed", "stage": "plugin"}
 
 
+def _client_action(state: str) -> str:
+    if state == "needs_activation":
+        return (
+            "Open the selected athlete installation as a local conversation folder. "
+            "Restart the client, enable the plugin if requested, and verify its coach skill "
+            "and MCP tools in a fresh conversation. Record client acceptance separately."
+        )
+    if state == "preparing":
+        return "Registration is incomplete. Rerun client configuration to finish or resume setup."
+    return (
+        "Install or repair the selected client, then rerun configuration. "
+        "Client command output is withheld because it may contain private settings."
+    )
+
+
 def _client_states(receipt: dict[str, Any]) -> dict[str, Any]:
     result = {}
     for client in receipt["selected_clients"]:
-        registration = receipt["registrations"].get(
-            "claude-code" if client == "claude-code" else "openai", {"state": "failed"}
-        )
-        state = registration["state"]
+        host = "claude-code" if client == "claude-code" else "openai"
+        registration = receipt.get("registrations", {}).get(host, {})
+        state = registration.get("state", "preparing")
         if state == "registered":
             state = "needs_activation"
-        result[client] = {
-            "state": state,
-            "actions": [
-                "Open the selected athlete installation as a local conversation folder. "
-                "Restart the client, enable the plugin if requested, and verify its coach skill "
-                "and MCP tools in a fresh conversation. Record client acceptance separately."
-                if state == "needs_activation"
-                else "Install or repair the selected client, then rerun configuration. "
-                "Client command output is withheld because it may contain private settings."
-            ],
-        }
+        result[client] = {"state": state, "actions": [_client_action(state)]}
     return result
 
 
@@ -269,6 +275,7 @@ def status(home: pathlib.Path, runtime_root: pathlib.Path) -> dict[str, Any]:
     )
     return {
         **receipt,
+        "clients": _client_states(receipt),
         "integrity": "changed" if changed else "verified",
         "changed_artifacts": changed,
         "source_version": importlib.metadata.version("garmin-coach"),
@@ -388,6 +395,7 @@ def configure(
         "runtime_available": (runtime_root / "bin/garmin-coach-mcp").is_file(),
         "artifacts": {path: hashlib.sha256(content).hexdigest() for path, content in files.items()},
     }
+    receipt["clients"] = _client_states(receipt)
     _save(root, receipt)
     _register_clients(root, receipt)
     return receipt

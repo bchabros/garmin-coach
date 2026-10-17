@@ -47,6 +47,8 @@ Claude Code uses `claude plugin marketplace add` and `claude plugin install` at 
 scope. Work/Codex use `codex plugin marketplace add` and `codex plugin add`. Command
 failures are reported without copying private client output into logs. Rerun configure
 after fixing the client; a completed marketplace step is retained after partial failure.
+An interrupted registration reports `preparing` with a resumption action for every
+selected client, including an interruption before the first external command returns.
 
 The receipt records historical registration, resource hashes, source/package versions,
 runtime availability, and pending actions. Status verifies prepared files and whether

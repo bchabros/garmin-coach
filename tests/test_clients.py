@@ -56,6 +56,11 @@ def test_missing_clients_prepare_complete_packages_without_modifying_athlete_dat
     assert str(athlete_home) in router
     assert str(runtime / "bin/garmin-coach") in router
     assert router.index("## Selected athlete installation") < router.index("## Running the CLI")
+    marketplace = json.loads((package.parent / ".agents/plugins/marketplace.json").read_text())
+    entry = marketplace["plugins"][0]
+    # Required by the external OpenAI marketplace contract, not inferred from the generator.
+    assert entry["policy"] == {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}
+    assert entry["category"] == "Productivity"
     assert sorted(p.name for p in athlete_home.iterdir()) == [".env"]
 
 
@@ -281,3 +286,28 @@ def test_main_cli_routes_client_setup_to_the_selected_installation(athlete_home,
     assert output["selected_clients"] == ["codex"]
     assert output["clients"]["codex"]["state"] == "client_missing"
     assert sorted(path.name for path in athlete_home.iterdir()) == [".env"]
+
+
+def test_interrupted_registration_status_retains_each_client_and_resumption_actions(
+    athlete_home, tmp_path
+):
+    runtime, tools = tmp_path / "runtime", tmp_path / "tools"
+    tools.mkdir()
+    executable = tools / "claude"
+    executable.write_text(f"#!{PYTHON}\nimport os, signal\nos.kill(os.getppid(), signal.SIGKILL)\n")
+    executable.chmod(0o755)
+    interrupted = invoke(
+        athlete_home, runtime, "configure", "--clients", "claude-code", path=str(tools)
+    )
+    assert interrupted.returncode < 0
+    inspected = invoke(athlete_home, runtime, "status", path=str(tools))
+    assert inspected.returncode == 0, inspected.stderr
+    state = json.loads(inspected.stdout)
+    assert state["clients"]["claude-code"]["state"] == "preparing"
+    assert any("rerun" in action.lower() for action in state["clients"]["claude-code"]["actions"])
+    fake_client(tools, "claude")
+    resumed = invoke(
+        athlete_home, runtime, "configure", "--clients", "claude-code", path=str(tools)
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    assert json.loads(resumed.stdout)["clients"]["claude-code"]["state"] == "needs_activation"

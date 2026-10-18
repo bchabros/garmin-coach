@@ -40,6 +40,10 @@ def audit_wheel(path: pathlib.Path) -> None:
         .decode()
         .split("\0")
     )
+    public_skills = {
+        "skills/coach/" + name
+        for name in json.loads((ROOT / "src/garmin_coach/coach_resources.json").read_text())
+    }
     metadata_names = {"METADATA", "WHEEL", "RECORD", "entry_points.txt"}
     machine_path = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\)")
     with zipfile.ZipFile(path) as archive:
@@ -58,6 +62,8 @@ def audit_wheel(path: pathlib.Path) -> None:
                 and parts[1:] == ("licenses", "LICENSE")
                 and "LICENSE" in tracked
             )
+            if name.startswith("skills/") and name not in public_skills:
+                raise ValueError(f"Unapproved coach resource in release wheel: {name}")
             if source not in tracked and not generated and not license_file:
                 raise ValueError(f"Unapproved or untracked file in release wheel: {name}")
             if machine_path.search(archive.read(name)):
@@ -122,15 +128,22 @@ def _wheelhouse(
 
 def _canonical_assets(bundle: pathlib.Path) -> None:
     shutil.copy2(ROOT / "src" / "garmin_coach" / "distribution.py", bundle / "bootstrap.py")
-    tracked = subprocess.check_output(
-        ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True
-    ).splitlines()
-    for name in tracked:
-        path = ROOT / name
-        if path.is_file() and not path.is_symlink():
-            target = bundle / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
+    tracked = set(
+        subprocess.check_output(
+            ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True
+        ).splitlines()
+    )
+    public = json.loads((ROOT / "src/garmin_coach/coach_resources.json").read_text())
+    source = ROOT / "skills/coach"
+    for name in public:
+        relative = "skills/coach/" + name
+        path = source / name
+        components = [path, *path.parents[: len(path.parts) - len(source.parts)]]
+        if relative not in tracked or any(part.is_symlink() for part in components):
+            raise ValueError("Release coach resources must be tracked regular files.")
+        target = bundle / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def _bundle_archive(bundle: pathlib.Path, archive: pathlib.Path) -> None:

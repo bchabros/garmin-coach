@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/release.yml"
       - "scripts/build_release.py"
+      - "build_support/**"
       - "scripts/install.sh.in"
       - "scripts/smoke_release.py"
       - "src/**"

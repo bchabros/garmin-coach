@@ -73,8 +73,10 @@ coach resources carried by the Python distribution. Generated local marketplaces
 and atomic registration receipts belong to the managed runtime, outside athlete
 records; their server commands name the installation explicitly. Test its CLI and
 generated packages on temporary installations with fake client executables, and
-verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
-check documented in `docs/CLIENT_SETUP.md`.
+verify stdio reads from a copied cache. The public resource manifest also governs
+the standalone skill archive; `saved-context.md` contains generic lookup rules, while
+athlete race records stay in the selected installation (ADR 0035). Fresh model
+acceptance is a separate manual check documented in `docs/CLIENT_SETUP.md`.
 
 `distribution.py` is standard-library-only: release tooling ships it as the standalone
 bootstrap before application dependencies exist. It owns verified versioned runtime

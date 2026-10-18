@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import fcntl
 import importlib.metadata
+import importlib.resources
 import json
 import pathlib
 import shlex
@@ -20,11 +21,10 @@ from . import distribution
 from .core import installation
 
 
-_PUBLIC_COACH_RESOURCES = (
-    "SKILL.md",
-    "references/report.md",
-    "references/planning.md",
-    "references/authoring.md",
+_PUBLIC_COACH_RESOURCES = tuple(
+    json.loads(
+        importlib.resources.files("garmin_coach").joinpath("coach_resources.json").read_text()
+    )
 )
 
 
@@ -218,24 +218,25 @@ def _release_bindings(
     _atomic_write(path, _json(registry))
 
 
+def _read_resource(root: pathlib.Path, name: str) -> bytes:
+    path = root / name
+    components = [path, *path.parents[: len(path.parts) - len(root.parts)]]
+    if any(part.is_symlink() for part in components) or not path.is_file():
+        raise ValueError("Coach resources missing or unsafe; reinstall the complete package.")
+    return path.read_bytes()
+
+
 def _resources() -> dict[str, bytes]:
-    public = _PUBLIC_COACH_RESOURCES
     source = pathlib.Path(__file__).resolve().parents[2] / "skills/coach"
     if source.is_dir():
-        resources = {
-            name: (source / name).read_bytes() for name in public if (source / name).is_file()
-        }
-    else:
-        distribution = importlib.metadata.distribution("garmin-coach")
-        prefix = "skills/coach/"
-        resources = {
-            str(path)[len(prefix) :]: pathlib.Path(str(distribution.locate_file(path))).read_bytes()
-            for path in distribution.files or []
-            if str(path).startswith(prefix) and str(path)[len(prefix) :] in public
-        }
-    if not set(public) <= resources.keys():
+        return {name: _read_resource(source, name) for name in _PUBLIC_COACH_RESOURCES}
+    distribution = importlib.metadata.distribution("garmin-coach")
+    prefix = "skills/coach/"
+    available = {str(path) for path in distribution.files or []}
+    if any(prefix + name not in available for name in _PUBLIC_COACH_RESOURCES):
         raise ValueError("Coach resources missing; reinstall the complete Garmin Coach package.")
-    return resources
+    installed = pathlib.Path(str(distribution.locate_file(prefix)))
+    return {name: _read_resource(installed, name) for name in _PUBLIC_COACH_RESOURCES}
 
 
 def _json(value: Any) -> bytes:
@@ -277,8 +278,8 @@ def _package(home: pathlib.Path, runtime: pathlib.Path, name: str) -> dict[str, 
         "installation; source development requires a separately selected source checkout. "
         "For an allowed local CLI fallback, use "
         f"`{shlex.join([str(runtime / 'bin/garmin-coach'), '--home', str(home)])}` "
-        "and the requested command. This managed executable replaces the "
-        "source-checkout Poetry/PYTHONPATH fallback below. If it is unavailable, report the "
+        "and the requested command. This managed executable is the supported runtime "
+        "for this installation. If it is unavailable, report the "
         "runtime prerequisite and have the operator repair the managed installation.\n"
     )
     frontmatter, separator, body = resources["SKILL.md"].partition(b"\n---\n")
@@ -999,7 +1000,12 @@ def _snapshot_resources(
         if private:
             continue
         files[relative] = path.read_bytes()
-    required = {"plugin/skills/coach/" + name for name in _PUBLIC_COACH_RESOURCES}
+    # Older complete generations predate the generic saved-context reference.
+    required = {
+        "plugin/skills/coach/" + name
+        for name in _PUBLIC_COACH_RESOURCES
+        if name != "references/saved-context.md"
+    }
     if not required <= files.keys():
         raise ValueError(
             "Recovery snapshot lacks public coach resources; preserve it for inspection."

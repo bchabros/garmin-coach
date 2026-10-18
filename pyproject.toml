@@ -6,10 +6,12 @@ authors = ["Chabros <chabros96@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "garmin_coach", from = "src" }]
 include = [
+    { path = "build_support/coach_build.py", format = ["sdist"] },
     { path = "skills/coach/SKILL.md", format = ["sdist", "wheel"] },
     { path = "skills/coach/references/report.md", format = ["sdist", "wheel"] },
     { path = "skills/coach/references/planning.md", format = ["sdist", "wheel"] },
     { path = "skills/coach/references/authoring.md", format = ["sdist", "wheel"] },
+    { path = "skills/coach/references/saved-context.md", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry.dependencies]
@@ -38,8 +40,10 @@ garmin-coach = "garmin_coach.cli:main"
 garmin-coach-mcp = "garmin_coach.mcp.server:main"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+# The conditional TOML reader also keeps Poetry CLI on the declared PEP 517 backend.
+requires = ["poetry-core>=2.5.0", "tomli>=2.0; python_version < '3.11'"]
+build-backend = "coach_build"
+backend-path = ["build_support"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

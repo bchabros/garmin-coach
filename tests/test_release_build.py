@@ -114,15 +114,7 @@ def test_plain_wheel_build_excludes_private_source_skill_files(tmp_path):
     poetry = shutil.which("poetry")
     if poetry is None:
         pytest.skip("building the package needs Poetry")
-    source = pathlib.Path(__file__).resolve().parents[1]
-    checkout = tmp_path / "source"
-    checkout.mkdir()
-    for name in ("pyproject.toml", "README.md"):
-        shutil.copyfile(source / name, checkout / name)
-    for name in ("src", "skills"):
-        shutil.copytree(
-            source / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__")
-        )
+    checkout = _source_checkout(tmp_path)
     private = checkout / "skills/coach/references/context.md"
     private.write_text("Synthetic private athlete marker")
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -142,4 +134,226 @@ def test_plain_wheel_build_excludes_private_source_skill_files(tmp_path):
             "skills/coach/references/report.md",
             "skills/coach/references/planning.md",
             "skills/coach/references/authoring.md",
+            "skills/coach/references/saved-context.md",
         }
+        assert "garmin_coach/coach_resources.json" in archive.namelist()
+
+
+def test_release_bundle_excludes_even_tracked_private_skill_resources(
+    tmp_path, release_builder, monkeypatch
+):
+    import json
+    import shutil
+    import subprocess
+    import tarfile
+
+    source = pathlib.Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "source"
+    public = {
+        "SKILL.md",
+        "references/report.md",
+        "references/planning.md",
+        "references/authoring.md",
+        "references/saved-context.md",
+    }
+    for name in public:
+        target = checkout / "skills/coach" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / "skills/coach" / name, target)
+    private = checkout / "skills/coach/references/context.md"
+    private.write_text("Synthetic private athlete facts")
+    for name in ("distribution.py", "coach_resources.json"):
+        target = checkout / "src/garmin_coach" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / "src/garmin_coach" / name, target)
+    shutil.copyfile(source / "pyproject.toml", checkout / "pyproject.toml")
+    (checkout / "scripts").mkdir()
+    shutil.copyfile(source / "scripts/install.sh.in", checkout / "scripts/install.sh.in")
+    tracked = [
+        *[f"skills/coach/{name}" for name in public],
+        "skills/coach/references/context.md",
+    ]
+
+    def run(command, **kwargs):
+        if command[:2] == ["poetry", "build"]:
+            output = pathlib.Path(command[-1])
+            output.mkdir()
+            with zipfile.ZipFile(output / "garmin_coach-0.1.1-py3-none-any.whl", "w") as archive:
+                archive.writestr("garmin_coach-0.1.1.dist-info/METADATA", "Name: garmin-coach")
+        elif command[:2] == ["poetry", "export"]:
+            pathlib.Path(command[-1]).write_text("")
+        else:
+            assert command[1:4] == ["-m", "pip", "download"]
+        return subprocess.CompletedProcess(command, 0)
+
+    def check_output(command, **kwargs):
+        if command[:2] == ["git", "rev-parse"]:
+            return "synthetic-source-commit\n"
+        if "-z" in command:
+            return "\0".join(tracked).encode()
+        return "\n".join(tracked)
+
+    monkeypatch.setattr(release_builder, "ROOT", checkout)
+    monkeypatch.setattr(release_builder.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(release_builder.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(release_builder.subprocess, "run", run)
+    monkeypatch.setattr(release_builder.subprocess, "check_output", check_output)
+    output = tmp_path / "release"
+
+    release_builder.build(output, "v0.1.1", "https://example.invalid/v0.1.1")
+
+    with tarfile.open(next(output.glob("*.tar.gz"))) as archive:
+        resources = {name for name in archive.getnames() if name.startswith("skills/")}
+        assert {name for name in resources if name.endswith(".md")} == {
+            f"skills/coach/{name}" for name in public
+        }
+    assert json.loads(next(output.glob("manifest-*.json")).read_text())["version"] == "0.1.1"
+
+
+def test_wheel_audit_rejects_private_skill_even_if_tracked(tmp_path, release_builder, monkeypatch):
+    name = "skills/coach/references/context.md"
+    wheel = tmp_path / "release.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(name, "Synthetic private athlete facts")
+    monkeypatch.setattr(
+        release_builder.subprocess, "check_output", lambda *args, **kwargs: name.encode()
+    )
+    with pytest.raises(ValueError, match="Unapproved|unapproved"):
+        release_builder.audit_wheel(wheel)
+
+
+def _source_checkout(tmp_path):
+    import json
+    import shutil
+
+    source = pathlib.Path(__file__).resolve().parents[1]
+    checkout = tmp_path / "source"
+    checkout.mkdir()
+    for name in ("pyproject.toml", "README.md"):
+        shutil.copyfile(source / name, checkout / name)
+    for name in ("src", "build_support"):
+        if (source / name).is_dir():
+            shutil.copytree(
+                source / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__")
+            )
+    public = json.loads((source / "src/garmin_coach/coach_resources.json").read_text())
+    for name in public:
+        target = checkout / "skills/coach" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / "skills/coach" / name, target)
+    return checkout
+
+
+@pytest.mark.parametrize("format", ["wheel", "sdist"])
+def test_plain_build_refuses_symlinked_public_resources(tmp_path, format):
+    import os
+    import shutil
+    import subprocess
+
+    poetry = shutil.which("poetry")
+    if poetry is None:
+        pytest.skip("building the package needs Poetry")
+    checkout = _source_checkout(tmp_path)
+    reference = checkout / "skills/coach/references/report.md"
+    private = reference.with_name("private.md")
+    private.write_text("Synthetic private athlete facts")
+    reference.unlink()
+    reference.symlink_to(private.name)
+    output = tmp_path / "dist"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    result = subprocess.run(
+        [poetry, "build", "--format", format, "--output", str(output)],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0
+    assert "public coach resource" in result.stdout + result.stderr
+    assert "Synthetic private athlete facts" not in result.stdout + result.stderr
+    assert not list(output.glob("*.whl"))
+    assert not list(output.glob("*.tar.gz"))
+
+
+def test_plain_sdist_rebuilds_a_complete_pure_wheel(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    import tarfile
+
+    poetry = shutil.which("poetry")
+    if poetry is None:
+        pytest.skip("building the package needs Poetry")
+    checkout = _source_checkout(tmp_path)
+    (checkout / "skills/coach/references/context.md").write_text("Synthetic private athlete facts")
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    output = tmp_path / "source-dist"
+    subprocess.run(
+        [poetry, "build", "--format", "sdist", "--output", str(output)],
+        cwd=checkout,
+        env=environment,
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    with tarfile.open(next(output.glob("*.tar.gz"))) as archive:
+        archive.extractall(tmp_path / "unpacked", filter="data")
+    (unpacked,) = (tmp_path / "unpacked").iterdir()
+    assert (unpacked / "build_support/coach_build.py").is_file()
+    assert (unpacked / "src/garmin_coach/coach_resources.json").is_file()
+    assert not (unpacked / "skills/coach/references/context.md").exists()
+    wheel_output = tmp_path / "rebuilt-wheel"
+    subprocess.run(
+        [poetry, "build", "--format", "wheel", "--output", str(wheel_output)],
+        cwd=unpacked,
+        env=environment,
+        check=True,
+        capture_output=True,
+        timeout=120,
+    )
+    (wheel,) = wheel_output.glob("*.whl")
+    assert wheel.name.endswith("-py3-none-any.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        assert "build_support/coach_build.py" not in archive.namelist()
+        assert "skills/coach/references/saved-context.md" in archive.namelist()
+        assert all(
+            b"Synthetic private athlete facts" not in archive.read(name)
+            for name in archive.namelist()
+        )
+
+
+@pytest.mark.parametrize("format", ["wheel", "sdist"])
+def test_plain_build_refuses_private_include_for_either_format(tmp_path, format):
+    import os
+    import shutil
+    import subprocess
+
+    poetry = shutil.which("poetry")
+    if poetry is None:
+        pytest.skip("building the package needs Poetry")
+    checkout = _source_checkout(tmp_path)
+    (checkout / "skills/coach/references/private.md").write_text("Synthetic private athlete facts")
+    config = checkout / "pyproject.toml"
+    config.write_text(
+        config.read_text().replace(
+            "include = [\n",
+            'include = [\n    { path = "skills/coach/references/private.md", '
+            f'format = ["{format}"] }},\n',
+            1,
+        )
+    )
+    output = tmp_path / "dist"
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    result = subprocess.run(
+        [poetry, "build", "--format", format, "--output", str(output)],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode != 0
+    assert "public coach resource manifest" in result.stdout + result.stderr
+    assert not list(output.glob("*.whl"))
+    assert not list(output.glob("*.tar.gz"))

@@ -497,7 +497,12 @@ def author_workout(
     conn = _open()
     try:
         return tools.author_workout(
-            conn, date=date, request=request, sport=sport, reports_dir=_reports_dir()
+            conn,
+            date=date,
+            request=request,
+            sport=sport,
+            reuse_from=reuse_from,
+            reports_dir=_reports_dir(),
         )
     finally:
         conn.close()

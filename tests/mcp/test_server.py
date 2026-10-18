@@ -1,8 +1,9 @@
 """In-process smoke test of the MCP wiring (epic #18).
 
-The behaviour lives in ``mcp.tools`` (tested offline in test_tools.py);
-here we only assert the protocol layer registers every tool under its expected
-name with a usable description. No stdio transport, no network.
+The behaviour lives in ``mcp.tools`` (tested offline in test_tools.py).
+These tests cover protocol registration and the server entry points, using real
+SQLite and temporary athlete files where argument adaptation affects behavior.
+No stdio transport, no network.
 """
 
 from __future__ import annotations
@@ -296,3 +297,77 @@ def test_a_push_from_chat_records_its_receipt_in_the_installation(athlete_home, 
 
     receipt = athlete_home / "reports" / day / "push.json"
     assert json.loads(receipt.read_text())["applied"] is True
+
+
+def _workout_week(athlete_home, *, target_intent="strength"):
+    (athlete_home / "data").mkdir()
+    conn = db.connect(str(athlete_home / "data" / "garmin.db"))
+    db.bootstrap(conn)
+    conn.close()
+    today = _dt.date.today()
+    monday = today + _dt.timedelta(days=7 - today.weekday())
+    days = [{"planned": "strength", "intent": "strength"} for _ in range(7)]
+    days[2] = {"planned": target_intent, "intent": target_intent}
+    outcome = server.plan_confirm(monday.isoformat(), days)["data"]
+    assert outcome["written"] is True
+    return monday.isoformat(), (monday + _dt.timedelta(days=2)).isoformat()
+
+
+def test_author_workout_reuses_the_requested_session_from_chat(athlete_home):
+    """Repeating a named session preserves its steps instead of taking a recommendation."""
+    source, target = _workout_week(athlete_home)
+    request = json.loads((FIXTURES / "strength_request.json").read_text())
+    request["name"] = "GC FBB A"
+    original = server.author_workout(date=source, request=request)["data"]["spec"]
+
+    outcome = server.author_workout(date=target, reuse_from=source)["data"]
+
+    assert outcome["error"] is None
+    assert outcome["spec"]["date"] == target
+    assert outcome["spec"]["name"] == "GC FBB A"
+    assert outcome["spec"]["steps"] == original["steps"]
+    persisted = json.loads((athlete_home / "reports" / target / "workout.json").read_text())
+    assert persisted == outcome["spec"]
+
+
+@pytest.mark.parametrize("refusal", ["plan", "past_date"])
+def test_reusing_a_session_from_chat_obeys_the_target_days_guards(athlete_home, refusal):
+    source, target = _workout_week(athlete_home, target_intent="rest")
+    request = json.loads((FIXTURES / "strength_request.json").read_text())
+    request["name"] = "GC FBB A"
+    original = server.author_workout(date=source, request=request)["data"]
+    assert original["error"] is None
+    if refusal == "past_date":
+        target = _past(1)
+
+    outcome = server.author_workout(date=target, reuse_from=source)["data"]
+
+    assert outcome["spec"] is None
+    if refusal == "plan":
+        assert "strength" in outcome["error"]
+        assert "rest" in outcome["error"]
+    else:
+        assert "past date" in outcome["error"]
+        assert target in outcome["error"]
+    assert not (athlete_home / "reports" / target / "workout.json").exists()
+    assert (
+        json.loads((athlete_home / "reports" / source / "workout.json").read_text())
+        == (original["spec"])
+    )
+
+
+def test_reusing_a_missing_session_from_chat_does_not_author_a_recommendation(athlete_home):
+    _, target = _workout_week(athlete_home, target_intent="easy")
+    missing = _past(1)
+    fallback = server.author_workout(date=target)["data"]
+    assert fallback["error"] is None
+    assert fallback["spec"] is not None
+    target_path = athlete_home / "reports" / target / "workout.json"
+    before = target_path.read_bytes()
+
+    outcome = server.author_workout(date=target, reuse_from=missing)["data"]
+
+    assert outcome["spec"] is None
+    assert missing in outcome["error"]
+    assert "no workout.json" in outcome["error"]
+    assert target_path.read_bytes() == before

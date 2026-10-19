@@ -44,6 +44,11 @@ def invoke(home, runtime, *arguments, path=""):
     )
 
 
+def _section(text, heading):
+    start = text.index(heading + "\n")
+    return text[start : text.index("\n## ", start)]
+
+
 def test_missing_clients_prepare_complete_packages_without_modifying_athlete_data(
     athlete_home,
     tmp_path,
@@ -59,6 +64,7 @@ def test_missing_clients_prepare_complete_packages_without_modifying_athlete_dat
     assert (package / "skills/coach/references/report.md").is_file()
     assert (package / "skills/coach/references/planning.md").is_file()
     assert (package / "skills/coach/references/authoring.md").is_file()
+    assert (package / "skills/coach/references/saved-context.md").is_file()
     binding = json.loads((package / ".mcp.json").read_text())["mcpServers"]["coach"]
     assert binding["command"] == str(runtime / "bin/garmin-coach-mcp")
     assert binding["args"] == ["--home", str(athlete_home)]
@@ -66,6 +72,8 @@ def test_missing_clients_prepare_complete_packages_without_modifying_athlete_dat
     assert str(athlete_home) in router
     assert str(runtime / "bin/garmin-coach") in router
     assert router.index("## Selected athlete installation") < router.index("## Running the CLI")
+    canonical = (ROOT / "skills/coach/SKILL.md").read_text()
+    assert _section(router, "## Running the CLI") == _section(canonical, "## Running the CLI")
     assert "--break-system-packages" not in router
     assert "poetry run" not in (package / "skills/coach/references/report.md").read_text()
     marketplace = json.loads((package.parent / ".agents/plugins/marketplace.json").read_text())
@@ -959,7 +967,17 @@ def test_uncertain_native_success_with_changed_source_is_refused(
 
 
 @pytest.mark.parametrize("layout", ["source", "package"])
-@pytest.mark.parametrize("missing", [None, "SKILL.md", "references/report.md"])
+@pytest.mark.parametrize(
+    "missing",
+    [
+        None,
+        "SKILL.md",
+        "references/report.md",
+        "references/saved-context.md",
+        "symlink:references/report.md",
+        "symlink:references",
+    ],
+)
 def test_client_setup_copies_only_public_coach_resources_from_source_or_package(
     athlete_home, tmp_path, layout, missing
 ):
@@ -970,6 +988,7 @@ def test_client_setup_copies_only_public_coach_resources_from_source_or_package(
         "references/report.md",
         "references/planning.md",
         "references/authoring.md",
+        "references/saved-context.md",
     ]
     resources = source / ("skills/coach" if layout == "source" else "src/skills/coach")
     for relative in public:
@@ -989,7 +1008,17 @@ def test_client_setup_copies_only_public_coach_resources_from_source_or_package(
             "".join(f"skills/coach/{name},,\n" for name in [*public, "references/context.md"])
         )
     if missing is not None:
-        (resources / missing).unlink()
+        if missing.startswith("symlink:"):
+            target = resources / missing.removeprefix("symlink:")
+            outside = tmp_path / "outside"
+            if target.is_dir():
+                target.rename(outside)
+            else:
+                target.unlink()
+                outside.write_text("Synthetic private athlete facts")
+            target.symlink_to(outside)
+        else:
+            (resources / missing).unlink()
     runtime = tmp_path / "runtime"
     environment = dict(os.environ, PYTHONPATH=str(source / "src"), PATH="")
     environment.pop("GARMIN_COACH_HOME", None)
@@ -1063,7 +1092,7 @@ def test_owned_legacy_private_resource_is_removed_and_native_cache_reinstalled(
     assert not private.exists()
     assert "Synthetic legacy private context" not in retried.stdout + retried.stderr
     updated = json.loads(retried.stdout)
-    assert not any(path.endswith("context.md") for path in updated["artifacts"])
+    assert not any(path.endswith("/references/context.md") for path in updated["artifacts"])
     commands = [json.loads(line) for line in (tools / "commands.jsonl").read_text().splitlines()]
     removal = "remove" if host == "codex" else "uninstall"
     assert any(command[:2] == ["plugin", removal] for command in commands)
@@ -1100,7 +1129,7 @@ def test_interrupted_owned_private_resource_removal_resumes_without_losing_owner
     assert not private.exists()
     assert clients.status(athlete_home, runtime)["integrity"] == "preparing"
     restored = clients.configure(athlete_home, runtime, ["codex"])
-    assert not any(path.endswith("context.md") for path in restored["artifacts"])
+    assert not any(path.endswith("/references/context.md") for path in restored["artifacts"])
     assert clients.status(athlete_home, runtime)["integrity"] == "verified"
 
 
@@ -1148,7 +1177,7 @@ def test_restore_never_reintroduces_private_resources_from_prior_snapshot(
         return
     restored = clients.restore(athlete_home, runtime, backup)
     assert not private.exists()
-    assert not any(path.endswith("context.md") for path in restored["artifacts"])
+    assert not any(path.endswith("/references/context.md") for path in restored["artifacts"])
     assert snapshot_private.read_bytes() == b"Synthetic legacy private context"
 
 
@@ -1169,3 +1198,27 @@ def test_missing_client_does_not_claim_legacy_native_cache_was_cleaned(athlete_h
         for action in result["clients"]["claude-code"]["actions"]
     )
     assert result["registrations"]["claude-code"]["needs_clean_install"] is True
+
+
+def test_restore_accepts_complete_older_generation_without_saved_context(
+    athlete_home, tmp_path, monkeypatch
+):
+    from garmin_coach import clients
+
+    monkeypatch.setenv("PATH", "")
+    runtime = tmp_path / "runtime"
+    current = clients.configure(athlete_home, runtime, ["codex"])
+    backup = tmp_path / "older-snapshot"
+    shutil.copytree(current["integration_root"], backup)
+    record_path = backup / "registration.json"
+    record = json.loads(record_path.read_text())
+    new_reference = "plugin/skills/coach/references/saved-context.md"
+    del record["artifacts"][new_reference]
+    record_path.write_text(json.dumps(record))
+    (backup / new_reference).unlink()
+
+    restored = clients.restore(athlete_home, runtime, backup)
+
+    assert new_reference not in restored["artifacts"]
+    assert clients.status(athlete_home, runtime)["integrity"] == "verified"
+    assert (backup / "plugin/skills/coach/references/report.md").is_file()

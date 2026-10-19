@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import pathlib
 import platform
@@ -26,6 +27,18 @@ PYTHON_HASHES = {
 }
 
 
+def _load_coach_resources():
+    """Load the package's public resource selection by path, without its dependencies."""
+    path = ROOT / "src/garmin_coach/coach_resources.py"
+    spec = importlib.util.spec_from_file_location("coach_resources", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+coach_resources = _load_coach_resources()
+
+
 def digest(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -40,6 +53,7 @@ def audit_wheel(path: pathlib.Path) -> None:
         .decode()
         .split("\0")
     )
+    public_skills = {"skills/coach/" + name for name in coach_resources.public_names()}
     metadata_names = {"METADATA", "WHEEL", "RECORD", "entry_points.txt"}
     machine_path = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\)")
     with zipfile.ZipFile(path) as archive:
@@ -58,13 +72,42 @@ def audit_wheel(path: pathlib.Path) -> None:
                 and parts[1:] == ("licenses", "LICENSE")
                 and "LICENSE" in tracked
             )
+            if name.startswith("skills/") and name not in public_skills:
+                raise ValueError(f"Unapproved coach resource in release wheel: {name}")
             if source not in tracked and not generated and not license_file:
                 raise ValueError(f"Unapproved or untracked file in release wheel: {name}")
             if machine_path.search(archive.read(name)):
                 raise ValueError(f"Machine-specific path found in release wheel: {name}")
 
 
+def check_public_resources(root: pathlib.Path) -> None:
+    """Refuse a release whose skill includes or public files break the resource manifest.
+
+    Args:
+        root: Source checkout holding ``pyproject.toml`` and ``skills/coach``.
+
+    Raises:
+        ValueError: The wheel or sdist include list differs from the public manifest, or a
+            public resource is missing or reached through a symlink.
+    """
+    expected = {"skills/coach/" + name for name in coach_resources.public_names()}
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    for distribution_format in ("wheel", "sdist"):
+        included = {
+            item["path"]
+            for item in config["tool"]["poetry"]["include"]
+            if item["path"].startswith("skills/")
+            and distribution_format in item.get("format", ["sdist"])
+        }
+        if included != expected:
+            raise ValueError(
+                f"The {distribution_format} includes must match the public coach resource manifest."
+            )
+    coach_resources.read_public(root / "skills/coach")
+
+
 def _build_wheel(staging: pathlib.Path) -> pathlib.Path:
+    check_public_resources(ROOT)
     subprocess.run(
         ["poetry", "build", "--format", "wheel", "--output", str(staging / "dist")],
         cwd=ROOT,
@@ -122,15 +165,22 @@ def _wheelhouse(
 
 def _canonical_assets(bundle: pathlib.Path) -> None:
     shutil.copy2(ROOT / "src" / "garmin_coach" / "distribution.py", bundle / "bootstrap.py")
-    tracked = subprocess.check_output(
-        ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True
-    ).splitlines()
-    for name in tracked:
-        path = ROOT / name
-        if path.is_file() and not path.is_symlink():
-            target = bundle / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
+    tracked = set(
+        subprocess.check_output(
+            ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True
+        ).splitlines()
+    )
+    try:
+        public = coach_resources.read_public(ROOT / "skills/coach")
+    except ValueError as error:
+        raise ValueError("Release coach resources must be tracked regular files.") from error
+    for name, content in public.items():
+        relative = "skills/coach/" + name
+        if relative not in tracked:
+            raise ValueError("Release coach resources must be tracked regular files.")
+        target = bundle / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
 
 
 def _bundle_archive(bundle: pathlib.Path, archive: pathlib.Path) -> None:

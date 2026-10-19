@@ -154,7 +154,13 @@ def test_register_updates_a_stale_entry(mod, config_file, monkeypatch):
     assert len([k for k in servers if k == "coach"]) == 1
 
 
-SKILL_FILES = {"SKILL.md": "# Coach\nrouter\n", "references/report.md": "# Report\nsections\n"}
+SKILL_FILES = {
+    "SKILL.md": "# Coach\nrouter\n",
+    "references/report.md": "# Report\nsections\n",
+    "references/planning.md": "# Planning\nweeks\n",
+    "references/authoring.md": "# Authoring\nworkouts\n",
+    "references/saved-context.md": "# Saved context\narchive pointers\n",
+}
 
 
 def _write_tree(root: pathlib.Path, files: dict[str, str]) -> pathlib.Path:
@@ -270,7 +276,7 @@ def test_package_skill_roots_the_archive_at_the_skill_folder(
 
     assert _package(mod, skill_repo, dist, monkeypatch) == 0
     with zipfile.ZipFile(dist / "coach.zip") as bundle:
-        assert sorted(bundle.namelist()) == ["coach/SKILL.md", "coach/references/report.md"]
+        assert sorted(bundle.namelist()) == sorted(f"coach/{name}" for name in SKILL_FILES)
 
 
 def test_package_skill_ships_the_current_bytes(mod, skill_repo, tmp_path, monkeypatch):
@@ -290,3 +296,64 @@ def test_package_skill_refuses_when_the_repo_has_no_skill(mod, tmp_path, monkeyp
     assert _package(mod, tmp_path / "absent", dist, monkeypatch) == 1
     assert "no skill in this repo" in capsys.readouterr().out
     assert not dist.exists()
+
+
+def test_package_skill_excludes_private_and_unrelated_resources(
+    mod, skill_repo, tmp_path, monkeypatch
+):
+    private = skill_repo / "references/context.md"
+    private.write_text("Synthetic private athlete facts")
+    (skill_repo / "references/private-link.md").symlink_to(private)
+    dist = tmp_path / "dist"
+    assert _package(mod, skill_repo, dist, monkeypatch) == 0
+    with zipfile.ZipFile(dist / "coach.zip") as bundle:
+        assert "coach/references/context.md" not in bundle.namelist()
+        assert "coach/references/private-link.md" not in bundle.namelist()
+        assert all(
+            b"Synthetic private athlete facts" not in bundle.read(name)
+            for name in bundle.namelist()
+        )
+
+
+@pytest.mark.parametrize("link", ["SKILL.md", "references", "."])
+def test_package_skill_refuses_symlink_public_resources(
+    mod, skill_repo, tmp_path, monkeypatch, link
+):
+    import shutil
+
+    outside = tmp_path / "outside"
+    if link == ".":
+        skill_repo.rename(outside)
+        skill_repo.symlink_to(outside, target_is_directory=True)
+    else:
+        target = skill_repo / link
+        if target.is_dir():
+            shutil.copytree(target, outside)
+            shutil.rmtree(target)
+        else:
+            outside.write_text("Synthetic private athlete facts")
+            target.unlink()
+        target.symlink_to(outside)
+    dist = tmp_path / "dist"
+    assert _package(mod, skill_repo, dist, monkeypatch) == 1
+    assert not (dist / "coach.zip").exists()
+
+
+@pytest.mark.parametrize("private_location", ["source", "cache"])
+def test_check_skill_does_not_read_private_markdown(
+    mod, skill_repo, tmp_path, monkeypatch, private_location
+):
+    home = tmp_path / "home"
+    cached = _sync(mod, home, SKILL_FILES)
+    root = skill_repo if private_location == "source" else cached
+    (root / "references/context.md").write_bytes(b"\xffprivate athlete facts")
+    assert _check_skill(mod, skill_repo, home, monkeypatch) is (private_location == "source")
+
+
+def test_package_skill_preserves_resource_bytes(mod, skill_repo, tmp_path, monkeypatch):
+    expected = b"# Coach\r\nrouter\r\n"
+    (skill_repo / "SKILL.md").write_bytes(expected)
+    dist = tmp_path / "dist"
+    assert _package(mod, skill_repo, dist, monkeypatch) == 0
+    with zipfile.ZipFile(dist / "coach.zip") as bundle:
+        assert bundle.read("coach/SKILL.md") == expected

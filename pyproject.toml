@@ -10,6 +10,7 @@ include = [
     { path = "skills/coach/references/report.md", format = ["sdist", "wheel"] },
     { path = "skills/coach/references/planning.md", format = ["sdist", "wheel"] },
     { path = "skills/coach/references/authoring.md", format = ["sdist", "wheel"] },
+    { path = "skills/coach/references/saved-context.md", format = ["sdist", "wheel"] },
 ]
 
 [tool.poetry.dependencies]

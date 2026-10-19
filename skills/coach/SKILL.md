@@ -1,23 +1,33 @@
 ---
 name: coach
 description: >-
-  Coach the athlete from the deterministic digest: write the daily coaching report, plan the training week, and author/push structured workouts to Garmin. Use when the user asks for a training report, coach read, weekly review, "how am I doing", or their current standing / stats / form / fitness snapshot ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); asks to plan or re-plan a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); or describes a session to put on the watch ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek"); or calls a pushed session off ("zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka").
+  Coach the athlete using recorded training and race evidence. Use for a training report,
+  coach read, weekly review, "how am I doing", or current form and fitness
+  ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty",
+  "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien",
+  "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a
+  workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40",
+  "dodaj trening silowy na piatek", "zdejmij trening z czwartku",
+  "odwolaj piatkowy trening", "jestem chory, usun to z zegarka");
+  historical race results, comparisons or race time scenarios; and finding
+  saved coaching context from earlier reports or decisions.
 ---
 
 # Coach
 
 Turn the `daily_metrics` mart into a short coaching read, plan the athlete's week, and
 author the sessions they want on the watch. The heavy lifting is deterministic Python;
-your job is the narrative and the judgement. **Never query Garmin live and never read the
-raw mart** - you consume the compact digest and the current-standing snapshot only.
+your job is the narrative and the judgement. **Use sanctioned coach reads for
+Garmin-derived metrics; never query Garmin live or read the raw mart.** Historical
+race evidence follows the saved-context route below.
 
 ## Routing
 
-Three flows, one reference file each. The gates are categorical - read the file first,
-every time, however small the request looks.
+Read the relevant reference before entering a flow, even for a short answer.
+A saved-context lookup can lead into reporting, planning or workout authoring.
 
-- Before you take in the athlete's numbers - reading `reports/{today}/digest.json` or
-  `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
+- Before you take in Garmin-derived numbers or calendar data - reading
+  `reports/{today}/digest.json` or `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
   / `get_recommendation` / `get_recent_activities` / `get_events`, whether you are
   writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
   `references/report.md`. It carries what every field means and which may be null, and
@@ -31,19 +41,31 @@ every time, however small the request looks.
   `garmin-coach author` / `push`, or `author_workout` / `push_preview` / `push_confirm` /
   `unschedule_preview` / `unschedule_confirm` / `get_workout_status` /
   `get_pushed_workouts` - you **MUST** read `references/authoring.md`.
+- Before retrieving historical race results, comparing races, calculating race time
+  scenarios or recalling saved coaching context, you **MUST** read
+  `references/saved-context.md`.
 
 A conversation often crosses flows (a report surfaces an unplanned week; a recommendation
 becomes a session on the watch). Read the next file when you cross into its flow.
+
+## Evidence sources
+
+- **Current Garmin-derived standing:** sanctioned coach MCP reads or generated
+  digest/snapshot files, with their evidence dates and freshness. A copied profile
+  number is an older summary, never a current reading.
+- **Historical race results:** cited archived result tables and their source metadata.
+  Identify the event, partner and division; a Doubles result describes the pair.
+- **Race time scenarios:** cited historical inputs plus explicit arithmetic assumptions.
+  Label the result as a scenario; it is not a measured result or a fitness prediction.
 
 ## The athlete profile
 
 `memory/athlete-profile.md` is the long-term memory the digest cannot hold: the goal, the
 tendencies ("rest days are not rest"), the standing decisions, the open threads. **Read it
-before you advise in any of the three flows** - it is what keeps a session from starting
+before giving coaching advice in any flow** - it is what keeps a session from starting
 the relationship from zero. When it is not there, say so and advise without it; never
-invent the context it would have carried. It is qualitative only: every number stays
-sourced from the digest and the snapshot, and a figure quoted in the profile is a summary
-of an older report, never a reading.
+invent the context it would have carried. It holds qualitative context; use the
+evidence sources above for numbers and keep the source date of older conclusions.
 
 **Its age is part of what you read.** Near the top sits the line that carries it -
 `_Ostatnia aktualizacja: YYYY-MM-DD._` - the date usually trailed by the athlete's own
@@ -94,9 +116,10 @@ request from the athlete.
   the day to the athlete, ask whether the session happened, and offer the repair when it
   did. A weekly review written before Saturday's run had uploaded called the week a
   deload; that is the failure this rail exists to stop.
-- **Say what a write changed.** The data-correcting tools run without a confirmation
-  prompt, so after `event_add`, `event_update`, `plan_import` or a repair, state plainly
-  what moved - for a race, the training block before and after.
+- **Say what a write changed.** After `event_add`, `event_update`, `plan_import` or
+  a repair, state what moved, including the race block before and after. A repair
+  requires `repair_preview`, showing its result and explicit athlete approval before
+  `repair_confirm`; the local calendar/import tools do not use that token handshake.
 - **Null means there is no number.** Every field in the digest and the snapshot may be
   null. Never invent a value a null field does not provide.
 - **A week is written only after the athlete sees it.** `plan_preview` first, show them
@@ -117,24 +140,23 @@ request from the athlete.
 
 ## Running the CLI
 
-Which commands to run, in what order, and what to do when one fails is in
-`references/report.md`. What belongs here is the fallback, because it is about the
-machine you are on rather than about the report.
+Prefer the sanctioned coach MCP tools. Use local CLI commands only when the request
+requires generated report artifacts or an explicitly authorized local operation.
 
-**If `poetry` is missing or fails** (the Cowork sandbox ships Python 3.10, not the
-3.13 that poetry needs), do NOT build a venv or install a new Python - the code runs
-fine on 3.10. Use the read-side fallback: install the runtime deps once and invoke
-the CLI module directly.
+- **Managed installation:** use the stable launcher and explicit athlete home named by
+  the installed plugin. The athlete folder contains records, not a source checkout.
+- **Source checkout:** use its existing Poetry environment with Python 3.13. Select
+  the athlete installation with `GARMIN_COACH_HOME` or `--home PATH` before the
+  subcommand. The examples in `references/report.md` assume that selection is already
+  established; run them from the source checkout.
+- **Unavailable runtime:** name the missing prerequisite and ask the operator to repair
+  the managed installation or supported source environment. Do not install global
+  packages or create a replacement runtime inside an assistant sandbox.
 
-```bash
-pip install matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
-PYTHONPATH=src python3 -m garmin_coach.cli plan import
-PYTHONPATH=src python3 -m garmin_coach.cli report     # or: features, if the mart is empty
-```
-
-Only ever run **read-side** commands (`plan import`, `report`, `features`) this way -
-the same golden-rule limit applies. See `docs/OPERATIONS.md` ("For Claude running in
-Cowork") for the full note.
+The permitted offline commands are `plan import`, `report` and `features` under the
+reporting procedure. They write local files or cached metrics; transport-free does
+not mean read-only. An explicitly read-only question stays with MCP reads or existing
+artifacts. Operator-run `sync`, `backfill` and `daily` are outside this fallback.
 
 ## Tone
 

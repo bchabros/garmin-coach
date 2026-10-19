@@ -839,52 +839,43 @@ their own setup. In all cases the `garmin-coach-mcp` script must exist first
   server. If you need it there, check whether the same device bridge covers your
   session before assuming it does.
 
-**Running the server without poetry.** On any host where poetry is unavailable (it
-needs Python 3.13), launch the module directly after installing the deps once, and
-register *that* command wherever a stdio command is accepted:
-
-```bash
-pip install mcp matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
-PYTHONPATH=src python3 -m garmin_coach.mcp.server
-```
-
-(`matplotlib` is needed because the server's import chain reaches `report` ->
-`charts`, even though the MCP tools never render a chart.)
+**Managed runtime or supported source environment.** A managed installation uses its
+stable `bin/garmin-coach-mcp` launcher with explicit `--home`; see
+[client setup](CLIENT_SETUP.md). A source checkout uses its existing Poetry environment
+with Python 3.13 and the guarded launcher from [the project guide](CHATGPT_WORK.md).
+If that runtime is unavailable, repair it on the operator's machine. A coaching
+conversation does not install unpinned global dependencies or create a substitute
+runtime in a sandbox. Matplotlib initializes only when generating charts, not during
+ordinary MCP startup.
 
 ## Notes for Claude in Cowork
 
-**Prefer the `mcp__coach__*` tools if they are present.** When the device bridge is up
-(see "Registering the server in a client"), Cowork reaches the coach server on the
-paired machine and the one-call read tools are the sanctioned surface -- no sandbox
-setup, no dependency install. The notes below are the fallback for when the bridge is
-unavailable (that machine is off, Desktop is closed) and Cowork is working against a
-copy of the folder in its Linux sandbox instead.
+**Prefer the `mcp__coach__*` tools when available.** A quick standing answer or a
+chat-only report uses `get_digest` and `get_snapshot` with their freshness metadata.
+Use existing artifacts if the tools are unavailable, and name missing evidence.
+Only a requested saved report or charts enter the CLI generation procedure in
+`skills/coach/references/report.md`; transport-free commands can still write files.
 
-For Claude running in Cowork (pointed at this folder, commands via the Linux sandbox):
-
-- **Read context first.** Open `memory/athlete-profile.md`, then the latest `plans/` file,
-  before advising -- the same rail the coach skill carries ("The athlete profile" in
-  `skills/coach/SKILL.md`), repeated here because the sandbox may be running without it.
-  One sandbox caveat the skill cannot see: these files are a **copy** of the folder, so an
-  amendment written here never reaches the athlete's own profile. Hand them the lines to
-  paste instead.
-- **`poetry` may be missing in the sandbox.** It needs Python 3.13; the sandbox ships 3.10,
-  so `poetry run ...` fails. To generate a report without poetry, install the runtime deps
-  once and invoke the CLI module directly:
-
-  ```bash
-  pip install matplotlib pydantic pydantic-settings python-dotenv garminconnect curl-cffi --break-system-packages
-  PYTHONPATH=src python3 -m garmin_coach.cli report      # or: features, if the mart is empty
-  ```
-
-  Only run **read-side** commands (`report`, `features`) this way. **Never run
-  `sync`/`backfill`/`daily` from the sandbox** -- those call Garmin live, and the operator's
-  Mac already runs the nightly job (golden rule).
-- **Same-day data is not in the DB yet** (backfill excludes "today"). To read a just-finished
-  workout or today's calories/readiness/status, use the `mcp__garmin__*` tools for **ad-hoc
-  exploration only** -- never wire them into the pipeline or the coach layer.
-- **Athlete-facing output is Polish and number-dense.** Prefer the report artifacts plus the
-  `plans/` and `memory/` Markdown; the athlete likes charts. Keep the repo's no-emoji rule.
-- **Weekly follow-up.** After a full week closes, the plan-vs-actual for that week is only
-  reliable once the Sunday sync lands (Monday morning) -- `weekly` in the digest / the
-  `weekly_plan_actual` mart.
+- **Select the athlete installation.** Read `memory/athlete-profile.md` before advice.
+  Use the source-specific runtime and path instructions from the installed plugin.
+  A sandbox copy is not proof of access to the original athlete files: preserve the
+  profile's exact-diff consent rule and hand back proposed lines when only a copy is
+  writable. Avoid inferring a runtime from the client name or a presumed Python version.
+- **Find saved context by question.** For race results, comparisons and older coaching
+  conclusions, read `skills/coach/references/saved-context.md` from the skill's own
+  directory, then the relevant index or dated record in the athlete installation.
+  Archives may be absent from a clone or MCP-only session. Calendar/digest tools do
+  not provide arbitrary local CSV access; state that gap instead of inventing results.
+- **Keep package and client acceptance distinct.** The legacy bridge observation above
+  is historical evidence, not proof for a new Cowork app, plugin or session. Verify
+  the actual coach skill and real MCP tool calls in a fresh session. Missing local
+  plugin/bridge capability is an explicit setup gap, not a reason to start a new
+  hosted server or use another athlete's installation.
+- **Same-day data.** When the athlete requests a same-day refresh, use the sanctioned
+  `refresh_today` tool and explain partial fields. Historical gap repair uses
+  `repair_preview` followed by explicit approval and `repair_confirm`. The ad-hoc
+  `mcp__garmin__*` surface belongs to developer exploration, not coaching reads.
+- **Athlete-facing output.** Use the athlete's language, concrete evidence and dated
+  context. The installed skill carries the output style and consent gates.
+- **Weekly follow-up.** A complete week's adherence requires the closing day's synced
+  data. Respect `freshness.unconfirmed_days` before naming missing sessions or deloads.

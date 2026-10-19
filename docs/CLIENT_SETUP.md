@@ -38,7 +38,7 @@ This is useful for the installer and recovery when the main command is unavailab
 Successful plugin registration reports `needs_activation`. Open the athlete
 installation as the primary folder of a **local** conversation, restart the client,
 and enable or trust its plugin through the client's supported UI if requested.
-Inspect the installed plugin's coach skill, all three references, and MCP tools.
+Inspect the installed plugin's coach skill, all four references, and MCP tools.
 Keep the client's existing approval settings.
 
 For Work, use the ChatGPT desktop app with local execution. Its local plugin
@@ -113,9 +113,18 @@ Work, Codex and Claude Code acceptance for this distribution remains **not run**
 The earlier source-checkout acceptance in [WORK_VALIDATION.md](WORK_VALIDATION.md)
 does not establish acceptance of these newly generated packages.
 
-Only `SKILL.md` and the report, planning and authoring references are copied into
-generated plugins. Other source Markdown, including private athlete context, is excluded.
+Only `SKILL.md` and the report, planning, authoring and saved-context references
+are copied into generated plugins. The saved-context guide contains generic lookup
+instructions; race files and the athlete profile stay in the selected installation. Other source Markdown, including private athlete context, is excluded.
 A previous receipt that owns extra skill Markdown requires a clean plugin reinstall after
 hash-verified removal, so an old native cache cannot retain those files. This can require
 permission reapproval. Unknown or edited Markdown is preserved and blocks configuration
 until inspected; backups remain preserved and are filtered when restoring public resources.
+
+
+The canonical public resource list is packaged with the program. Both generated
+plugins and the legacy `task claude:package` archive select only those resources;
+extra Markdown and symlinked resources are excluded or refused. The legacy ZIP is
+a skill upload, not MCP registration or proof that Cowork loaded the tools. In a
+fresh session, verify a saved race-context lookup separately from current MCP reads,
+using only explicitly selected synthetic fixtures during development.

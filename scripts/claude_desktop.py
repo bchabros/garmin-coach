@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -40,6 +42,18 @@ SERVER_NAME = "coach"
 SKILL_NAME = "coach"
 REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
 DIST_DIR = REPO_ROOT / "dist"
+
+
+def _load_coach_resources() -> Any:
+    """Load the package's public resource selection by path, without its dependencies."""
+    path = REPO_ROOT / "src/garmin_coach/coach_resources.py"
+    spec = importlib.util.spec_from_file_location("coach_resources", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+coach_resources = _load_coach_resources()
 
 _CLAUDE_SUPPORT = "Library/Application Support/Claude"
 
@@ -198,12 +212,23 @@ def check_mcp() -> bool:
     return True
 
 
-def _markdown_tree(root: pathlib.Path) -> dict[str, str]:
-    """Map every Markdown file under root to its text, keyed by path relative to root."""
-    return {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*.md"))}
+def _cached_tree(root: pathlib.Path) -> dict[str, bytes]:
+    """Read public bytes and identify extra resources without opening their contents."""
+    if any(part.is_symlink() for part in (root, *root.parents)):
+        raise ValueError("Symlinked synced skill directory")
+    resources = coach_resources.read_public(root, missing_ok=True)
+    public = coach_resources.public_names()
+    for directory, folders, files in os.walk(root, followlinks=False):
+        for name in [*folders, *files]:
+            path = pathlib.Path(directory) / name
+            relative = str(path.relative_to(root))
+            if relative not in public and coach_resources.resource_like(path):
+                resources[relative] = b""
+        folders[:] = [name for name in folders if not (pathlib.Path(directory) / name).is_symlink()]
+    return resources
 
 
-def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str, str]]:
+def _stale_files(repo: dict[str, bytes], cached: dict[str, bytes]) -> list[tuple[str, str]]:
     """List every file in which a synced copy fails to mirror the repo.
 
     The skill is a directory now -- a router plus its reference files -- and the
@@ -211,8 +236,9 @@ def _stale_files(repo: dict[str, str], cached: dict[str, str]) -> list[tuple[str
     with the same bytes. Three ways that breaks, each its own fix.
 
     Args:
-        repo: Markdown tree of the skill directory in this repo.
-        cached: Markdown tree of the copy Claude last synced down.
+        repo: Public resource bytes of the skill directory in this repo.
+        cached: Public resource bytes of the copy Claude last synced down, plus an
+            empty placeholder for each extra resource name, which is never read.
 
     Returns:
         One (relative path, reason) pair per divergent file, sorted by path.
@@ -242,11 +268,11 @@ def check_skill() -> bool:
 
     The cached copy under Application Support is synced down from the user's Claude
     account, so it stands in for "what Cowork and claude.ai chat are actually
-    running" -- as of the last sync. Every Markdown file under the skill directory
-    is compared, because the upload ships the whole folder.
+    running" -- as of the last sync. Public resources are compared by content;
+    leftover private or unrelated resource names are reported without reading them.
 
     Returns:
-        True if every synced copy mirrors the repo directory file for file.
+        True if every synced copy holds exactly the current public resources.
     """
     if not REPO_SKILL_DIR.is_dir():
         print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
@@ -260,12 +286,16 @@ def check_skill() -> bool:
         print("[skill]      claude.ai -> Settings -> Capabilities -> Skills")
         return False
 
-    repo_tree = _markdown_tree(REPO_SKILL_DIR)
-    stale = {
-        cached_dir: files
-        for cached_dir in cached_dirs
-        if (files := _stale_files(repo_tree, _markdown_tree(cached_dir)))
-    }
+    try:
+        repo_tree = coach_resources.read_public(REPO_SKILL_DIR)
+        stale = {
+            cached_dir: files
+            for cached_dir in cached_dirs
+            if (files := _stale_files(repo_tree, _cached_tree(cached_dir)))
+        }
+    except (OSError, ValueError) as exc:
+        print(f"[skill] {exc}")
+        return False
     if stale:
         _report_stale(stale)
         return False
@@ -289,15 +319,19 @@ def package_skill() -> int:
         print(f"[skill] no skill in this repo at {REPO_SKILL_DIR}")
         return 1
 
+    try:
+        resources = coach_resources.read_public(REPO_SKILL_DIR)
+    except (OSError, ValueError) as exc:
+        print(f"[skill] {exc}")
+        return 1
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     archive = DIST_DIR / f"{SKILL_NAME}.zip"
-    files = sorted(REPO_SKILL_DIR.rglob("*.md"))
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for path in files:
-            arcname = path.relative_to(REPO_SKILL_DIR.parent)
-            bundle.write(path, arcname)
+        for name, text in resources.items():
+            arcname = f"{SKILL_NAME}/{name}"
+            bundle.writestr(arcname, text)
             print(f"[skill]   + {arcname}")
-    print(f"[skill] wrote {archive} ({len(files)} files)")
+    print(f"[skill] wrote {archive} ({len(resources)} files)")
     print("[skill] upload it at claude.ai -> Settings -> Capabilities -> Skills")
     print("[skill] then: task claude:check")
     return 0

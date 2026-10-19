@@ -4,7 +4,27 @@ Read this before touching `digest.json` or `snapshot.json` - including a quick s
 answer that never writes a report file. It carries what the fields mean, which of them
 may be null, and the structure of `report.md`.
 
-## Procedure
+## Read-only questions
+
+For a quick standing answer, a chat-only report or an explicitly read-only request,
+use `get_digest` and `get_snapshot` when the sanctioned coach MCP tools are available.
+Their payload is under `data`; keep the accompanying `freshness` metadata when
+explaining evidence dates, partial data and unconfirmed days. The field descriptions
+below apply to that payload too. Read only the additional tools needed for the question.
+
+Without MCP, use existing artifacts from the selected athlete installation and name
+any missing or stale evidence. Do not generate report files, import plans, rebuild
+metrics, refresh Garmin or repair a day as part of this read-only route. If the
+required evidence is unavailable, state the prerequisite rather than constructing it.
+Answer the question using the profile rail, null handling and source rules; finish
+with the digest's disclaimer verbatim when a digest is available. Stop after the answer.
+
+## Requested report artifacts
+
+Enter this procedure only when the athlete requests a saved report or charts, and
+file access and a supported runtime for the selected installation are available.
+A chat-only report uses the read-only route above. If a managed runtime is unavailable,
+report that prerequisite; source-checkout commands are not an installation fallback.
 
 1. **Generate the digest and charts.** Run:
 
@@ -13,22 +33,19 @@ may be null, and the structure of `report.md`.
    poetry run garmin-coach report            # or: --from YYYY-MM-DD --to YYYY-MM-DD
    ```
 
-   `plan import` first, because the report reads the plan of record from the DB cache,
-   not from `plans/` - without it a plan the athlete edited since the last nightly run
-   is invisible and the report scores adherence against a stale week. It is idempotent
-   and never touches Garmin. If it fails, the plan file is malformed: say so and stop
-   rather than reporting against the fallback template.
+   `plan import` first, because the report reads the plan of record from the DB cache.
+   It imports authored weeks and rebuilds their marts itself; it never touches Garmin.
+   Report accepted weeks and any `invalidated_pushes` it returns. If it fails, state
+   the error and any accepted weeks, then stop rather than scoring against a stale cache.
 
    `report` writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`, and
    `snapshot.json` (the current standing). If it fails because the mart is empty, run
-   `poetry run garmin-coach features` first, then retry. Run `features` too when
-   `plan import` actually changed a week: `planned_intent_today` and the weekly
-   adherence are materialized, so they only catch up when the marts are rebuilt. Never
-   run `sync`/`backfill` yourself - that would call Garmin live, which the golden rule
+   `poetry run garmin-coach features` first, then retry. No additional rebuild is
+   needed after a successful plan import. Never run `sync`/`backfill` yourself - that would call Garmin live, which the golden rule
    forbids from the coach layer; tell the operator to run it instead.
 
-   If `poetry` is missing or fails, use the no-poetry fallback in `SKILL.md` ("Running
-   the CLI") - same read-side commands, invoked as a module.
+   Use the managed launcher or supported source environment described in `SKILL.md`
+   ("Running the CLI"). Examples above assume the athlete installation is selected.
 
 2. **Read only `reports/{today}/digest.json`.** It has `window`, a `headline` block
    (latest ACWR + `acwr_reliable`, latest HRV vs its band, 7-day load + shares), a
@@ -150,7 +167,11 @@ may be null, and the structure of `report.md`.
    - **Rekomendacja na dziś** - only when the digest has a non-null `recommendation`
      block. It advises the *next* session (`target_date`, i.e. tomorrow relative to the
      window) and only ever softens what the plan of record planned - it can never raise
-     an easy day into a hard one. Render:
+     an easy day into a hard one. If `planned_intent` or `intended_type` is null,
+     the plan is unknown: name the missing plan or template and offer to plan the week
+     through `references/planning.md`. An empty `rationale` and `downgraded=false`
+     do not establish a session. Do not invent rest, easy work or keep-plan advice
+     for that missing intent. Otherwise render:
      - The session: `intended_type` (rest/easy/tempo/strength/hyrox/crossfit/quality)
        with the `intensity_cap` when non-null (Z2/Z3/Z4 HR ceiling) and
        `pace_target_s_per_km` as min:sec/km when non-null. A `strength` session never
@@ -158,14 +179,14 @@ may be null, and the structure of `report.md`.
        absence there is by design, not missing data.
        If `pace_target_s_per_km` is null, do not invent a pace
        (the zones are still on a fallback multiplier). If `downgraded` is true, say it is
-       a step down from the planned `planned_intent` and give the reason; if false, tell
-       the athlete to keep the planned session.
+       a step down from the known `planned_intent` and give the reason; if false and
+       the planned intent is known, tell the athlete to keep the planned session.
      - The reasons: translate every code in `rationale` using the Sygnały mapping above
        (e.g. `HRV_LOW_MORNING`, `ACWR_OUT_OF_RANGE`, `TWO_HARD_DAYS`,
        `HARD_RPE_YESTERDAY`, `DELOAD_ADVISED`, `AEROBIC_LOW_SHORTAGE`, `TAPER_ACTIVE`).
        For `NIGGLE_REDUCED_MODE`, name the affected body part from that signal's
-       `facts.body_part` in the `signals` list. An empty `rationale` with `downgraded`
-       false means "trzymaj plan" - say so plainly.
+       `facts.body_part` in the `signals` list. Only with a known planned intent does
+       an empty `rationale` with `downgraded=false` mean "trzymaj plan".
      - `avoid` - when non-empty, one short line naming the movement patterns / muscle
        groups to keep off tomorrow (they stacked on back-to-back days).
      - `replan` - when present (not null), the last complete week missed `replan.missed`

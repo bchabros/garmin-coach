@@ -102,6 +102,7 @@ def test_the_package_carries_the_schema_and_both_commands_and_nothing_personal(w
         "skills/coach/references/report.md",
         "skills/coach/references/planning.md",
         "skills/coach/references/authoring.md",
+        "skills/coach/references/saved-context.md",
     }
 
 

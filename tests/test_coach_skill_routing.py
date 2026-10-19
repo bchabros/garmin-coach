@@ -9,10 +9,18 @@ gate ever points at. Neither reaches the athlete from here -- they fail `task ch
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import shutil
 
-SKILL_DIR = pathlib.Path(__file__).parent.parent / "skills" / "coach"
+import pytest
+
+REPO_ROOT = pathlib.Path(__file__).parent.parent
+SKILL_DIR = REPO_ROOT / "skills" / "coach"
+PUBLIC_RESOURCES = tuple(
+    json.loads((REPO_ROOT / "src/garmin_coach/coach_resources.json").read_text())
+)
 
 # A gate is the categorical MUST-read line, not any mention of the path: the router also
 # cross-references a reference file in ordinary prose, and counting those as gates would
@@ -34,14 +42,26 @@ REPORT_TRIGGERS = (
     "jaka mam forme",
 )
 
+# The planning and authoring phrases the description carried before issue #99 shortened
+# it. They are how the athlete asks to plan a week or change what is on the watch.
+PLANNING_AND_AUTHORING_TRIGGERS = (
+    "zaplanuj tydzien",
+    "co planujemy na przyszly tydzien",
+    "wrzuc na zegarek",
+    "tempo w czwartek: 8x1km po 3:40",
+    "dodaj trening silowy na piatek",
+    "zdejmij trening z czwartku",
+    "odwolaj piatkowy trening",
+    "jestem chory, usun to z zegarka",
+)
+
 
 def _gated_paths() -> set[str]:
     return set(GATED_PATH.findall((SKILL_DIR / "SKILL.md").read_text()))
 
 
 def _reference_files() -> set[str]:
-    root = SKILL_DIR / "references"
-    return {str(p.relative_to(SKILL_DIR)) for p in root.rglob("*.md")}
+    return {name for name in PUBLIC_RESOURCES if name.startswith("references/")}
 
 
 def test_every_gated_reference_file_exists():
@@ -54,7 +74,7 @@ def test_every_gated_reference_file_exists():
 
 
 def test_every_reference_file_is_gated():
-    """An ungated reference file is dead weight: no flow ever reads it."""
+    """An ungated public reference is unreachable; private files are not skill resources."""
     orphans = sorted(_reference_files() - _gated_paths())
     assert not orphans, (
         f"reference files no routing gate in SKILL.md names: {orphans}. "
@@ -62,24 +82,71 @@ def test_every_reference_file_is_gated():
     )
 
 
-def test_the_description_keeps_every_report_trigger_phrase():
+@pytest.mark.parametrize("triggers", [REPORT_TRIGGERS, PLANNING_AND_AUTHORING_TRIGGERS])
+def test_the_description_keeps_every_trigger_phrase(triggers):
     """The description is the only text that decides whether the skill loads at all."""
     description = (SKILL_DIR / "SKILL.md").read_text().split("---")[1]
-    dropped = [phrase for phrase in REPORT_TRIGGERS if phrase not in description]
+    dropped = [phrase for phrase in triggers if phrase not in description]
     assert not dropped, (
         f"the frontmatter description dropped trigger phrases that used to work: {dropped}. "
         "Widen the description, never narrow it."
     )
 
 
-def test_every_registered_coach_tool_is_named_in_the_skill():
+@pytest.mark.parametrize("private_extra", [False, True])
+def test_every_registered_coach_tool_is_named_in_the_skill(tmp_path, monkeypatch, private_extra):
     """A tool the uploaded skill never mentions is a tool the coach never reaches for."""
     import asyncio
 
     from garmin_coach.mcp import server
 
-    text = "\n".join(path.read_text() for path in sorted((SKILL_DIR).rglob("*.md")))
+    if private_extra:
+        public_skill = tmp_path / "coach"
+        for name in PUBLIC_RESOURCES:
+            target = public_skill / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(SKILL_DIR / name, target)
+        (public_skill / "references/context.md").write_bytes(b"\xff private synthetic note")
+        monkeypatch.setitem(globals(), "SKILL_DIR", public_skill)
+        assert "references/context.md" not in _reference_files()
+
+    text = "\n".join((SKILL_DIR / name).read_text() for name in PUBLIC_RESOURCES)
     registered = {t.name for t in asyncio.run(server.server.list_tools())}
 
     missing = sorted(name for name in registered if name not in text)
     assert not missing, f"registered but absent from the coach skill: {', '.join(missing)}"
+
+
+def test_saved_context_questions_reach_the_archive_reference():
+    """A cached skill must discover race evidence without bundling athlete records."""
+    router = (SKILL_DIR / "SKILL.md").read_text()
+    description = router.split("---")[1]
+    assert "race results" in description
+    assert "saved coaching context" in description
+    assert "references/saved-context.md" in _gated_paths()
+    context = (SKILL_DIR / "references/saved-context.md").read_text()
+    assert "data/races/index.md" in context
+    assert "gitignored" in context
+    assert "MCP calendar/digest access does not itself" in context
+
+
+def test_reporting_separates_read_only_questions_from_artifact_generation():
+    """A quick MCP answer must not inherit a procedure that writes report files."""
+    report = (SKILL_DIR / "references/report.md").read_text()
+    heading = "## Read-only questions"
+    assert heading in report
+    read_only = report.split(heading, 1)[1].split("\n## ", 1)[0]
+    assert "get_digest" in read_only and "get_snapshot" in read_only
+    assert "existing artifacts" in read_only
+    assert "Do not generate report files" in read_only
+    assert "## Requested report artifacts" in report
+
+
+def test_recommendation_guidance_checks_unknown_intent_before_keep_plan_advice():
+    """No-template onboarding must not be interpreted as an existing agreed plan."""
+    report = (SKILL_DIR / "references/report.md").read_text()
+    recommendation = report.split("**Rekomendacja na dziś**", 1)[1].split("**Wykresy**", 1)[0]
+    unknown = "If `planned_intent` or `intended_type` is null"
+    assert unknown in recommendation
+    assert recommendation.index(unknown) < recommendation.index("keep the planned session")
+    assert "Only with a known planned intent" in recommendation

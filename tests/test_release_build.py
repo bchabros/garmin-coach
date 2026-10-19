@@ -231,11 +231,7 @@ def _source_checkout(tmp_path):
     checkout.mkdir()
     for name in ("pyproject.toml", "README.md"):
         shutil.copyfile(source / name, checkout / name)
-    for name in ("src", "build_support"):
-        if (source / name).is_dir():
-            shutil.copytree(
-                source / name, checkout / name, ignore=shutil.ignore_patterns("__pycache__")
-            )
+    shutil.copytree(source / "src", checkout / "src", ignore=shutil.ignore_patterns("__pycache__"))
     public = json.loads((source / "src/garmin_coach/coach_resources.json").read_text())
     for name in public:
         target = checkout / "skills/coach" / name
@@ -244,96 +240,16 @@ def _source_checkout(tmp_path):
     return checkout
 
 
-@pytest.mark.parametrize("format", ["wheel", "sdist"])
-def test_plain_build_refuses_symlinked_public_resources(tmp_path, format):
-    import os
-    import shutil
-    import subprocess
-
-    poetry = shutil.which("poetry")
-    if poetry is None:
-        pytest.skip("building the package needs Poetry")
-    checkout = _source_checkout(tmp_path)
-    reference = checkout / "skills/coach/references/report.md"
-    private = reference.with_name("private.md")
-    private.write_text("Synthetic private athlete facts")
-    reference.unlink()
-    reference.symlink_to(private.name)
-    output = tmp_path / "dist"
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    result = subprocess.run(
-        [poetry, "build", "--format", format, "--output", str(output)],
-        cwd=checkout,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert result.returncode != 0
-    assert "public coach resource" in result.stdout + result.stderr
-    assert "Synthetic private athlete facts" not in result.stdout + result.stderr
-    assert not list(output.glob("*.whl"))
-    assert not list(output.glob("*.tar.gz"))
-
-
-def test_plain_sdist_rebuilds_a_complete_pure_wheel(tmp_path):
-    import os
-    import shutil
-    import subprocess
-    import tarfile
-
-    poetry = shutil.which("poetry")
-    if poetry is None:
-        pytest.skip("building the package needs Poetry")
-    checkout = _source_checkout(tmp_path)
-    (checkout / "skills/coach/references/context.md").write_text("Synthetic private athlete facts")
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    output = tmp_path / "source-dist"
-    subprocess.run(
-        [poetry, "build", "--format", "sdist", "--output", str(output)],
-        cwd=checkout,
-        env=environment,
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
-    with tarfile.open(next(output.glob("*.tar.gz"))) as archive:
-        archive.extractall(tmp_path / "unpacked", filter="data")
-    (unpacked,) = (tmp_path / "unpacked").iterdir()
-    assert (unpacked / "build_support/coach_build.py").is_file()
-    assert (unpacked / "src/garmin_coach/coach_resources.json").is_file()
-    assert not (unpacked / "skills/coach/references/context.md").exists()
-    wheel_output = tmp_path / "rebuilt-wheel"
-    subprocess.run(
-        [poetry, "build", "--format", "wheel", "--output", str(wheel_output)],
-        cwd=unpacked,
-        env=environment,
-        check=True,
-        capture_output=True,
-        timeout=120,
-    )
-    (wheel,) = wheel_output.glob("*.whl")
-    assert wheel.name.endswith("-py3-none-any.whl")
-    with zipfile.ZipFile(wheel) as archive:
-        assert "build_support/coach_build.py" not in archive.namelist()
-        assert "skills/coach/references/saved-context.md" in archive.namelist()
-        assert all(
-            b"Synthetic private athlete facts" not in archive.read(name)
-            for name in archive.namelist()
-        )
+def test_release_check_accepts_this_checkout(release_builder):
+    """The explicit wheel and sdist includes in pyproject.toml match the public manifest."""
+    release_builder.check_public_resources(pathlib.Path(__file__).resolve().parents[1])
 
 
 @pytest.mark.parametrize("format", ["wheel", "sdist"])
-def test_plain_build_refuses_private_include_for_either_format(tmp_path, format):
-    import os
-    import shutil
-    import subprocess
-
-    poetry = shutil.which("poetry")
-    if poetry is None:
-        pytest.skip("building the package needs Poetry")
+def test_release_check_refuses_a_private_include_for_either_format(
+    tmp_path, release_builder, format
+):
     checkout = _source_checkout(tmp_path)
-    (checkout / "skills/coach/references/private.md").write_text("Synthetic private athlete facts")
     config = checkout / "pyproject.toml"
     config.write_text(
         config.read_text().replace(
@@ -343,17 +259,24 @@ def test_plain_build_refuses_private_include_for_either_format(tmp_path, format)
             1,
         )
     )
-    output = tmp_path / "dist"
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    result = subprocess.run(
-        [poetry, "build", "--format", format, "--output", str(output)],
-        cwd=checkout,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    with pytest.raises(ValueError, match=f"{format} includes must match"):
+        release_builder.check_public_resources(checkout)
+
+
+def test_release_wheel_build_refuses_a_symlinked_public_resource_before_poetry_runs(
+    tmp_path, release_builder, monkeypatch
+):
+    checkout = _source_checkout(tmp_path)
+    reference = checkout / "skills/coach/references/report.md"
+    private = reference.with_name("private.md")
+    private.write_text("Synthetic private athlete facts")
+    reference.unlink()
+    reference.symlink_to(private.name)
+    commands = []
+    monkeypatch.setattr(release_builder, "ROOT", checkout)
+    monkeypatch.setattr(
+        release_builder.subprocess, "run", lambda command, **_: commands.append(command)
     )
-    assert result.returncode != 0
-    assert "public coach resource manifest" in result.stdout + result.stderr
-    assert not list(output.glob("*.whl"))
-    assert not list(output.glob("*.tar.gz"))
+    with pytest.raises(ValueError, match="Symlinked public coach resource"):
+        release_builder._build_wheel(tmp_path / "staging")
+    assert commands == []

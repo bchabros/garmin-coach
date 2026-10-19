@@ -1,8 +1,7 @@
 """Select the public coach resources every package ships, with the standard library only.
 
-Release tooling, the build backend and the standalone skill packager load this file by
-path before application dependencies exist (ADR 0035), so it imports nothing from the
-package.
+The release builder and the standalone skill packager load this file by path before
+application dependencies exist (ADR 0035), so it imports nothing from the package.
 """
 
 from __future__ import annotations

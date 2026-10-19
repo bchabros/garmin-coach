@@ -4,10 +4,13 @@ description: >-
   Coach the athlete using recorded training and race evidence. Use for a training report,
   coach read, weekly review, "how am I doing", or current form and fitness
   ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty",
-  "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien");
-  authoring, pushing, repeating or removing a workout ("wrzuc na zegarek",
-  "zdejmij trening z czwartku"); historical race results, comparisons or race time
-  scenarios; and finding saved coaching context from earlier reports or decisions.
+  "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien",
+  "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a
+  workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40",
+  "dodaj trening silowy na piatek", "zdejmij trening z czwartku",
+  "odwolaj piatkowy trening", "jestem chory, usun to z zegarka");
+  historical race results, comparisons or race time scenarios; and finding
+  saved coaching context from earlier reports or decisions.
 ---
 
 # Coach

@@ -78,20 +78,19 @@ check documented in `docs/CLIENT_SETUP.md`.
 
 `coach_resources.py` is the one place that decides which coach skill files are
 public: the list in `src/garmin_coach/coach_resources.json`, read as regular files
-reached without a symlink from `skills/coach/`. Native plugins, the wheel and source
-archive, the release bundle and the standalone skill archive (`task claude:package`)
-all use it; `saved-context.md` contains generic lookup rules, while athlete race
-records stay in the selected installation (ADR 0035). Like `distribution.py` it is
-standard-library-only, because `scripts/build_release.py`, `scripts/claude_desktop.py`
-and the build backend load it by path without application dependencies. A new public
-reference needs a manifest entry and a matching `include` in `pyproject.toml`.
+reached without a symlink from `skills/coach/`. Native plugins, the release bundle and
+the standalone skill archive (`task claude:package`) read through it;
+`saved-context.md` contains generic lookup rules, while athlete race records stay in
+the selected installation (ADR 0035). Like `distribution.py` it is
+standard-library-only, because `scripts/build_release.py` and
+`scripts/claude_desktop.py` load it by path without application dependencies.
 
-`build_support/coach_build.py` is the PEP 517 build backend declared in
-`pyproject.toml`: `poetry build` and isolated source builds run it first (pinned by
-`tests/test_release_build.py`). It
-refuses a build whose `include` list differs from the manifest or whose public files
-are missing or symlinked, then delegates to Poetry's own backend. It also ships in
-the source archive, so a wheel rebuilt from that archive is checked the same way.
+The wheel and source archive take their skill files from the explicit `include` list
+in `pyproject.toml`, built by Poetry's standard backend. A new public reference
+therefore needs a manifest entry and a matching `include`. `scripts/build_release.py`
+refuses a release when the two differ or a public file is missing or symlinked, before
+it runs `poetry build` (`tests/test_release_build.py`). A hand-run local `poetry build`
+skips that check; no installation path uses its output.
 
 `distribution.py` is standard-library-only: release tooling ships it as the standalone
 bootstrap before application dependencies exist. It owns verified versioned runtime

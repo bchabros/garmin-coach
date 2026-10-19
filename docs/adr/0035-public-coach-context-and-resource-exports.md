@@ -33,10 +33,9 @@ Use one standard-library-readable public resource list in the program package fo
 native plugins and the legacy standalone skill ZIP/check. The list
 (`coach_resources.json`) and the rule that reads it (`coach_resources.py`: regular
 files reached without a symlink from the skill directory) live together; release
-tooling, the build backend and the standalone packager load that module by path, so
-none of them imports application dependencies. Poetry's explicit includes and
-release-bundle exports must agree with that list, verified through built-package
-tests. Arbitrary Markdown is excluded; symlinked public resources are refused rather
+tooling and the standalone packager load that module by path, so neither imports
+application dependencies. Poetry's explicit includes and release-bundle exports must
+agree with that list, verified by the release builder and package tests. Arbitrary Markdown is excluded; symlinked public resources are refused rather
 than following files outside the approved source.
 
 The new generation has the router plus four references. Restoring an older owned
@@ -51,12 +50,10 @@ runtime. Null planned intent remains unknown, even with no downgrade signal. The
 instruction changes preserve profile exact-diff approval and the existing plan,
 repair and workout preview/confirmation gates.
 
-Ordinary source builds use a small in-tree PEP 517 backend that validates regular,
-non-symlink public resources and each distribution format's explicit include list,
-then delegates to Poetry's backend. An extension build script was rejected: the
-installed Poetry core does not execute it for source distributions, and configuring
-one changes otherwise pure wheel tags. The wrapper remains in the source archive
-so a wheel rebuilt from that archive applies the same validation.
+Poetry's standard backend builds the wheel and source archive from the explicit
+include list. The release builder, which produces every wheel an athlete installs,
+checks before `poetry build` that both formats' includes equal the manifest and that
+every public file is a regular file reached without a symlink.
 
 ## Considered options
 
@@ -66,11 +63,18 @@ and requiring application imports in the legacy packager (which breaks its stand
 setup role). A public manifest plus explicit wheel includes adds a small consistency
 contract instead; package tests enforce it.
 
+An in-tree PEP 517 backend wrapping Poetry's was tried and rejected. Poetry CLI runs
+a declared backend only when it decides on an isolated build, which it infers from the
+number and names of build requirements. The wrapper therefore needed an extra build
+requirement whose only purpose was to force that path, and every `poetry build` then
+needed network access or a cache for a fresh build environment. An extension build
+script was rejected too: the installed Poetry core does not execute it for source
+distributions, and configuring one changes otherwise pure wheel tags.
+
 ## Consequences
 
-Validation uses standard-library JSON, paths and TOML on the application's Python
-3.13. A conditional TOML reader supports build frontends running Python below 3.11;
-the second build requirement also makes Poetry CLI use the declared PEP 517 backend
-instead of bypassing it with its internal fast build path. This adds no application
-runtime dependency. A clean isolated source build may fetch its declared build
-requirements unless they are cached; managed binary installation does not run Poetry.
+No build requirement or application runtime dependency is added, and `poetry build`
+keeps Poetry's in-process path, so it works offline. The check covers every shipped
+package (native plugins, the standalone skill archive, the release wheel and the
+release bundle), but not a wheel built by hand from a checkout. Managed binary
+installation does not run Poetry.

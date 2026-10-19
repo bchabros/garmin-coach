@@ -42,6 +42,19 @@ REPORT_TRIGGERS = (
     "jaka mam forme",
 )
 
+# The planning and authoring phrases the description carried before issue #99 shortened
+# it. They are how the athlete asks to plan a week or change what is on the watch.
+PLANNING_AND_AUTHORING_TRIGGERS = (
+    "zaplanuj tydzien",
+    "co planujemy na przyszly tydzien",
+    "wrzuc na zegarek",
+    "tempo w czwartek: 8x1km po 3:40",
+    "dodaj trening silowy na piatek",
+    "zdejmij trening z czwartku",
+    "odwolaj piatkowy trening",
+    "jestem chory, usun to z zegarka",
+)
+
 
 def _gated_paths() -> set[str]:
     return set(GATED_PATH.findall((SKILL_DIR / "SKILL.md").read_text()))
@@ -69,10 +82,11 @@ def test_every_reference_file_is_gated():
     )
 
 
-def test_the_description_keeps_every_report_trigger_phrase():
+@pytest.mark.parametrize("triggers", [REPORT_TRIGGERS, PLANNING_AND_AUTHORING_TRIGGERS])
+def test_the_description_keeps_every_trigger_phrase(triggers):
     """The description is the only text that decides whether the skill loads at all."""
     description = (SKILL_DIR / "SKILL.md").read_text().split("---")[1]
-    dropped = [phrase for phrase in REPORT_TRIGGERS if phrase not in description]
+    dropped = [phrase for phrase in triggers if phrase not in description]
     assert not dropped, (
         f"the frontmatter description dropped trigger phrases that used to work: {dropped}. "
         "Widen the description, never narrow it."

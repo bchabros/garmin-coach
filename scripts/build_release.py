@@ -80,7 +80,34 @@ def audit_wheel(path: pathlib.Path) -> None:
                 raise ValueError(f"Machine-specific path found in release wheel: {name}")
 
 
+def check_public_resources(root: pathlib.Path) -> None:
+    """Refuse a release whose skill includes or public files break the resource manifest.
+
+    Args:
+        root: Source checkout holding ``pyproject.toml`` and ``skills/coach``.
+
+    Raises:
+        ValueError: The wheel or sdist include list differs from the public manifest, or a
+            public resource is missing or reached through a symlink.
+    """
+    expected = {"skills/coach/" + name for name in coach_resources.public_names()}
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    for distribution_format in ("wheel", "sdist"):
+        included = {
+            item["path"]
+            for item in config["tool"]["poetry"]["include"]
+            if item["path"].startswith("skills/")
+            and distribution_format in item.get("format", ["sdist"])
+        }
+        if included != expected:
+            raise ValueError(
+                f"The {distribution_format} includes must match the public coach resource manifest."
+            )
+    coach_resources.read_public(root / "skills/coach")
+
+
 def _build_wheel(staging: pathlib.Path) -> pathlib.Path:
+    check_public_resources(ROOT)
     subprocess.run(
         ["poetry", "build", "--format", "wheel", "--output", str(staging / "dist")],
         cwd=ROOT,

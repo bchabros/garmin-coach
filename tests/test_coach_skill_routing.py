@@ -93,6 +93,20 @@ def test_the_description_keeps_every_trigger_phrase(triggers):
     )
 
 
+def test_the_frontmatter_is_kept_in_the_form_claude_ai_saves():
+    """An uploaded skill comes back with its description on one single-quoted line.
+
+    Seen on 2026-10-19: after uploading a description folded over several lines,
+    claude.ai synced it down as `description: '...'` with the same text, and
+    `task claude:check` reported the account STALE although the upload was current.
+    """
+    frontmatter = (SKILL_DIR / "SKILL.md").read_text().split("---")[1]
+    lines = frontmatter.strip("\n").splitlines()
+    assert lines[0] == "name: coach"
+    assert len(lines) == 2, "keep the description on one line, the way claude.ai saves it"
+    assert re.fullmatch(r"description: '(?:[^']|'')*'", lines[1])
+
+
 @pytest.mark.parametrize("private_extra", [False, True])
 def test_every_registered_coach_tool_is_named_in_the_skill(tmp_path, monkeypatch, private_extra):
     """A tool the uploaded skill never mentions is a tool the coach never reaches for."""

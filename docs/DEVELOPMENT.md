@@ -73,10 +73,25 @@ coach resources carried by the Python distribution. Generated local marketplaces
 and atomic registration receipts belong to the managed runtime, outside athlete
 records; their server commands name the installation explicitly. Test its CLI and
 generated packages on temporary installations with fake client executables, and
-verify stdio reads from a copied cache. The public resource manifest also governs
-the standalone skill archive; `saved-context.md` contains generic lookup rules, while
-athlete race records stay in the selected installation (ADR 0035). Fresh model
-acceptance is a separate manual check documented in `docs/CLIENT_SETUP.md`.
+verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
+check documented in `docs/CLIENT_SETUP.md`.
+
+`coach_resources.py` is the one place that decides which coach skill files are
+public: the list in `src/garmin_coach/coach_resources.json`, read as regular files
+reached without a symlink from `skills/coach/`. Native plugins, the wheel and source
+archive, the release bundle and the standalone skill archive (`task claude:package`)
+all use it; `saved-context.md` contains generic lookup rules, while athlete race
+records stay in the selected installation (ADR 0035). Like `distribution.py` it is
+standard-library-only, because `scripts/build_release.py`, `scripts/claude_desktop.py`
+and the build backend load it by path without application dependencies. A new public
+reference needs a manifest entry and a matching `include` in `pyproject.toml`.
+
+`build_support/coach_build.py` is the PEP 517 build backend declared in
+`pyproject.toml`: `poetry build` and isolated source builds run it first (pinned by
+`tests/test_release_build.py`). It
+refuses a build whose `include` list differs from the manifest or whose public files
+are missing or symlinked, then delegates to Poetry's own backend. It also ships in
+the source archive, so a wheel rebuilt from that archive is checked the same way.
 
 `distribution.py` is standard-library-only: release tooling ships it as the standalone
 bootstrap before application dependencies exist. It owns verified versioned runtime

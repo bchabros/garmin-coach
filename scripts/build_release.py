@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import pathlib
 import platform
@@ -26,6 +27,18 @@ PYTHON_HASHES = {
 }
 
 
+def _load_coach_resources():
+    """Load the package's public resource selection by path, without its dependencies."""
+    path = ROOT / "src/garmin_coach/coach_resources.py"
+    spec = importlib.util.spec_from_file_location("coach_resources", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+coach_resources = _load_coach_resources()
+
+
 def digest(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -40,10 +53,7 @@ def audit_wheel(path: pathlib.Path) -> None:
         .decode()
         .split("\0")
     )
-    public_skills = {
-        "skills/coach/" + name
-        for name in json.loads((ROOT / "src/garmin_coach/coach_resources.json").read_text())
-    }
+    public_skills = {"skills/coach/" + name for name in coach_resources.public_names()}
     metadata_names = {"METADATA", "WHEEL", "RECORD", "entry_points.txt"}
     machine_path = re.compile(rb"(?:/Users/[^/\s]+/|/home/[^/\s]+/|[A-Za-z]:\\Users\\)")
     with zipfile.ZipFile(path) as archive:
@@ -133,17 +143,17 @@ def _canonical_assets(bundle: pathlib.Path) -> None:
             ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True
         ).splitlines()
     )
-    public = json.loads((ROOT / "src/garmin_coach/coach_resources.json").read_text())
-    source = ROOT / "skills/coach"
-    for name in public:
+    try:
+        public = coach_resources.read_public(ROOT / "skills/coach")
+    except ValueError as error:
+        raise ValueError("Release coach resources must be tracked regular files.") from error
+    for name, content in public.items():
         relative = "skills/coach/" + name
-        path = source / name
-        components = [path, *path.parents[: len(path.parts) - len(source.parts)]]
-        if relative not in tracked or any(part.is_symlink() for part in components):
+        if relative not in tracked:
             raise ValueError("Release coach resources must be tracked regular files.")
         target = bundle / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+        target.write_bytes(content)
 
 
 def _bundle_archive(bundle: pathlib.Path, archive: pathlib.Path) -> None:

@@ -34,7 +34,6 @@ because the native cache can still retain it. This targeted reinstall accepts th
 permission-reapproval cost for privacy; unknown or edited resources are preserved and
 require operator inspection before activation.
 
-
 ADR 0035 extends resource selection with a new generic saved-context reference and a
 shared public list. It preserves the legacy private-context exclusion and the recovery
 rules above, including restoration of the original four-resource generation.

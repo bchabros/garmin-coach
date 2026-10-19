@@ -44,6 +44,11 @@ def invoke(home, runtime, *arguments, path=""):
     )
 
 
+def _section(text, heading):
+    start = text.index(heading + "\n")
+    return text[start : text.index("\n## ", start)]
+
+
 def test_missing_clients_prepare_complete_packages_without_modifying_athlete_data(
     athlete_home,
     tmp_path,
@@ -67,6 +72,8 @@ def test_missing_clients_prepare_complete_packages_without_modifying_athlete_dat
     assert str(athlete_home) in router
     assert str(runtime / "bin/garmin-coach") in router
     assert router.index("## Selected athlete installation") < router.index("## Running the CLI")
+    canonical = (ROOT / "skills/coach/SKILL.md").read_text()
+    assert _section(router, "## Running the CLI") == _section(canonical, "## Running the CLI")
     assert "--break-system-packages" not in router
     assert "poetry run" not in (package / "skills/coach/references/report.md").read_text()
     marketplace = json.loads((package.parent / ".agents/plugins/marketplace.json").read_text())

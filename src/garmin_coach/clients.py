@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import fcntl
 import importlib.metadata
-import importlib.resources
 import json
 import pathlib
 import shlex
@@ -17,15 +16,13 @@ import tempfile
 from typing import Any, Iterator
 from contextlib import contextmanager
 
-from . import distribution
+from . import coach_resources, distribution
 from .core import installation
 
 
-_PUBLIC_COACH_RESOURCES = tuple(
-    json.loads(
-        importlib.resources.files("garmin_coach").joinpath("coach_resources.json").read_text()
-    )
-)
+_PUBLIC_COACH_RESOURCES = coach_resources.public_names()
+# Public resources added after the first generation; an older owned snapshot may lack them.
+_ADDED_AFTER_FIRST_GENERATION = frozenset({"references/saved-context.md"})
 
 
 def default_runtime_root() -> pathlib.Path:
@@ -218,25 +215,25 @@ def _release_bindings(
     _atomic_write(path, _json(registry))
 
 
-def _read_resource(root: pathlib.Path, name: str) -> bytes:
-    path = root / name
-    components = [path, *path.parents[: len(path.parts) - len(root.parts)]]
-    if any(part.is_symlink() for part in components) or not path.is_file():
-        raise ValueError("Coach resources missing or unsafe; reinstall the complete package.")
-    return path.read_bytes()
+def _read_resources(root: pathlib.Path) -> dict[str, bytes]:
+    try:
+        return coach_resources.read_public(root)
+    except ValueError as error:
+        raise ValueError(
+            "Coach resources missing or unsafe; reinstall the complete package."
+        ) from error
 
 
 def _resources() -> dict[str, bytes]:
     source = pathlib.Path(__file__).resolve().parents[2] / "skills/coach"
     if source.is_dir():
-        return {name: _read_resource(source, name) for name in _PUBLIC_COACH_RESOURCES}
+        return _read_resources(source)
     distribution = importlib.metadata.distribution("garmin-coach")
     prefix = "skills/coach/"
     available = {str(path) for path in distribution.files or []}
     if any(prefix + name not in available for name in _PUBLIC_COACH_RESOURCES):
         raise ValueError("Coach resources missing; reinstall the complete Garmin Coach package.")
-    installed = pathlib.Path(str(distribution.locate_file(prefix)))
-    return {name: _read_resource(installed, name) for name in _PUBLIC_COACH_RESOURCES}
+    return _read_resources(pathlib.Path(str(distribution.locate_file(prefix))))
 
 
 def _json(value: Any) -> bytes:
@@ -246,24 +243,12 @@ def _json(value: Any) -> bytes:
 def _managed_resources(
     resources: dict[str, bytes], home: pathlib.Path, runtime: pathlib.Path
 ) -> dict[str, bytes]:
+    # The router's own CLI section stays canonical; the binding section names the launcher.
     command = shlex.join([str(runtime / "bin/garmin-coach"), "--home", str(home)])
-    result = {
+    return {
         key: value.replace(b"poetry run garmin-coach", command.encode())
         for key, value in resources.items()
     }
-    router = result["SKILL.md"].decode()
-    before, marker, remainder = router.partition("## Running the CLI\n")
-    _, following, after = remainder.partition("\n## Tone\n")
-    if not marker or not following:
-        raise ValueError("Coach CLI fallback section missing; reinstall the complete package.")
-    result["SKILL.md"] = (
-        before + marker + "\nPrefer the sanctioned coach MCP tools. For an allowed local "
-        "read-side fallback, use the managed launcher below with the requested command "
-        "from `references/report.md`. If it is unavailable, report the missing runtime "
-        "and ask the operator to repair this installation.\n\n"
-        f"```sh\n{command} report\n```\n" + following + after
-    ).encode()
-    return result
 
 
 def _package(home: pathlib.Path, runtime: pathlib.Path, name: str) -> dict[str, bytes]:
@@ -622,8 +607,7 @@ def _unknown_skill_artifacts(root: pathlib.Path, known: set[str]) -> list[str]:
     return [
         str(path.relative_to(root))
         for path in skill_root.rglob("*")
-        if (path.is_symlink() or path.suffix.lower() == ".md")
-        and str(path.relative_to(root)) not in known
+        if coach_resources.resource_like(path) and str(path.relative_to(root)) not in known
     ]
 
 
@@ -1000,11 +984,10 @@ def _snapshot_resources(
         if private:
             continue
         files[relative] = path.read_bytes()
-    # Older complete generations predate the generic saved-context reference.
     required = {
         "plugin/skills/coach/" + name
         for name in _PUBLIC_COACH_RESOURCES
-        if name != "references/saved-context.md"
+        if name not in _ADDED_AFTER_FIRST_GENERATION
     }
     if not required <= files.keys():
         raise ValueError(

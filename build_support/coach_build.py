@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import importlib.util
 import pathlib
 
 try:
@@ -12,29 +12,37 @@ except ModuleNotFoundError:  # Build frontends may still run under Python 3.10.
 
 from poetry.core.masonry import api as _poetry
 
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-def _validate_resources() -> None:
-    root = pathlib.Path(__file__).resolve().parents[1]
-    public = json.loads((root / "src/garmin_coach/coach_resources.json").read_text())
-    config = tomllib.loads((root / "pyproject.toml").read_text())
+
+def _load_coach_resources():
+    """Load the package's public resource selection by path, without its dependencies."""
+    path = _ROOT / "src/garmin_coach/coach_resources.py"
+    spec = importlib.util.spec_from_file_location("coach_resources", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _check_includes(public: tuple[str, ...]) -> None:
+    """Refuse a build whose explicit skill includes differ from the public manifest."""
+    config = tomllib.loads((_ROOT / "pyproject.toml").read_text())
     expected = {"skills/coach/" + name for name in public}
-    for format in ("wheel", "sdist"):
+    for distribution_format in ("wheel", "sdist"):
         included = {
             item["path"]
             for item in config["tool"]["poetry"]["include"]
-            if item["path"].startswith("skills/") and format in item.get("format", ["sdist"])
+            if item["path"].startswith("skills/")
+            and distribution_format in item.get("format", ["sdist"])
         }
         if included != expected:
             raise ValueError("Distribution includes must match the public coach resource manifest.")
-    source = root / "skills/coach"
-    for name in public:
-        relative = pathlib.PurePosixPath(name)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("Invalid public coach resource path.")
-        path = source / relative
-        components = [path, *path.parents[: len(path.parts) - len(source.parts) + 1]]
-        if any(part.is_symlink() for part in components) or not path.is_file():
-            raise ValueError(f"Missing or symlinked public coach resource: {name}")
+
+
+def _validate_resources() -> None:
+    coach_resources = _load_coach_resources()
+    _check_includes(coach_resources.public_names())
+    coach_resources.read_public(_ROOT / "skills/coach")
 
 
 def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):

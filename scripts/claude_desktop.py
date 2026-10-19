@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import pathlib
@@ -40,10 +41,19 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SERVER_NAME = "coach"
 SKILL_NAME = "coach"
 REPO_SKILL_DIR = REPO_ROOT / "skills" / SKILL_NAME
-PUBLIC_COACH_RESOURCES = tuple(
-    json.loads((REPO_ROOT / "src/garmin_coach/coach_resources.json").read_text())
-)
 DIST_DIR = REPO_ROOT / "dist"
+
+
+def _load_coach_resources() -> Any:
+    """Load the package's public resource selection by path, without its dependencies."""
+    path = REPO_ROOT / "src/garmin_coach/coach_resources.py"
+    spec = importlib.util.spec_from_file_location("coach_resources", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+coach_resources = _load_coach_resources()
 
 _CLAUDE_SUPPORT = "Library/Application Support/Claude"
 
@@ -202,34 +212,17 @@ def check_mcp() -> bool:
     return True
 
 
-def _public_tree(root: pathlib.Path, *, missing_ok: bool = False) -> dict[str, bytes]:
-    """Read only complete public resources, refusing symlinked files or directories."""
-    result = {}
-    for name in PUBLIC_COACH_RESOURCES:
-        path = root / name
-        components = [path, *path.parents[: len(path.parts) - len(root.parts)]]
-        if any(part.is_symlink() for part in components):
-            raise ValueError(f"Symlinked public coach resource: {name}")
-        if not path.is_file():
-            if missing_ok:
-                continue
-            raise ValueError(f"Missing public coach resource: {name}")
-        result[name] = path.read_bytes()
-    return result
-
-
 def _cached_tree(root: pathlib.Path) -> dict[str, bytes]:
     """Read public bytes and identify extra resources without opening their contents."""
     if any(part.is_symlink() for part in (root, *root.parents)):
         raise ValueError("Symlinked synced skill directory")
-    resources = _public_tree(root, missing_ok=True)
+    resources = coach_resources.read_public(root, missing_ok=True)
+    public = coach_resources.public_names()
     for directory, folders, files in os.walk(root, followlinks=False):
         for name in [*folders, *files]:
             path = pathlib.Path(directory) / name
             relative = str(path.relative_to(root))
-            if relative not in PUBLIC_COACH_RESOURCES and (
-                path.suffix.lower() == ".md" or path.is_symlink()
-            ):
+            if relative not in public and coach_resources.resource_like(path):
                 resources[relative] = b""
         folders[:] = [name for name in folders if not (pathlib.Path(directory) / name).is_symlink()]
     return resources
@@ -243,8 +236,9 @@ def _stale_files(repo: dict[str, bytes], cached: dict[str, bytes]) -> list[tuple
     with the same bytes. Three ways that breaks, each its own fix.
 
     Args:
-        repo: Markdown tree of the skill directory in this repo.
-        cached: Markdown tree of the copy Claude last synced down.
+        repo: Public resource bytes of the skill directory in this repo.
+        cached: Public resource bytes of the copy Claude last synced down, plus an
+            empty placeholder for each extra resource name, which is never read.
 
     Returns:
         One (relative path, reason) pair per divergent file, sorted by path.
@@ -293,7 +287,7 @@ def check_skill() -> bool:
         return False
 
     try:
-        repo_tree = _public_tree(REPO_SKILL_DIR)
+        repo_tree = coach_resources.read_public(REPO_SKILL_DIR)
         stale = {
             cached_dir: files
             for cached_dir in cached_dirs
@@ -326,7 +320,7 @@ def package_skill() -> int:
         return 1
 
     try:
-        resources = _public_tree(REPO_SKILL_DIR)
+        resources = coach_resources.read_public(REPO_SKILL_DIR)
     except (OSError, ValueError) as exc:
         print(f"[skill] {exc}")
         return 1

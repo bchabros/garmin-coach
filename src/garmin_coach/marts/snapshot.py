@@ -1,11 +1,11 @@
 """Athlete snapshot (mart): compose the current standing into one athlete_status row.
 
 Pure and total. ``build`` reads finished marts + core (``daily_metrics``,
-``athlete_zones``, ``weight_log``, ``race_predictions``, ``training_readiness``,
+``athlete_zones``, ``training_readiness``,
 ``training_status_daily``, the resolved plan of record) and returns a single "where do I
 stand right now" dict; ``rollup`` upserts the singleton row. A
 same-run copy of finished data - never calls Garmin. Runs as the tail of ``features``
-after weekly + zones. See docs/prd/phase-6b/PRD.md.
+after weekly + zones. See ADR 0009.
 """
 
 from __future__ import annotations
@@ -37,6 +37,47 @@ _ZONE_MIRROR = (
 )
 
 
+_STATUS_COLUMNS = (
+    "computed_at",
+    "vo2max",
+    "vo2max_delta",
+    "vo2max_span_days",
+    "hrv_baseline",
+    "hrv_sd",
+    "hrv_delta",
+    "hrv_span_days",
+    "acwr",
+    "n_chronic",
+    "acwr_reliable",
+    "load_7d",
+    "low_share",
+    "high_share",
+    "anaero_share",
+    "readiness_score",
+    "readiness_level",
+    "sleep_debt_h",
+    "heat_accl_pct",
+    "heat_trend",
+    "altitude_accl",
+    "lthr_bpm",
+    "z1_hi_bpm",
+    "z2_hi_bpm",
+    "z3_hi_bpm",
+    "z4_hi_bpm",
+    "threshold_pace_s_per_km",
+    "z2_pace_ceiling_s_per_km",
+    "zones_source",
+    "lthr_detected_on",
+    "zones_stale",
+    "block",
+    "weeks_to_event",
+    "taper_active",
+    "planned_label_today",
+    "planned_intent_today",
+    "plan_source_today",
+)
+
+
 def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None:
     """Recompute the singleton ``athlete_status`` row from finished marts + core.
 
@@ -44,7 +85,7 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
     after ``weekly.rollup`` and ``zones.rollup``, so it copies their fresh rows.
     ``features`` owns the transaction; this does not commit.
     """
-    cutoff = through_date or _latest_mart_date(conn)
+    cutoff = through_date or db.latest_mart_date(conn)
     if cutoff is None:
         return
     db.upsert_status(conn, {"id": 1, **build(conn, through_date=cutoff)})
@@ -52,13 +93,10 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
 
 def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
     """Read the persisted singleton ``athlete_status`` row as a dict, or None."""
-    cur = conn.execute("SELECT * FROM athlete_status WHERE id = 1")
-    row = cur.fetchone()
-    if row is None:
-        return None
-    status = dict(zip([d[0] for d in cur.description], row))
-    status.pop("id", None)
-    return status
+    # Project the supported contract: older installations retain retired columns.
+    columns = ", ".join(_STATUS_COLUMNS)
+    row = conn.execute(f"SELECT {columns} FROM athlete_status WHERE id = 1").fetchone()
+    return dict(zip(_STATUS_COLUMNS, row)) if row is not None else None
 
 
 def write_json(status: dict[str, Any], out_dir: pathlib.Path) -> pathlib.Path:
@@ -72,7 +110,6 @@ def build(
     conn: sqlite3.Connection,
     *,
     through_date: str,
-    thresholds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compose the current-standing dict as of ``through_date``.
 
@@ -80,7 +117,7 @@ def build(
     reproduces that day's standing. ``planned_*_today`` uses that date's weekday.
     Total: a missing source degrades to ``None`` rather than raising.
     """
-    thr = thresholds if thresholds is not None else _thresholds.read(conn)
+    thr = _thresholds.read(conn)
     return {
         "computed_at": through_date,
         **_markers(conn, through_date, thr),
@@ -90,11 +127,6 @@ def build(
         **_zones_mirror(conn),
         **_plan(conn, through_date),
     }
-
-
-def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
-    return row[0] if row else None
 
 
 def _latest_row(
@@ -152,7 +184,7 @@ def _trend(
 
 
 def _markers(conn: sqlite3.Connection, through_date: str, thr: dict[str, float]) -> dict[str, Any]:
-    """VO2max and body weight (value + trend) and the latest race predictions."""
+    """VO2max value and trend from the ingested training-status series."""
     vo2 = _series(conn, "training_status_daily", "vo2max", through_date)
     vo2_delta, vo2_span = _trend(
         vo2,
@@ -160,30 +192,10 @@ def _markers(conn: sqlite3.Connection, through_date: str, thr: dict[str, float])
         thr["snapshot_vo2max_lookback_days"],
         thr["snapshot_trend_min_span_days"],
     )
-    weight = [(d, g / 1000) for d, g in _series(conn, "weight_log", "weight_g", through_date)]
-    weight_delta, weight_span = _trend(
-        weight,
-        through_date,
-        thr["snapshot_weight_lookback_days"],
-        thr["snapshot_trend_min_span_days"],
-    )
-    preds = (
-        _latest_row(
-            conn, "race_predictions", "t_5k_s, t_10k_s, t_half_s, t_marathon_s", through_date
-        )
-        or {}
-    )
     return {
         "vo2max": vo2[-1][1] if vo2 else None,
         "vo2max_delta": vo2_delta,
         "vo2max_span_days": vo2_span,
-        "weight_kg": weight[-1][1] if weight else None,
-        "weight_delta": weight_delta,
-        "weight_span_days": weight_span,
-        "t_5k_s": preds.get("t_5k_s"),
-        "t_10k_s": preds.get("t_10k_s"),
-        "t_half_s": preds.get("t_half_s"),
-        "t_marathon_s": preds.get("t_marathon_s"),
     }
 
 

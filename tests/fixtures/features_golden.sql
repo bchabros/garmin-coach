@@ -1,6 +1,6 @@
 -- Golden regression fixture for Phase 2 features.py
 -- Real anonymized core data 2026-06-08..2026-07-03 (PII columns omitted).
--- Regenerate from data/garmin.db; see docs/prd/phase-2.md.
+-- Frozen evidence; see test_golden_regression_reproduces_reference_analysis.
 
 -- activities: 15 rows
 INSERT INTO activities (activity_id,start_local,date,gtype,aero_te,anaero_te,training_load,hr_z1_s,hr_z2_s,hr_z3_s,hr_z4_s,hr_z5_s) VALUES (1,'2026-06-08 16:52:46','2026-06-08','running',5.0,2.5999999046325684,285.2075500488281,804.576,1047.264,728.642,0.0,0.0);

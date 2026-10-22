@@ -2,95 +2,33 @@
 
 ## Status
 
-Accepted. Generalizes the guarded project launch of issue
-[#82](https://github.com/bchabros/garmin-coach/issues/82) to every entry point
-(issue [#83](https://github.com/bchabros/garmin-coach/issues/83)).
-
-Amended by issue #84 for explicit initial setup and adoption; see the dated amendment.
+Accepted
 
 ## Context
 
-Until now every path the program touched - the database, plans, reports, logs, and the
-`.env` that configures them - resolved against the folder the process happened to start
-in. That was harmless while the only installation was the source checkout and every
-launch `cd`-ed into it first. It stops being harmless once the program is installed as a
-package and launched by assistant clients: a plugin's server starts from a
-client-managed cache folder, and with nothing there the coach server bootstrapped a
-fresh, empty database on its first call. Two assistants started from two folders would
-then hold two training histories, and a second athlete on the same Mac would share the
-owner's saved Garmin login and sync the owner's training into their own database.
-
-The owner's existing installation is the checkout itself, configured by its `.env`
-(database path relative, Garmin login explicitly at `~/.garminconnect`), and it is run by
-a nightly launchd job, Claude Desktop, Claude Code and Work - none of which may break.
+Program location and starting directory must not silently select another athlete's personal records.
 
 ## Decision
 
-- **The selected installation is named or recognized, never inferred from the program.**
-  `--home <folder>` (CLI and coach server) or `GARMIN_COACH_HOME` names it. With
-  neither, the folder the run starts from is the installation **only if it holds a
-  `.env`**; otherwise the run stops with an instruction. The same `.env` test applies to
-  a named folder, so a mistyped path fails instead of becoming a new installation.
-- **Relative paths in an installation's `.env` resolve against the installation**, not
-  the starting folder. Reports always live in the installation's `reports/`.
-- **Conflicts are refused, not resolved by precedence.** `--home` and
-  `GARMIN_COACH_HOME` naming different folders is an error. So is an environment value
-  for a path setting (`DB_PATH`, `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS`) or for
-  `GARMIN_EMAIL` that differs from what the selected installation configures. A relative
-  environment path is read from the starting folder, as the shell that set it would read
-  it; the installation's own relative paths are read from the installation. Other
-  settings keep the usual environment-over-`.env` precedence; paths written in the
-  installation's own `.env` (outside its folder included) and per-command flags such as
-  `--plans-dir` remain the supported overrides.
-- **Only a manual import creates a database.** `backfill` and `sync` may create the
-  selected installation's database; the coach server, the nightly `daily` run and every
-  other command refuse a missing one. Upgrading an existing database's schema is
-  unchanged by this decision.
-- **The saved Garmin login belongs to the installation by default**
-  (`<installation>/.garminconnect`). An explicit `GARMINTOKENS` keeps working, which is
-  how the owner's login stays at `~/.garminconnect`.
-- **The owner's checkout is adopted in place.** It already holds a `.env`, so the
-  nightly job, Claude Desktop, Claude Code and Work keep launching it unchanged.
-
-## Considered options
-
-- **A dedicated marker file** instead of `.env`: unambiguous, but it needs a one-time
-  step in the existing checkout and a second file beside the settings. Rejected because
-  a foreign `.env` only gets as far as the missing-database refusal.
-- **Always require an explicit selection**: the strictest, but it would force every
-  existing launch (nightly job, three client entries, terminal habits) to change in the
-  same release.
-- **Fall back to the source checkout the code runs from**: convenient for the owner, but
-  a development session in a worktree would then act on the owner's real data.
-- **Environment over `.env` (the library default)**: a stale `DB_PATH` exported in a
-  shell or inherited by a GUI client would silently point a run at another
-  installation's database - exactly the access this decision exists to prevent.
+- Select once per run: explicit --home, GARMIN_COACH_HOME, or starting folder only
+  when it has .env. Named existing installations also require .env; never infer from
+  the program/checkout location. Resolve config-relative paths against installation.
+- Inherited relative environment paths are starting-folder-relative. Conflicting
+  selection/path/email refuses; equivalent resolved paths, explicit external .env
+  paths and per-command overrides remain supported. Other environment precedence stays.
+- One installation database opener owns selection, missing-file refusal and optional
+  creation. Import commands may create; server/daily/ordinary reads require existing DB.
+  Saved login defaults inside installation; explicit legacy external paths remain.
+- #84 setup amendment: explicitly name creation, preview the athlete's own history
+  start/optional template and separately confirm import. Never seed owner observations.
+- Adopt existing personal files/settings/values/template in place. Without checkpoint,
+  inspect existing evidence read-only; a local read cannot claim complete history.
+- Setup checkpoints cover only full committed days and bind database/history identity,
+  independently of nightly watermarks. Extending the same history resumes; invalid or
+  replaced identity cannot skip imports. Declined choices preserve existing bytes.
 
 ## Consequences
 
-- A fresh clone needs `cp .env.example .env` before its first import; `.env` is no
-  longer optional.
-- Tests must select a temporary installation explicitly; a shared guard disables the
-  starting-folder fallback and the environment variable so no test can reach the
-  owner's installation.
-- Creating a new installation from a template, with a guided Garmin login, belongs to
-  issue #84; telling a packaged client's chat where the profile lives belongs to #85.
-
-## Amendment — 2026-10-14, issue #84
-
-`setup` is the explicit creation path: it requires a named destination, creates the
-empty installation's `.env` from reviewed athlete choices, and may create its database
-after confirmation of the initial import. Other entry points keep the original refusal
-rules. A manually created `.env` without a database must also establish its own history
-start and template choice; the compatibility cutoff is not a new-athlete default.
-
-An existing database without a setup checkpoint is inspected read-only. The user can
-reuse recorded history locally or explicitly request a history fetch; neither existing
-rows nor a maximum date prove that every historical day is present. Local adoption
-therefore names the available horizon and coverage, with import completeness unknown.
-
-Setup checkpoints record committed full days independently of sync watermarks. The same
-database and history start can resume with a later end date, avoiding a full historical
-fetch on the next day; normal `sync` retains ownership of trailing-day rechecks. Invalid
-checkpoints or a replaced database never authorize skipping an import. Personal files,
-configuration overrides, existing measurements and templates are preserved in place.
+One installation can serve several assistants while program updates/removal remain
+separate. Source checkouts are not automatically installations; fixtures and development
+tests select isolated temporary records explicitly.

@@ -16,11 +16,6 @@ from ..coach import thresholds as _thresholds
 from ..core import db, plan as _plan
 
 
-def _latest_mart_date(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
-    return row[0] if row and row[0] else None
-
-
 def _plan_intents(conn: sqlite3.Connection, monday: _dt.date) -> dict[int, str | None]:
     """The week's planned intents by weekday, from the plan-of-record resolver.
 
@@ -164,7 +159,7 @@ def rollup(
         through_date: Cutoff (default: latest ``daily_metrics`` date). A week is
             emitted only when its Sunday is at/before this date.
     """
-    end = through_date or _latest_mart_date(conn)
+    end = through_date or db.latest_mart_date(conn)
     if end is None:
         return
 

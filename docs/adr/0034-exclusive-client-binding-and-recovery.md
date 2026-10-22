@@ -1,39 +1,29 @@
-# Exclusive client bindings and resumable owned generations
+# ADR 0034 - Exclusive client bindings and resumable owned generations
 
-User-scoped plugins share the `coach` skill/tool namespace, so distinct athlete
-installations cannot safely be registered simultaneously on the same assistant host
-without a verified client isolation contract. For issue #97, serialize one client
-binding per user and host, retain Work/Codex's shared OpenAI binding, and refuse a
-conflicting athlete installation or runtime root before native mutation. Legacy
-bindings require native inventory evidence; removal remains scoped to the original
-owned registration.
+## Status
 
-A process interruption is a normal installation outcome. Persist the old/new owned
-artifact generation before replacement, prepare runtimes in fresh sibling directories,
-and record update recovery intent before activation. Rollback reuses the integration
-transaction with preserved ownership rather than deleting integration directories or
-invoking an older client's recovery implementation. Unknown edits remain preserved.
+Accepted
 
-Unique plugin names alone were rejected because they do not establish conversation
-isolation for identical skills and MCP servers. Eagerly detaching every client before
-activation was rejected because a crash would unnecessarily disconnect all hosts and
-reinstallation can reset client permissions. Native inventory and preparation history
-remain distinct from fresh-conversation client acceptance.
+## Context
 
-New update intent has an explicit format version. A legacy v0.1.0 preparing journal
-is treated as possibly having detached clients, because that release advanced its
-phase after native removal. Native operations that can succeed before a process is
-interrupted require ownership readback before replay; an absent acknowledgment alone
-is insufficient evidence that nothing happened.
+Native registrations are user-wide; interrupted commands and old private resource generations cannot be treated as isolated local copies.
 
-Generated skill content is restricted to the four public coach resources, including
-when restoring an older snapshot. An owned obsolete resource is removed only after
-its hash and deletion intent are recorded. A prior receipt owning private Markdown
-requires a clean native plugin reinstall, even if the source file has disappeared,
-because the native cache can still retain it. This targeted reinstall accepts the
-permission-reapproval cost for privacy; unknown or edited resources are preserved and
-require operator inspection before activation.
+## Decision
 
-ADR 0035 extends resource selection with a new generic saved-context reference and a
-shared public list. It preserves the legacy private-context exclusion and the recovery
-rules above, including restoration of the original four-resource generation.
+- Serialize one binding per user/host; Work/Codex share it. Refuse conflicting
+  athlete/runtime before mutation. Legacy ownership needs matching native inventory.
+- Persist generation and recovery intent before changes, prepare sibling artifacts,
+  and roll back only verified owned content. Unknown edits remain preserved.
+- Do not eagerly detach all clients or assume unique package names isolate hosts.
+  Version update intent; legacy preparing state may already have detached a client.
+- After interrupted native commands, reconcile inventory before replay: a lost
+  acknowledgement is not evidence that the operation failed.
+- Removing obsolete resources requires ownership hashes and a deletion journal.
+  Earlier private Markdown ownership requires clean native reinstall even if the source
+  file vanished, with possible permission reapproval. ADR 0035 extends the public set.
+
+## Consequences
+
+Refresh and recovery preserve independent client progress and prevent stale native
+caches retaining private content. A clean public source folder alone proves neither
+safe cache contents nor fresh-chat acceptance.

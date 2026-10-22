@@ -4,7 +4,7 @@ Pure and total. ``compute`` derives HR bands as fixed fractions of the
 watch-detected Lactate Threshold heart rate and a Zone-2 pace ceiling from a
 pace<->HR regression over aerobic runs (falling back to a fraction of threshold
 pace when history is thin). Reads nothing - the caller extracts core rows and
-persists the result. See docs/prd/phase-6.md.
+persists the result. See docs/adr/0007-phase-6-personal-zones.md.
 """
 
 from __future__ import annotations

@@ -131,7 +131,6 @@ def run_daily(
     *,
     data_start_date: str,
     to_date: str | None = None,
-    thresholds: dict[str, float] | None = None,
     max_attempts: int = 3,
     retry_base_seconds: float = 1.0,
     plans_dir: str | Path | None = None,
@@ -151,7 +150,6 @@ def run_daily(
         conn: Open SQLite connection with the schema bootstrapped.
         data_start_date: First real-data date; earlier days are explicit gaps.
         to_date: Last date to pull/emit (default: yesterday / latest mart day).
-        thresholds: Coach thresholds; read from ``coach_thresholds`` when omitted.
         max_attempts: Retry attempts per Garmin call in the sync stage.
         retry_base_seconds: Base for the sync stage's exponential backoff.
         plans_dir: Directory of authored ``<monday>_week.md`` plans; skipped when
@@ -214,7 +212,7 @@ def run_daily(
 
     logger.info("daily: alert stage starting")
     try:
-        thr = thresholds if thresholds is not None else _thresholds.read(conn)
+        thr = _thresholds.read(conn)
         dg = digest.build_digest(conn, to_date=to_date, thresholds=thr, recheck_days=recheck_days)
         result.alerts = [s for s in dg["signals"] if s["severity"] in ALERT_SEVERITIES]
     except Exception as exc:  # noqa: BLE001 - non-fatal: data is already persisted

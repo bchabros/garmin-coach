@@ -18,7 +18,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-from . import plan_changes
+from . import distribution, plan_changes
 from .coach import digest, thresholds
 from .core import db, installation, plan
 from .core.config import Settings
@@ -232,15 +232,8 @@ def _refuse_first_run_overrides() -> None:
 def _append_configuration(path: pathlib.Path, additions: list[str]) -> None:
     original = path.read_bytes()
     separator = b"" if not original or original.endswith(b"\n") else b"\n"
-    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as target:
-        temporary = pathlib.Path(target.name)
-        try:
-            target.write(original + separator + ("\n".join(additions) + "\n").encode("utf-8"))
-            target.close()
-            temporary.chmod(path.stat().st_mode & 0o777)
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+    content = original + separator + ("\n".join(additions) + "\n").encode("utf-8")
+    distribution.atomic_write(path, content, mode=path.stat().st_mode & 0o777)
 
 
 def _end_date(value: str | None) -> dt.date:
@@ -370,16 +363,7 @@ def _checkpoint(
         "completed_through": day,
         "database": _database_identity(settings),
     }
-    with tempfile.NamedTemporaryFile(
-        mode="w", dir=folder, delete=False, encoding="utf-8"
-    ) as target:
-        temporary = pathlib.Path(target.name)
-        try:
-            json.dump(state, target)
-            target.close()
-            temporary.replace(_checkpoint_path(root))
-        finally:
-            temporary.unlink(missing_ok=True)
+    distribution.atomic_write(_checkpoint_path(root), json.dumps(state).encode())
 
 
 def _first_read(

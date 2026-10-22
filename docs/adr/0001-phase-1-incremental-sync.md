@@ -6,25 +6,20 @@ Accepted
 
 ## Context
 
-Phase 0 provides idempotent backfill, but it has no durable notion of daily progress.
-Phase 1 needs `garmin-coach sync` to run repeatedly, pull only missing data, and
-survive transient Garmin failures without losing successful work from other streams.
+Repeated daily imports need durable progress and isolation from transient Garmin failures.
 
 ## Decision
 
-- Track progress as a per-stream watermark in `sync_state`.
-- Bootstrap a missing watermark from the relevant core table's maximum date.
-- If a core table is empty, bootstrap that stream to `DATA_START_DATE - 1`.
-- Advance a stream watermark only to the last date successfully processed by that stream.
-- Keep daily streams on per-day transport calls in Phase 1.
-- Add retry and isolation per daily stream/day.
-- For activities, try a whole-window range call first and fall back to one-day range calls if the whole-window call fails after retry.
-- Treat partial success as a successful CLI run when at least one stream progresses, while surfacing warnings for failed streams or days.
+- Store a watermark per stream in `sync_state`. Bootstrap from that stream's core
+  maximum date, or `data_start - 1` if empty; advance only after successful persistence.
+- Daily streams use per-day calls with retry and isolation. Activities try a range
+  first, falling back to daily ranges after range retries fail.
+- Preserve useful partial progress while surfacing each failure. Different streams
+  may temporarily hold different watermarks.
+- ADR 0026 adds the trailing re-check window and caps final watermarks. ADR 0004
+  defines the nightly exit-code contract; enrichment policy is in ADR 0018.
 
 ## Consequences
 
-- Repeated sync runs converge as transient failures clear.
-- One failed stream does not block other streams from progressing.
-- Some streams may temporarily have different watermarks; this is expected.
-- Automation can continue after useful partial progress, while hard failures still return a non-zero exit code.
-- The design avoids adding Garmin range endpoints for daily streams until there is a measured need.
+Repeated runs converge without losing another stream's successful work. No new
+Garmin range endpoint is added for daily streams without a measured need.

@@ -107,26 +107,12 @@ def _seed_full_standing(conn):
             "stale": 0,
         },
     )
-    # VO2max series lives in training_status_daily (fitness_markers.vo2max_running
-    # is never populated by the ETL); the daily vo2max drives value + trend.
+    # The ingested training-status VO2max series drives value and trend.
     db.upsert_daily(conn, "training_status_daily", {"date": "2026-06-20", "vo2max": 51.0})
     db.upsert_daily(conn, "training_status_daily", {"date": "2026-07-07", "vo2max": 52.0})
-    db.upsert_daily(conn, "weight_log", {"date": "2026-06-28", "weight_g": 74500})
-    db.upsert_daily(conn, "weight_log", {"date": "2026-07-07", "weight_g": 74200})
     # weekly-average HRV series (Garmin's smoothed series drives the HRV trend)
     db.upsert_daily(conn, "hrv_nightly", {"date": "2026-06-25", "weekly_avg": 64})
     db.upsert_daily(conn, "hrv_nightly", {"date": "2026-07-08", "weekly_avg": 69})
-    db.upsert_daily(
-        conn,
-        "race_predictions",
-        {
-            "date": "2026-07-06",
-            "t_5k_s": 1170,
-            "t_10k_s": 2460,
-            "t_half_s": 5400,
-            "t_marathon_s": 11400,
-        },
-    )
     db.upsert_daily(
         conn, "training_readiness", {"date": "2026-07-06", "score": 60, "level": "MODERATE"}
     )
@@ -154,15 +140,6 @@ def test_full_standing_composes_every_direct_read_field(conn):
     assert s["vo2max"] == 52.0
     assert s["vo2max_delta"] == pytest.approx(1.0)  # 52 - 51 (06-20 baseline)
     assert s["vo2max_span_days"] == 17  # 06-20 .. 07-07
-    assert s["weight_kg"] == pytest.approx(74.2)
-    assert s["weight_delta"] == pytest.approx(-0.3)  # 74.2 - 74.5 (06-28 baseline)
-    assert s["weight_span_days"] == 9  # 06-28 .. 07-07
-    assert (s["t_5k_s"], s["t_10k_s"], s["t_half_s"], s["t_marathon_s"]) == (
-        1170,
-        2460,
-        5400,
-        11400,
-    )
     # HRV band (our numbers) + trend of Garmin's weekly-average HRV
     assert s["hrv_baseline"] == 68 and s["hrv_sd"] == 11
     assert s["hrv_delta"] == pytest.approx(5.0)  # 69 - 64 (06-25 weekly_avg)
@@ -203,7 +180,6 @@ def test_as_of_reproduces_the_then_current_standing(conn):
 
     assert s["computed_at"] == "2026-07-06"
     assert s["vo2max"] == 51.0  # 07-07 reading is in the future of this as-of
-    assert s["weight_kg"] == pytest.approx(74.5)  # 07-07 weight not yet seen
     assert s["readiness_score"] == 60  # 07-06 row, not the later 72
     assert s["acwr"] == pytest.approx(1.10)
     assert s["n_chronic"] == 28
@@ -257,6 +233,19 @@ def test_empty_db_degrades_to_nulls(conn):
 # --- conn seam: snapshot.rollup persists the singleton row ---
 
 
+@pytest.mark.parametrize("populated", [False, True])
+def test_every_built_field_survives_persistence_and_read(conn, populated):
+    if populated:
+        _seed_full_standing(conn)
+    built = snapshot.build(conn, through_date="2026-07-08")
+
+    snapshot.rollup(conn, through_date="2026-07-08")
+
+    assert snapshot.read(conn) == built
+    schema_fields = {row[1] for row in conn.execute("PRAGMA table_info(athlete_status)")}
+    assert set(built) == schema_fields - {"id"}
+
+
 def test_rollup_writes_single_status_row(conn):
     _seed_full_standing(conn)
     snapshot.rollup(conn, through_date="2026-07-08")
@@ -277,6 +266,37 @@ def test_rollup_is_idempotent(conn):
     snapshot.rollup(conn, through_date="2026-07-08")
     snapshot.rollup(conn, through_date="2026-07-08")
     assert conn.execute("SELECT COUNT(*) FROM athlete_status").fetchone()[0] == 1
+
+
+def test_read_omits_retired_markers_without_erasing_legacy_values(conn):
+    retired = {
+        "weight_kg": 74.2,
+        "weight_delta": -0.3,
+        "weight_span_days": 9,
+        "t_5k_s": 1170,
+        "t_10k_s": 2460,
+        "t_half_s": 5400,
+        "t_marathon_s": 11400,
+    }
+    installed = {row[1] for row in conn.execute("PRAGMA table_info(athlete_status)")}
+    for column in retired.keys() - installed:
+        conn.execute(f"ALTER TABLE athlete_status ADD COLUMN {column} REAL")
+    snapshot.rollup(conn, through_date="2026-07-08")
+    assignments = ", ".join(f"{column} = ?" for column in retired)
+    conn.execute(f"UPDATE athlete_status SET {assignments} WHERE id = 1", tuple(retired.values()))
+    conn.commit()
+
+    db.validate_schema(conn)
+    snapshot.rollup(conn, through_date="2026-07-08")
+    status = snapshot.read(conn)
+
+    assert status is not None
+    assert status["computed_at"] == "2026-07-08"
+    assert not retired.keys() & status.keys()
+    columns = ", ".join(retired)
+    assert conn.execute(f"SELECT {columns} FROM athlete_status").fetchone() == tuple(
+        retired.values()
+    )
 
 
 # --- Phase 9: the block fields stop being placeholders ---

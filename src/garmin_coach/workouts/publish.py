@@ -4,7 +4,7 @@ This is the only module in the system that writes to Garmin, and it bends the
 golden rule exactly like ``client.py``/``sync.py`` do for reads (see ADR 0013).
 The orchestration depends on an injected ``WorkoutPublisher`` protocol - not a
 concrete client - so idempotency, the confirm interlock, and the receipt are all
-tested offline against a fake, and the live wrapper is wired in a later ticket.
+tested offline against a fake. ``GarminPublisher`` provides the live adapter.
 
 Idempotency uses the Garmin account as the source of truth, never a local ledger:
 each system-authored workout carries a hash of its canonical spec in the workout

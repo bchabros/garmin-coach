@@ -41,15 +41,33 @@ def read_state(root: pathlib.Path) -> dict[str, Any]:
     return value
 
 
+def atomic_write(path: pathlib.Path, content: bytes, *, mode: int = 0o600) -> None:
+    """Replace a regular file atomically, cleaning the private temporary on failure.
+
+    Kept here so the standalone installer and packaged callers share the same
+    standard-library-only implementation. Symlink activation remains separate.
+
+    Args:
+        path: Destination whose parent directory is created when needed.
+        content: Complete replacement bytes.
+        mode: Permissions of the replacement, private by default.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        temporary = pathlib.Path(stream.name)
+        try:
+            stream.write(content)
+            stream.close()
+            temporary.chmod(mode)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def write_state(root: pathlib.Path, state: dict[str, Any]) -> None:
     """Atomically persist non-personal setup observations."""
-    root.mkdir(parents=True, exist_ok=True)
     record = dict(state, schema_version=SCHEMA_VERSION)
-    with tempfile.NamedTemporaryFile(mode="w", dir=root, delete=False) as stream:
-        json.dump(record, stream, indent=2)
-        stream.write("\n")
-        name = stream.name
-    os.replace(name, root / "install-state.json")
+    atomic_write(root / "install-state.json", (json.dumps(record, indent=2) + "\n").encode())
 
 
 def _download(asset: dict[str, Any], destination: pathlib.Path) -> None:
@@ -513,11 +531,7 @@ def _activate_files(root: pathlib.Path, release: pathlib.Path) -> None:
     (root / "bin").mkdir(exist_ok=True)
     for name, module in (("garmin-coach", "cli"), ("garmin-coach-mcp", "mcp.server")):
         launcher = root / "bin" / name
-        with tempfile.NamedTemporaryFile(dir=launcher.parent, delete=False) as stream:
-            stream.write(_launcher_content(module))
-            temporary = pathlib.Path(stream.name)
-        temporary.chmod(0o755)
-        os.replace(temporary, launcher)
+        atomic_write(launcher, _launcher_content(module), mode=0o755)
     with tempfile.NamedTemporaryFile(dir=root, delete=False) as stream:
         pointer = pathlib.Path(stream.name)
     pointer.unlink()
@@ -756,10 +770,7 @@ def _enable_schedule(
     write_state(root, state)
     path.parent.mkdir(parents=True, exist_ok=True)
     (home / "logs").mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-        stream.write(content)
-        temporary = pathlib.Path(stream.name)
-    os.replace(temporary, path)
+    atomic_write(path, content)
     record.update(status="prepared", activation_status="not_run")
     write_state(root, state)
     return _bootstrap_schedule(root, record, state, execute)

@@ -391,10 +391,13 @@ def _run(conn, date: str, activity_id: int = 500) -> None:
     )
 
 
+_UNCONFIRMED_TODAY = "2026-09-13"
+
+
 def _days_back(n: int) -> str:
     import datetime as _dt
 
-    return (_dt.date.today() - _dt.timedelta(days=n)).isoformat()
+    return (_dt.date.fromisoformat(_UNCONFIRMED_TODAY) - _dt.timedelta(days=n)).isoformat()
 
 
 def test_unconfirmed_day_is_a_planned_window_day_with_no_activity(conn):
@@ -402,7 +405,7 @@ def test_unconfirmed_day_is_a_planned_window_day_with_no_activity(conn):
     for back in (1, 2, 3):
         _plan_the_week(conn, _days_back(back))
 
-    days = plan.unconfirmed_days(conn, window_days=3)
+    days = plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY)
 
     assert [d["date"] for d in days] == [_days_back(3), _days_back(2), _days_back(1)]
     assert days[0]["intent"] == "tempo"
@@ -413,7 +416,7 @@ def test_a_day_with_a_stored_activity_is_confirmed(conn):
     _plan_the_week(conn, _days_back(2))
     _run(conn, _days_back(2))
 
-    days = plan.unconfirmed_days(conn, window_days=3)
+    days = plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY)
 
     assert _days_back(2) not in [d["date"] for d in days]
 
@@ -422,14 +425,14 @@ def test_a_planned_rest_day_is_never_unconfirmed(conn):
     for back in (1, 2, 3):
         _plan_the_week(conn, _days_back(back), intent="rest")
 
-    assert plan.unconfirmed_days(conn, window_days=3) == []
+    assert plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY) == []
 
 
 def test_today_is_never_unconfirmed(conn):
     """Today is flagged as partial by the envelope; it is not a day that failed to arrive."""
     _plan_the_week(conn, _days_back(0))
 
-    days = plan.unconfirmed_days(conn, window_days=3)
+    days = plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY)
 
     assert _days_back(0) not in [d["date"] for d in days]
 
@@ -437,14 +440,14 @@ def test_today_is_never_unconfirmed(conn):
 def test_days_older_than_the_window_are_final(conn):
     _plan_the_week(conn, _days_back(9))
 
-    days = plan.unconfirmed_days(conn, window_days=3)
+    days = plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY)
 
     assert _days_back(9) not in [d["date"] for d in days]
 
 
 def test_the_template_answers_for_a_week_with_no_plan_file(conn):
     """A week the athlete never authored still has a shape worth checking against."""
-    days = plan.unconfirmed_days(conn, window_days=3)
+    days = plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY)
 
     assert all(d["source"] == "plan_template" for d in days)
 
@@ -453,4 +456,7 @@ def test_a_horizon_in_the_past_has_no_unconfirmed_days(conn):
     """A report for an old day: every day in it was settled long ago."""
     _plan_the_week(conn, _days_back(2))
 
-    assert plan.unconfirmed_days(conn, window_days=3, through="2026-07-01") == []
+    assert (
+        plan.unconfirmed_days(conn, window_days=3, today=_UNCONFIRMED_TODAY, through="2026-07-01")
+        == []
+    )

@@ -583,7 +583,7 @@ def test_weekly_section_flags_retrospective_deload_on_big_load_drop(conn):
 
 def test_golden_regression_over_real_mart_slice(conn):
     """Seed the frozen real mart (2026-06-08..07-03) and assert the deterministic
-    digest against independently-verified values (see docs/prd/phase-3.md)."""
+    digest against independently-verified values (see docs/adr/0003-phase-3-coach-signals.md)."""
     conn.executescript((FIXTURES / "digest_golden.sql").read_text())
 
     d = build_digest(conn, from_date="2026-06-08", to_date="2026-07-03")

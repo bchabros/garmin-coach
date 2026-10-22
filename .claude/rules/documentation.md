@@ -1,44 +1,37 @@
-# Documentation Rules
+# Documentation rules
 
-Every public function, method, and class under `src/` and `config/` must have a
-**Google-style docstring**. Notebooks (`notebooks/`), sandbox scripts (`scratch/`),
-tests (`tests/`), and `__init__.py` files are exempt.
+Changed public functions, methods and classes under `src/` use Google-style docstrings.
+Describe behavior and non-obvious constraints. Add `Args:`, `Returns:` and `Raises:`
+where useful; one line is enough for an obvious operation. Keep examples in this domain.
 
-## Google style
+`task docstrings` checks source with Ruff's Google convention:
+`ruff check src --select D --ignore D100,D104,D105,D107`.
+`task check` includes that gate with offline tests, lint and mypy.
 
-Use `Args:`, `Returns:`, and `Raises:` sections — but only where the logic isn't
-self-evident. Do not add docstrings to code you didn't change.
+Keep each rule authoritative in one place and link to it from other guides.
+Update `CLAUDE.md` and its byte-identical `AGENTS.md` mirror together.
+The packaged `src/garmin_coach/core/schema.sql` is the sole schema source.
 
-```python
-def extract(self, payload: str | dict[str, Any]) -> ExtractionResult:
-    """Extract files and metadata from a claim JSON payload.
+## Documentation cleanup before completing a PR
 
-    Args:
-        payload: Raw claim JSON as a string, or an already-parsed dict.
+Before the final review of every PR, and again after a material scope change:
 
-    Returns:
-        An ExtractionResult with decoded files and any validation errors.
-
-    Raises:
-        ValueError: If the payload is not valid schema v2.0.
-    """
-```
-
-One-line docstrings are fine when the behavior is obvious:
-
-```python
-def is_success(self) -> bool:
-    """Return True if no errors were recorded."""
-```
-
-## Enforcement
-
-Backed by ruff pydocstyle (`convention = "google"`) — see `pyproject.toml`.
-The enabled rules are the "missing docstring" checks (`D101`/`D102`/`D103`) plus
-the Args-section check (`D417`).
-
-```bash
-task docstrings   # ruff check --select D101,D102,D103,D417 src/ config/
-```
-
-`task check` runs this alongside lint, format-check, and typecheck.
+1. Review tracked documentation affected by the change, including PRDs, plans,
+   investigation reports and duplicate guides. Compare their claims with the final
+   implementation and the issue's acceptance criteria.
+2. Move still-needed explanations to the maintained guides, binding decisions and
+   their reasons to ADRs, and terms to the glossary. Keep acceptance evidence and
+   deferred work in the issue or PR, with follow-up issues where needed.
+   When shortening an ADR, retain explicit supersession links and scope, the concrete
+   incident or evidence behind the decision, and reasons for rejecting alternatives.
+3. Remove obsolete duplicates and tracked PRDs or temporary plans whose scope is
+   fully implemented and verified in this PR or an already merged PR. Git history
+   retains the originals; avoid creating an archive directory. A closed issue or
+   unmerged PR alone does not establish completion. Retain documents needed for
+   unfinished scope or pending acceptance, and state what remains.
+4. Fix references to removed files and check the documentation links and shared
+   `CLAUDE.md` / `AGENTS.md` guidance. Keep unrelated documentation and private or
+   untracked athlete files outside this cleanup.
+5. Add a brief documentation-cleanup outcome to the PR description: what was removed,
+   where lasting information moved, and what remains pending. If nothing was obsolete,
+   say so. Complete this check before reporting the PR ready for review.

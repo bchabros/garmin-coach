@@ -1,9 +1,9 @@
 # Development guide
 
 For coding agents (Claude Code, Codex) and humans **changing the code**. The
-always-loaded core is `CLAUDE.md`; this guide is read on demand when you touch the
-implementation. Operating the system instead? See `docs/OPERATIONS.md`. Term
-definitions live in `docs/glossary.md`.
+always-loaded core is `CLAUDE.md` / `AGENTS.md`; this guide is read on demand when
+you touch the implementation. Operating the system instead? See `docs/OPERATIONS.md`.
+Term definitions live in `docs/glossary.md`.
 
 ## Workflow
 
@@ -16,7 +16,7 @@ established loop for a new feature is a chain of skills:
 - **`/grill-with-docs`** -- stress-test the decisions against the repo's docs before any
   code (reaches `/domain-modeling` for vocabulary; see `docs/agents/domain.md`). For
   very complex tasks use `/wayfinder` instead -- a heavier, map-driven alternative
-  (`docs/prd/<feature>/map.md`; see the wayfinding section in
+  (maps and investigation results in the issue; see
   `docs/agents/issue-tracker.md`).
 - **`/to-spec`** -- publish the spec as a GitHub issue (title = the capability gap,
   body = problem/solution/decisions; see `docs/agents/issue-tracker.md`).
@@ -24,6 +24,9 @@ established loop for a new feature is a chain of skills:
   (see `docs/agents/issue-tracker.md`).
 - **`/implement`** -- build a ticket test-first (TDD, red -> green).
 - **`/code-review`** -- review the branch before merge.
+
+Before the final PR review, follow the documentation-cleanup checklist in
+[the shared documentation rules](../.claude/rules/documentation.md).
 
 - Work test-first. Tests live at agreed **seams** (see below).
 - One vertical slice at a time: one test -> minimal impl -> repeat. No bulk test-first.
@@ -43,23 +46,19 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 
 ## Architecture
 
-The package is layered: `core/` (`config.py` pydantic-settings, `installation.py` for
-the selected athlete installation (selection, path resolution, conflict refusals and
-the only database opener; ADR 0031), `db.py` connect/
-bootstrap/upserts, `models.py` pure `payload dict -> row dict` normalizers +
-discipline mapping, `weeks.py`, `schema.sql`) - `etl/` (`client.py` login+MFA,
-endpoint->method map, the only garminconnect importer; `sync.py`
-`backfill(client, conn, from_date, to_date)`) - `marts/` (mart builders:
-`features.py`/`weekly.py`/`zones.py`/`overlap.py`/`periodize.py`/`snapshot.py` +
-the `load.py` blend) - `coach/` (`digest.py`/`signals.py` coach digest,
-`thresholds.py`, `recommend.py`, `charts.py`, `report.py`) - `workouts/`
-(`author.py`/`exercises.py`/`hardness.py`, `push.py` for the complete dated push,
-`publish.py` for account policy and the only Garmin write) - `mcp/`
-(`server.py`/`tools.py`/`probe.py` for bounded local stdio diagnosis)
-- top-level `cli.py` (argparse), `daily.py` (nightly orchestrator), `project.py`
-  (guarded local coach launch, configuration, diagnostics and synthetic fixtures), `plan_changes.py`
-  (the complete plan import outcome shared by CLI, MCP and the nightly run), and
-  `retention.py` (manual report-file retention, with no DB or transport access).
+| Layer | Responsibility |
+| --- | --- |
+| `core/` | Installation selection/opener, configuration, schema, pure normalizers, persistence, plans/events and week arithmetic. |
+| `etl/` | The only `garminconnect` import; login/endpoint adapter and injected raw-first sync. |
+| `marts/` | Recomputable features/load, periodization, weekly facts, zones, overlap and standing. |
+| `coach/` | Digest/signals/policy/recommendation over finished data; explicit report/chart generation. |
+| `workouts/` | Pure author/exercises/hardness, dated push flow and the isolated account publisher. |
+| `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
+| `daily.py`, `plan_changes.py` | Complete nightly and plan-import outcomes, including their consequences. |
+| `onboarding.py`, `project.py` | Terminal setup/adoption; guarded source launch and synthetic fixtures. |
+| `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
+| `distribution.py`, `lifecycle.py` | Standalone bootstrap/scheduling, runtime ownership and recoverable maintenance. |
+| `retention.py` | Explicit report-file retention without DB/transport access. |
 
 `onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
 existing-installation adoption, confirmed terminal login, resumable initial backfill and
@@ -68,22 +67,11 @@ calls back only after all daily streams commit. Templates under `templates/` con
 athlete observations. The schema seeds policy defaults and reference mappings only;
 existing personal HRV overrides and weekly templates are preserved in place.
 
-`clients.py` prepares local Work/Codex and Claude Code plugins from the canonical
-coach resources carried by the Python distribution. Generated local marketplaces
-and atomic registration receipts belong to the managed runtime, outside athlete
-records; their server commands name the installation explicitly. Test its CLI and
-generated packages on temporary installations with fake client executables, and
-verify stdio reads from a copied cache. Fresh model acceptance is a separate manual
-check documented in `docs/CLIENT_SETUP.md`.
-
-`coach_resources.py` is the one place that decides which coach skill files are
-public: the list in `src/garmin_coach/coach_resources.json`, read as regular files
-reached without a symlink from `skills/coach/`. Native plugins, the release bundle and
-the standalone skill archive (`task claude:package`) read through it;
-`saved-context.md` contains generic lookup rules, while athlete race records stay in
-the selected installation (ADR 0035). Like `distribution.py` it is
-standard-library-only, because `scripts/build_release.py` and
-`scripts/claude_desktop.py` load it by path without application dependencies.
+`clients.py` generates installation-bound plugins from the public resource list in
+`coach_resources.json`. `coach_resources.py` selects only regular non-symlink files;
+private athlete context remains in the installation. Native plugins, release bundles
+and legacy archives share that selection. Fresh model acceptance remains separate
+from temporary-installation/fake-command and real-stdio package tests.
 
 The wheel and source archive take their skill files from the explicit `include` list
 in `pyproject.toml`, built by Poetry's standard backend. A new public reference
@@ -198,21 +186,19 @@ ones sparingly:
 
 ## Conventions
 
-- **Poetry**, not `uv`/`pip`, for all dependency work (despite what the BUILD doc says).
+- **Poetry** for dependency work; keep the lock reproducible.
 - Python 3.13. Code and docstrings in **English**; commit messages in English.
 - New and changed public docstrings use **Google-style docstrings**.
-- Schema source of truth is the package copy `src/garmin_coach/core/schema.sql`, loaded via
-  `importlib.resources`. `docs/schema.sql` is a snapshot kept identical by
-  `tests/test_schema_sync.py` -- edit the package copy, then re-sync docs.
+- The sole schema source is `src/garmin_coach/core/schema.sql`, loaded via
+  `importlib.resources`. Changes must support both fresh and existing installations.
 - `AGENTS.md` is a byte-for-byte mirror of `CLAUDE.md`, guarded by
   `tests/test_agents_mirror.py` -- edit `CLAUDE.md`, then copy it over `AGENTS.md`.
 - Normalizers must be pure and total: missing fields -> `None`, never raise. All values
   a normalizer emits must be **scalars** (SQLite can't bind dict/list).
 - Fixtures are anonymized real payloads. Strip PII: `userProfilePK`/`ownerId`,
   `ownerFullName`, lat/lon, `deviceId`, UUIDs, image URLs. Trim per-minute time series.
-- Additional working rules in `.claude/rules/` (no-emoji, code-style, plain-language)
-  apply to all changes. The whole directory is auto-loaded in Claude Code, so a new rule
-  file needs no `@` import in `CLAUDE.md`; Codex reads the files directly.
+- Additional working rules in `.claude/rules/` apply to all changes; follow the
+  loading instructions and complete rule list in the shared core.
 
 ## Gotchas (developer, learned the hard way)
 
@@ -240,7 +226,7 @@ population; derived loads and signals remain estimates from the documented model
 | `deload_load_rise_weeks`, `deload_min_history_weeks`, `deload_drop_pct` | Retrospective signal policy and history guards (ADR 0005). |
 | `z1_hi_pct_lthr`, `z2_hi_pct_lthr`, `z3_hi_pct_lthr`, `z4_hi_pct_lthr`, `z2_pace_fallback_mult` | Formula coefficients applied to the athlete's own LTHR/pace; without an anchor the bands stay unknown (ADR 0007). |
 | `zones_regression_min_runs`, `zones_regression_min_r2`, `zones_heat_temp_c`, `zones_stale_days` | Fit-quality, heat and age gates; no pre-seeded athlete anchor or regression (ADR 0007). |
-| `snapshot_vo2max_lookback_days`, `snapshot_weight_lookback_days`, `snapshot_hrv_lookback_days`, `snapshot_trend_min_span_days` | Observation windows and minimum measurable trend span (ADR 0009). |
+| `snapshot_vo2max_lookback_days`, `snapshot_hrv_lookback_days`, `snapshot_trend_min_span_days` | Observation windows and minimum measurable trend span (ADR 0009). |
 | `srpe_load_scale`, `sila_default_rpe` | Provisional 0.3 scale and RPE 7 fallback, initially calibrated on the owner's strength sessions; estimates never inserted as reported RPE (ADR 0010). |
 | `niggle_active_days`, `niggle_reduced_mode_severity` | Duration and response policy; no injury or pain score is pre-seeded (ADR 0010). |
 | `pattern_load_floor`, `pattern_overlap_high` | Provisional 20/40 overlap cutoffs, explicitly placeholders rather than athlete measurements (ADR 0011). |
@@ -271,11 +257,20 @@ changing the established training model.
 
 ## Deferred / TODO
 
-Not-yet-done work carried forward. The finished build is recorded in
-`docs/PROJECT.md` plus each feature's PRD (`docs/prd/`) and ADR (`docs/adr/`); new
-work is tracked as GitHub issues (`docs/agents/issue-tracker.md`).
+Not-yet-done work carried forward. Earlier build specifications remain in Git history; accepted decisions are in
+`docs/adr/`. New work and acceptance evidence live in GitHub issues and PRs
+(`docs/agents/issue-tracker.md`).
 
-- Multi-sport / `discipline` weighting in weekly rollups (deferred from Phase 5, BUILD
-  section 12).
-- VO2max / threshold **trend charts** (deferred from Phase 5, BUILD section 12).
-- PDF / Notion export (deferred from Phase 5, BUILD section 12).
+- Multi-sport / `discipline` weighting in weekly rollups.
+- VO2max / threshold **trend charts**.
+- PDF / Notion export.
+
+
+## Product boundaries
+
+The deterministic engine has no LLM layer, nutrition tracking, social/streak UX or
+black-box readiness score. The coach interprets recorded evidence through its skill;
+Garmin's readiness remains a named external observation, not an invented local score.
+
+Other deferred work: beat-to-beat/DFA-alpha-1 evidence and forecast-aware pace
+adjustment. Neither has an ingestion or coaching contract in the current system.

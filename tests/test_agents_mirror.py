@@ -7,6 +7,7 @@ both agents follow identical rules. See docs/adr/0008-docs-layering.md.
 from __future__ import annotations
 
 import pathlib
+import re
 
 
 def test_agents_md_mirrors_claude_md():
@@ -17,3 +18,16 @@ def test_agents_md_mirrors_claude_md():
         "CLAUDE.md and AGENTS.md have diverged; AGENTS.md is a byte-for-byte mirror "
         "of CLAUDE.md -- copy CLAUDE.md over AGENTS.md."
     )
+
+
+def test_shared_guidance_lists_every_rule_for_explicit_loading():
+    root = pathlib.Path(__file__).parent.parent
+    guidance = (root / "AGENTS.md").read_text()
+    listed = set(re.findall(r"^@(.+)$", guidance, re.MULTILINE))
+    rules = {
+        path.relative_to(root).as_posix() for path in (root / ".claude" / "rules").rglob("*.md")
+    }
+    assert rules
+    assert listed == rules, "Keep the shared rule list complete for Codex and Claude Code."
+    for path in listed:
+        assert (root / path).is_file(), path

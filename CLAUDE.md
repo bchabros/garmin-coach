@@ -8,8 +8,8 @@ byte-for-byte mirror (the mirror rule is in `docs/DEVELOPMENT.md`).
 
 Local ETL + coaching system for one athlete's Garmin Connect data. Pulls daily,
 stores in SQLite as system-of-record, computes training metrics, feeds a coach
-skill. New work is tracked as GitHub issues (see below); the phased build history
-lives in `docs/PROJECT.md` (brief) and `docs/prd/` (per-phase PRDs), both frozen.
+skill. Work is tracked as GitHub issues (see below). Architecture decisions live in
+`docs/adr/`; earlier phase specifications remain available in Git history.
 
 **Golden rule -- separate transport from intelligence.** The deterministic ETL uses
 the `garminconnect` library. The metrics/coach layer only ever reads the finished
@@ -44,7 +44,7 @@ task run FROM=2026-06-08 # local backfill; optional TO=YYYY-MM-DD
 - **Development requests** -> **MUST** read `docs/DEVELOPMENT.md` before changes.
   Validate with temporary data and fake transport; keep the athlete's real installation
   out of development tests.
-- **Connecting Work, Codex, or Claude Code** -> `docs/CHATGPT_WORK.md` (project setup,
+- **Connecting Work, Codex, or Claude Code** -> `docs/CLIENT_SETUP.md` (project setup,
   guarded launcher, fixture checks, and the required fresh Work acceptance).
 
 - **Changing code** -> `docs/DEVELOPMENT.md` (workflow, module map, conventions,
@@ -62,8 +62,9 @@ Per-repo config for the engineering skills, written by `/setup-matt-pocock-skill
 ### Issue tracker
 
 New work is tracked as **GitHub issues** titled by the capability gap (spec in the
-issue body, tickets as a checklist; the PR closes the issue). The phased history
-under `docs/prd/` stays as-is and is never migrated.
+issue body, tickets as a checklist; the PR closes the issue). Earlier phase
+specifications are retained in Git history; new maps and acceptance
+evidence belong to the issue or PR.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
@@ -78,7 +79,16 @@ See `docs/agents/domain.md`.
 
 ## Rules
 
-Additional working rules live in `.claude/rules/` and are imported here so Claude Code
-loads them. Codex: these apply too -- read the files directly.
+Before changing repository files or preparing, updating or reviewing a PR, **MUST**
+read all rule files listed below. They are shared by Codex and Claude Code despite
+the directory name. Codex must open these files directly; Claude Code supports the
+`@` imports. Add each new rule to this list; the shared-guidance test checks coverage.
+
+Before the final PR review, complete the documentation cleanup in
+`.claude/rules/documentation.md` and report its outcome in the PR description.
 
 @.claude/rules/code-style.md
+@.claude/rules/documentation.md
+@.claude/rules/git-commits.md
+@.claude/rules/plain-language.md
+@.claude/rules/testing.md

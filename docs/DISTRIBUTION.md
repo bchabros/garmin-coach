@@ -8,8 +8,7 @@ profile stay in the athlete installation when the program changes.
 ## Published v0.1.0 reference
 
 Independent review found confirmed retry and ownership bugs in v0.1.0. Corrections
-are tracked in [#97](https://github.com/bchabros/garmin-coach/issues/97) and described in
-[REVIEW_RECOVERY.md](REVIEW_RECOVERY.md). The immutable v0.1.0 assets below do not
+are tracked in [#97](https://github.com/bchabros/garmin-coach/issues/97). The immutable v0.1.0 assets below do not
 contain them. Wait for a corrected versioned candidate before new-athlete onboarding;
 this command is retained as the published release record. The corrective source
 package is version 0.1.1; its installer URL will be documented after native checks
@@ -71,14 +70,11 @@ checks; neither is a clean consumer Mac with fresh assistant conversations.
 | Fresh Codex conversation from installed release | Pending |
 | All selected clients share the same athlete installation | Pending |
 
-The published arm64 shell was downloaded without GitHub authentication and run with
-`--prepare-only` into temporary storage on the developer Mac. It supplied standalone
-CPython 3.13.16 and hash-checked locked wheels, then called actual packaged stdio
-digest/snapshot before activation. The packaged `doctor` also reported a missing
-database in an explicitly configured empty synthetic installation without creating it.
-No developer dependencies, real Garmin login, client registration or scheduler were
-used. This verifies the published download path and dependency isolation; it does
-not establish a clean consumer Mac or fresh-client acceptance.
+The published shell was tested unauthenticated with `--prepare-only` in temporary
+HOME/runtime and scrubbed PATH. Its pinned Python/locked wheels served real packaged
+stdio digest/snapshot; doctor refused a missing synthetic DB without creating it.
+No developer dependencies, Garmin login, native registration or launchd were used.
+This establishes download/dependency isolation only, not consumer acceptance.
 
 Issue #86 retains the required clean-Mac and fresh-client acceptance checks until
 they are actually observed. A written client configuration or local MCP protocol probe
@@ -202,12 +198,6 @@ First create a synthetic installation and check each selected client in a fresh 
 Then the new athlete runs their own interactive Garmin onboarding and bounded history
 import. Confirm a readable first digest, or its honest missing-evidence state. Repeat
 installation, interrupt/resume one stage and check that personal state remains intact.
-For each selected client use this first-read prompt:
-
-> Read the coach skill, reporting reference and my profile. Use only get_digest and
-> get_snapshot. Explain the evidence dates, missing data and freshness. Do not refresh
-> Garmin or write anything. End with the digest disclaimer.
-
-Record actual tool calls and instruction/profile/reference access separately for Work,
-Claude Code and Codex. Explain any unavailable capability; do not count another client
-as evidence. Accounts and trust actions remain explicit, user-operated steps.
+Use the synthetic/fresh-conversation prompts and evidence checklist in
+[client setup](CLIENT_SETUP.md#synthetic-acceptance-first). Record each selected client
+separately and keep all still-unperformed checks pending.

@@ -36,7 +36,6 @@ def test_snapshot_trend_thresholds_present(conn):
     values = thresholds.read(conn)
 
     assert values["snapshot_vo2max_lookback_days"] == 90
-    assert values["snapshot_weight_lookback_days"] == 28
     assert values["snapshot_hrv_lookback_days"] == 28
     assert values["snapshot_trend_min_span_days"] == 7
 

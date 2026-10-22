@@ -79,7 +79,16 @@ See `docs/agents/domain.md`.
 
 ## Rules
 
-Additional working rules live in `.claude/rules/` and are imported here so Claude Code
-loads them. Codex: these apply too -- read the files directly.
+Before changing repository files or preparing, updating or reviewing a PR, **MUST**
+read all rule files listed below. They are shared by Codex and Claude Code despite
+the directory name. Codex must open these files directly; Claude Code supports the
+`@` imports. Add each new rule to this list; the shared-guidance test checks coverage.
+
+Before the final PR review, complete the documentation cleanup in
+`.claude/rules/documentation.md` and report its outcome in the PR description.
 
 @.claude/rules/code-style.md
+@.claude/rules/documentation.md
+@.claude/rules/git-commits.md
+@.claude/rules/plain-language.md
+@.claude/rules/testing.md

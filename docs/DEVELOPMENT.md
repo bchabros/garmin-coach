@@ -1,9 +1,9 @@
 # Development guide
 
 For coding agents (Claude Code, Codex) and humans **changing the code**. The
-always-loaded core is `CLAUDE.md`; this guide is read on demand when you touch the
-implementation. Operating the system instead? See `docs/OPERATIONS.md`. Term
-definitions live in `docs/glossary.md`.
+always-loaded core is `CLAUDE.md` / `AGENTS.md`; this guide is read on demand when
+you touch the implementation. Operating the system instead? See `docs/OPERATIONS.md`.
+Term definitions live in `docs/glossary.md`.
 
 ## Workflow
 
@@ -24,6 +24,9 @@ established loop for a new feature is a chain of skills:
   (see `docs/agents/issue-tracker.md`).
 - **`/implement`** -- build a ticket test-first (TDD, red -> green).
 - **`/code-review`** -- review the branch before merge.
+
+Before the final PR review, follow the documentation-cleanup checklist in
+[the shared documentation rules](../.claude/rules/documentation.md).
 
 - Work test-first. Tests live at agreed **seams** (see below).
 - One vertical slice at a time: one test -> minimal impl -> repeat. No bulk test-first.

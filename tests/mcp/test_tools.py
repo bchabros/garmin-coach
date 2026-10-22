@@ -1276,8 +1276,16 @@ def test_weekly_without_an_agreed_plan_reports_unknown_matches(conn):
     assert all(day["matched"] is None for day in out["plan_actual"])
 
 
+@pytest.mark.parametrize(
+    "broken",
+    [
+        "{broken",
+        '{"workout_id": 1000, "hardness": ["hard"]}',
+        '{"workout_id": 1000, "session_type": {"type": "quality"}}',
+    ],
+)
 def test_plan_import_keeps_accepted_weeks_and_rebuilds_when_push_evidence_is_damaged(
-    conn, tmp_path
+    conn, tmp_path, broken
 ):
     plans, reports = tmp_path / "plans", tmp_path / "reports"
     plans.mkdir()
@@ -1291,7 +1299,7 @@ def test_plan_import_keeps_accepted_weeks_and_rebuilds_when_push_evidence_is_dam
     day = reports / PUSH_DATE
     day.mkdir(parents=True)
     path = day / "push.json"
-    path.write_text("{broken")
+    path.write_text(broken)
 
     result = tools.plan_import(
         conn, plans_dir=str(plans), reports_dir=str(reports), data_start_date=DATA_START
@@ -1302,4 +1310,4 @@ def test_plan_import_keeps_accepted_weeks_and_rebuilds_when_push_evidence_is_dam
     assert PUSH_DATE in result["warnings"][0]
     assert "cannot assess" in result["warnings"][0]
     assert len(tools.get_weekly(conn, week_start=WEEK)["data"]["plan_actual"]) == 7
-    assert path.read_text() == "{broken"
+    assert path.read_text() == broken

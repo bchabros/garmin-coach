@@ -248,6 +248,10 @@ def _validate_spec(spec: dict[str, Any], path: pathlib.Path) -> None:
             f"workout.json under {path.parent.name} targets {spec.get('date')}; "
             "re-author it for the date you mean to push"
         )
+    _validate_plan_metadata(spec, path)
+    warnings = spec.get("warnings", [])
+    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
+        raise PushRefused(f"invalid {path}: warnings must be a list of strings")
     try:
         author.to_garmin(spec)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
@@ -256,6 +260,7 @@ def _validate_spec(spec: dict[str, Any], path: pathlib.Path) -> None:
 
 def _validate_receipt(receipt: dict[str, Any], path: pathlib.Path) -> None:
     """Refuse unusable account identity or stored reconciliation, preserving old fields."""
+    _validate_plan_metadata(receipt, path)
     workout_id = receipt.get("workout_id")
     if workout_id is not None and (type(workout_id) is not int or workout_id <= 0):
         raise PushRefused(f"invalid {path}: workout_id must be a positive integer or null")
@@ -263,6 +268,18 @@ def _validate_receipt(receipt: dict[str, Any], path: pathlib.Path) -> None:
         raise PushRefused(f"invalid {path}: reconciled must be an object or null")
     if receipt.get("date") is not None and receipt["date"] != path.parent.name:
         raise PushRefused(f"invalid {path}: receipt targets another date")
+
+
+def _validate_plan_metadata(body: dict[str, Any], path: pathlib.Path) -> None:
+    """Check optional judgment fields while preserving legacy missing/null evidence."""
+    for field, vocabulary in (
+        ("session_type", plan.INTENTS),
+        ("planned_intent", plan.INTENTS),
+        ("hardness", plan.HARDNESS_RANK),
+    ):
+        value = body.get(field)
+        if value is not None and (not isinstance(value, str) or value not in vocabulary):
+            raise PushRefused(f"invalid {path}: {field} must be a recognized name or null")
 
 
 def receipt_workout_id(day_dir: pathlib.Path | str) -> int | None:

@@ -203,3 +203,26 @@ def test_author_reports_invalid_input_without_writing_outside_the_day(conn, tmp_
     assert result["spec"] is None
     assert "YYYY-MM-DD" in result["error"]
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("hardness", ["hard"]),
+        ("hardness", "unrecognized"),
+        ("session_type", {"type": "quality"}),
+        ("warnings", None),
+    ],
+)
+def test_malformed_spec_metadata_is_refused_before_login(conn, tmp_path, field, value):
+    spec = run_spec(date=DATE)
+    spec[field] = value
+    day = _file_spec(tmp_path, spec)
+    original = (day / "workout.json").read_bytes()
+
+    def connect():
+        pytest.fail("malformed metadata must be refused before account connection")
+
+    with pytest.raises(push.PushRefused, match=field):
+        push.push_for_date(conn, date=DATE, connect=connect, reports_dir=tmp_path, confirm=True)
+    assert (day / "workout.json").read_bytes() == original

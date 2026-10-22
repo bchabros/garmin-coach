@@ -11,12 +11,12 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from . import clients, daily, lifecycle, onboarding, plan_changes, retention
-from .coach import digest, report, thresholds as _thresholds
-from .core import db, events as _events, installation, manual_sets, plan as _plan
+from .coach import report
+from .core import db, events as _events, installation, manual_sets
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
-from .workouts import author as _author, publish, push
+from .workouts import publish, push
 
 if TYPE_CHECKING:
     from .core.config import Settings
@@ -263,57 +263,35 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_author(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
-
-    to_date = (_dt.date.fromisoformat(args.date) - _dt.timedelta(days=1)).isoformat()
-    thresholds = _thresholds.read(conn)
-    dg = digest.build_digest(
-        conn, to_date=to_date, thresholds=thresholds, recheck_days=settings.sync_recheck_days
-    )
-    planned = _plan.planned_intent(conn, args.date)
-    conn.close()
-
-    recommendation = dg.get("recommendation")
+    request = None
     if args.request:
         try:
             request = json.loads(pathlib.Path(args.request).read_text())
-        except FileNotFoundError:
-            print(f"author failed: request file not found: {args.request}")
+        except (OSError, ValueError) as exc:
+            print(f"author failed: cannot read request {args.request}: {exc}")
             return 1
-        except json.JSONDecodeError as exc:
-            print(f"author failed: request file is not valid JSON: {exc}")
-            return 1
-        request["date"] = args.date
-    else:
-        if recommendation is None:
-            print(f"author: no recommendation for {args.date}; run `garmin-coach features` first")
-            return 1
-        request = _author.request_from_recommendation(recommendation, sport=args.sport)
-
-    context = {
-        "zones": dg.get("zones"),
-        "today": _dt.date.today().isoformat(),
-        "recommendation": recommendation,
-        "planned_intent": planned,
-    }
+    settings = get_settings()
+    conn = installation.open_database(settings)
     try:
-        spec = _author.author(request, context)
-    except _author.HyroxSplitRequired as exc:
-        print(f"author: {exc}")
-        return 0
-    except ValueError as exc:
-        print(f"author failed: {exc}")
+        outcome = push.author_workout(
+            conn,
+            args.date,
+            request=request,
+            sport=args.sport,
+            reuse_from=args.reuse_from,
+            reports_dir=_reports_dir(args),
+            recheck_days=settings.sync_recheck_days,
+        )
+    finally:
+        conn.close()
+    if outcome["error"] is not None:
+        print(f"author failed: {outcome['error']}")
         return 1
-
+    spec = outcome["spec"]
     if spec is None:
         print(f"author: nothing to author for {args.date} (rest)")
         return 0
-
-    out = pathlib.Path(_reports_dir(args)) / args.date
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "workout.json").write_text(json.dumps(spec, indent=2))
-    print(f"author complete: {out / 'workout.json'} ({spec['name']}, {len(spec['steps'])} steps)")
+    print(f"author complete: {outcome['path']} ({spec['name']}, {len(spec['steps'])} steps)")
     for warning in spec["warnings"]:
         print(f"  warning: {warning}")
     return 0
@@ -403,6 +381,8 @@ def _cmd_plan(args: argparse.Namespace) -> int:
         f"plan import {status}: {', '.join(result.weeks)} "
         f"({len(result.weeks)} week(s) from {plans_dir})"
     )
+    for warning in result.warnings:
+        print(f"  warning: {warning}")
     for conflict in result.invalidated_pushes:
         print(
             f"  conflict: {conflict['date']} has a pushed {conflict['pushed_type']} workout, "
@@ -668,6 +648,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="request",
         default=None,
         help="Author from an athlete-authored workout_request JSON file.",
+    )
+    au_src.add_argument(
+        "--reuse-from", default=None, help="Repeat a saved workout from this YYYY-MM-DD."
     )
     au.add_argument(
         "--sport",

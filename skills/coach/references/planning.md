@@ -44,7 +44,8 @@ rebuilds the marts, so adherence and the block calendar stop scoring against a s
 It is transport-free and idempotent. It answers with the weeks it read and with
 `invalidated_pushes`: days of those weeks whose already-pushed workout the new plan no
 longer allows. Name those days to the athlete and offer to re-author them - nothing on the
-account changes by itself.
+account changes by itself. Also surface dated `warnings`: unreadable workout evidence
+means a conflict could not be judged, even when `invalidated_pushes` is empty.
 
 Use it whenever the athlete says they changed the plan, and before a report if the file
 looks newer than the last nightly run. It never overwrites the athlete's file; writing a

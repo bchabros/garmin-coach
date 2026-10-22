@@ -107,3 +107,99 @@ def test_preview_of_an_existing_push_preserves_its_receipt(conn, tmp_path):
     assert preview.result.action == "noop"
     assert preview.receipt_path is None
     assert path.read_bytes() == before
+
+
+def test_author_requires_the_hyrox_variant_without_writing(conn, tmp_path):
+    outcome = push.author_workout(
+        conn,
+        date="2099-07-17",
+        request={"sport": "run", "origin": "athlete", "session_type": "hyrox"},
+        reports_dir=str(tmp_path),
+    )
+
+    assert outcome["spec"] is None
+    assert "hyrox" in outcome["error"].lower()
+    assert not (tmp_path / "2099-07-17" / "workout.json").exists()
+
+
+@pytest.mark.parametrize("broken", ["{broken", "[]", "null", '{"workout_id": "wrong"}'])
+def test_corrupt_receipt_refuses_a_push_without_connecting(conn, tmp_path, broken):
+    day = _file_spec(tmp_path)
+    receipt = day / "push.json"
+    receipt.write_text(broken)
+
+    def connect():
+        pytest.fail("unreadable push evidence must be refused before Garmin login")
+
+    with pytest.raises(push.PushRefused, match="push.json"):
+        push.push_for_date(conn, date=DATE, connect=connect, reports_dir=tmp_path, confirm=True)
+    assert receipt.read_text() == broken
+
+
+def test_status_reports_damaged_evidence_without_login_or_changes(conn, tmp_path):
+    day = _file_spec(tmp_path)
+    receipt = day / "push.json"
+    receipt.write_text("{broken")
+
+    def connect():
+        pytest.fail("damaged evidence must not cause a status login")
+
+    result = push.get_workout_status(conn, DATE, connect=connect, reports_dir=str(tmp_path))
+
+    assert DATE in result["error"]
+    assert "push.json" in result["error"]
+    assert result["reconciled"] is None
+    assert receipt.read_text() == "{broken"
+
+
+def test_listing_preserves_readable_days_and_warns_about_damaged_receipts(conn, tmp_path):
+    good = _file_spec(tmp_path)
+    (good / "push.json").write_text(json.dumps({"workout_id": 1000, "name": "GC tempo"}))
+    broken = tmp_path / "2026-07-18"
+    broken.mkdir()
+    path = broken / "push.json"
+    path.write_text("[]")
+
+    result = push.get_pushed_workouts(conn, reports_dir=str(tmp_path))
+
+    assert [day["date"] for day in result["workouts"]] == [DATE]
+    assert "2026-07-18" in result["warnings"][0]
+    assert "push.json" in result["warnings"][0]
+    assert path.read_text() == "[]"
+
+
+def test_invalidated_pushes_skip_a_day_taken_off(tmp_path):
+    """A plan re-import must not ask for a re-author of a session no longer on the watch."""
+    for date, extra in (
+        ("2026-07-17", {"unscheduled_at": "2026-07-16T08:00:00"}),
+        ("2026-07-18", {}),
+    ):
+        (tmp_path / date).mkdir()
+        (tmp_path / date / "push.json").write_text(
+            json.dumps({"workout_id": 1000, "session_type": "quality", **extra})
+        )
+
+    conflicts = push.invalidated_pushes(tmp_path, {"2026-07-17": "easy", "2026-07-18": "easy"})
+
+    assert [c["date"] for c in conflicts.conflicts] == ["2026-07-18"]
+
+
+def test_invalid_spec_content_is_refused_before_login(conn, tmp_path):
+    spec = run_spec(date=DATE)
+    del spec["name"]
+    day = _file_spec(tmp_path, spec)
+
+    def connect():
+        pytest.fail("invalid workout content must not cause a login")
+
+    with pytest.raises(push.PushRefused, match="workout.json"):
+        push.push_for_date(conn, date=DATE, connect=connect, reports_dir=tmp_path, confirm=True)
+    assert not (day / "push.json").exists()
+
+
+def test_author_reports_invalid_input_without_writing_outside_the_day(conn, tmp_path):
+    result = push.author_workout(conn, "../outside", request={}, reports_dir=str(tmp_path))
+
+    assert result["spec"] is None
+    assert "YYYY-MM-DD" in result["error"]
+    assert list(tmp_path.iterdir()) == []

@@ -52,7 +52,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `etl/` | The only `garminconnect` import; login/endpoint adapter and injected raw-first sync. |
 | `marts/` | Recomputable features/load, periodization, weekly facts, zones, overlap and standing. |
 | `coach/` | Digest/signals/policy/recommendation over finished data; explicit report/chart generation. |
-| `workouts/` | Pure author/exercises/hardness, dated push flow and the isolated account publisher. |
+| `workouts/` | Pure author/exercises/hardness, dated-workout lifecycle and the isolated account publisher. |
 | `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
 | `daily.py`, `plan_changes.py` | Complete nightly and plan-import outcomes, including their consequences. |
 | `onboarding.py`, `project.py` | Terminal setup/adoption; guarded source launch and synthetic fixtures. |
@@ -98,9 +98,15 @@ the packaged schema in memory; installed policy values remain authoritative. It 
 the installation; recovery uses the explicit offline `garmin-coach features` command.
 
 `plan_changes.import_plans()` owns the plan import outcome and its consequences:
-accepted weeks, the first file error, conflicts with pushed workouts, and immediate
-mart refresh. Only `daily` defers that refresh until after sync, using its existing
-single complete mart pass. The core parser remains independent of marts and transport.
+accepted weeks, the first file error, known conflicts and dated warnings for unreadable
+workout evidence, and immediate mart refresh. Unreadable evidence never means no conflict.
+Only `daily` defers that refresh until after sync, using its existing single complete
+mart pass. The core parser remains independent of marts and transport.
+
+`workouts.push` alone reads/writes dated workout specs and push receipts. `publish`
+receives parsed evidence and owns account rules, without filesystem or database reads.
+Status must separate the push event from current reconciliation; failed evidence reads
+never rewrite the artifact or establish absence.
 
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
@@ -153,9 +159,11 @@ ones sparingly:
   variables, isolates HOME/XDG directories and starts every test in an empty folder, so no test can fall back to the
   owner's checkout; a test that needs settings selects `athlete_home`.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
-- Test the complete workout push through `workouts.push.push_for_date` with real
-  SQLite, temporary specs/receipts, and a factory returning `FakePublisher`. CLI and
-  MCP only adapt confirmation and output; date and token refusals precede connection.
+- Test the complete dated-workout operations through `workouts.push` with real SQLite,
+  temporary specs/receipts and a factory returning `FakePublisher` (`tests/workouts/`).
+  Author/repeat, push, status/listing, removal and conflict reads share artifact ownership.
+  CLI/MCP tests retain adapter contracts for confirmation, output, freshness and parity;
+  date, token and unreadable-evidence refusals precede connection.
 - Test plan import consequences through CLI/MCP and `daily.run_daily`, with real
   SQLite and temporary plans/receipts. Partial imports retain accepted weeks, and
   nightly conflicts warn without another mart pass or an outbound account call.

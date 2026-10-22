@@ -1,9 +1,12 @@
 # Local assistant setup
 
-Use an athlete installation prepared with onboarding, and the managed runtime's
-stable commands. Assistant sign-in belongs to Work, Codex, or Claude Code; Garmin
-sign-in belongs to the local onboarding command. Client setup does not log into
-either account and does not import data.
+An assistant serves one explicitly selected athlete installation. Assistant sign-in
+belongs to Work, Codex or Claude Code; Garmin login belongs to the user's terminal
+onboarding. Client setup itself neither logs into Garmin nor imports history.
+
+## Managed installation
+
+Use the stable launchers from [distribution](DISTRIBUTION.md):
 
 ```sh
 garmin-coach --home ~/GarminCoach clients configure --clients codex
@@ -11,120 +14,154 @@ garmin-coach --home ~/GarminCoach clients configure --clients work,claude-code
 garmin-coach --home ~/GarminCoach clients status
 ```
 
-The second configure adds clients to the first selection. All selections use the
-same absolute athlete installation and saved Garmin identity. Work and Codex share
-one OpenAI host registration; Claude Code has a separate registration. Each host has
-one user-wide client binding. Before native changes, setup checks the runtime's selected
-athlete installation, its user-wide ownership record and native plugin inventory.
-A conflicting installation or stale runtime is refused with a recovery action: remove
-its binding through the original installation/runtime, or inspect and disconnect the
-unverified plugin through the client UI before retrying. Source-path inventory verifies
-legacy registrations; a familiar plugin name alone does not prove ownership. Only selected
-hosts are configured. Unrelated client settings and plugins are not edited.
+Selections are additive. Work/Codex share one OpenAI host registration; Claude Code
+has its own. Each host has one user-wide binding. Setup checks the selected
+installation, ownership receipts and native inventory before registration. A familiar
+plugin name alone does not establish ownership. Conflicts require removing the old
+binding through its original runtime/installation or inspecting the native plugin UI.
+Unrelated plugins/settings are preserved.
 
-The default program directory is `~/Library/Application Support/Garmin Coach`.
-`--runtime-root` selects a different managed runtime. Generated local marketplaces
-and registration receipts live under its `integrations/` directory. Their plugins
-carry the canonical coach router and every reference; their stdio command points
-to the stable `bin/garmin-coach-mcp` launcher with an explicit `--home`. They contain
-no athlete database, profile, login tokens, or source-development guide.
+The default runtime is `~/Library/Application Support/Garmin Coach`; `--runtime-root`
+selects another. Generated marketplaces and receipts live in `integrations/`.
+Plugins include only the canonical `SKILL.md` and report, planning, authoring and
+saved-context references listed by `coach_resources.json`. Their stdio command uses
+`bin/garmin-coach-mcp` with explicit `--home`. Personal profile/race files, tokens,
+databases and development guides stay outside generated plugins.
 
-The Python distribution also exposes the operations through
-`python -m garmin_coach.clients --home PATH --runtime-root PATH configure --clients codex`.
-This is useful for the installer and recovery when the main command is unavailable.
+Work/Codex registration uses `codex plugin marketplace add` and `codex plugin add`;
+Claude Code uses `claude plugin marketplace add` and `claude plugin install`.
+If the executable is missing, setup prepares artifacts and reports `client_missing`.
+Install the relevant CLI or use a supported native UI. Keep an unavailable Work local
+capability explicit rather than substituting a hosted server or another client.
 
-## Finish in the selected client
+Setup journals each generation before replacement. Retry resumes partial registration
+and refuses edited/unowned artifacts. Claude refresh uses its update command;
+OpenAI refresh requires remove/add and can reset permissions. Repeat activation and
+fresh-chat acceptance after refresh. Old owned extra Markdown requires hash-verified
+removal and a clean reinstall; unknown/edited Markdown blocks configuration for review.
+Backups are preserved and restore filters retain only canonical public resources.
 
-Successful plugin registration reports `needs_activation`. Open the athlete
-installation as the primary folder of a **local** conversation, restart the client,
-and enable or trust its plugin through the client's supported UI if requested.
-Inspect the installed plugin's coach skill, all four references, and MCP tools.
-Keep the client's existing approval settings.
+`python -m garmin_coach.clients --home PATH --runtime-root PATH configure --clients codex`
+is the recovery entry when the main CLI is unavailable.
 
-For Work, use the ChatGPT desktop app with local execution. Its local plugin
-marketplace and MCP configuration are shared with Codex on that host. A successful
-Codex command is not proof that Work used the tools. If no `codex` executable is
-available, setup prepares the marketplace and reports `client_missing`; install the
-CLI to register it, or add the generated marketplace through a supported client UI.
-An unavailable Work local-plugin capability remains an explicit acceptance gap.
-Do not substitute a hosted HTTP integration or another assistant.
+## Activation and acceptance
 
-Claude Code uses `claude plugin marketplace add` and `claude plugin install` at user
-scope. Work/Codex use `codex plugin marketplace add` and `codex plugin add`. Command
-failures are reported without copying private client output into logs. Rerun configure
-after fixing the client; a completed marketplace step is retained after partial failure.
-An interrupted registration reports `preparing` with a resumption action for every
-selected client, including an interruption before the first external command returns.
+Registration reports `needs_activation`. Open the athlete installation as the primary
+folder of a fresh **local** conversation, restart the client if needed, and complete
+its supported trust/plugin activation UI. Preserve existing approval preferences.
+Verify the actual router, all references and coach tools in each selected client.
 
-The receipt records historical registration, resource hashes, source/package versions,
-runtime availability, and pending actions. Status verifies prepared files and whether
-they match current source resources. It does not infer what an active conversation
-loaded. `client_acceptance: not_run` and `protocol_check: not_run` remain explicit;
-`doctor` performs the separate bounded local stdio handshake and digest read. Each
-surface also has an independent acceptance entry; all remain `not_run` until a human
-records a fresh conversation. Historical registration remains prepared, never `ready`
-by inference.
+Registration, protocol checks and fresh model acceptance are distinct. Status verifies
+prepared files/hashes, versions and runtime availability; it cannot know what a chat
+loaded. `client_acceptance: not_run` and per-client pending acceptance stay explicit.
+`doctor` performs the separate bounded local stdio handshake and digest read.
+A successful Codex command does not prove that Work can use its tools.
 
-A new owned artifact generation is journaled before replacement. Retry completes only
-that generation and refuses unrelated edits. Refresh uses Claude Code's supported
-plugin update command; OpenAI refresh requires its remove/add commands, which may reset
-client permissions. A completed host remains connected while another host is prepared.
-After any refresh, repeat activation and fresh-conversation acceptance.
+## Source-checkout setup
 
-## Verify with synthetic data
+Use the checkout's existing Poetry environment with Python 3.13. Canonical skill
+symlinks are `.agents/skills/coach` for Codex and `.claude/skills/coach` for Claude Code.
+The guarded launcher finds the in-project environment or Poetry's interpreter;
+it never installs dependencies, logs into Garmin or migrates a database.
 
-First use the synthetic installation documented in [the existing client validation
-guide](CHATGPT_WORK.md). Start a fresh conversation in each selected client and ask:
+```sh
+COACH_SOURCE="$(pwd)"
+python3 "$COACH_SOURCE/scripts/coach_project.py" check --project "$COACH_SOURCE"
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_SOURCE" --client codex
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_SOURCE" --client claude
+```
 
-> This is a synthetic installation. Read the coach router, reporting reference and
-> available profile. Call only get_digest and get_snapshot. Explain the dates of the
-> evidence and missing values. Do not refresh Garmin, write a plan or profile, or
-> push or remove workouts. End with the digest's disclaimer verbatim.
+`config` only prints configuration. Merge the generated `[mcp_servers.coach]` into
+`.codex/config.toml`, or the coach entry into `.mcp.json`, preserving unrelated entries.
+Regenerate if the checkout/interpreter moves. Trust the project and verify connection
+in a fresh client conversation (`/mcp` in Claude Code).
 
-Record the client and version, discovered skill and reference paths, selected
-installation, tool calls, freshness explanation, null handling and final disclaimer.
-Separately request plan/workout/profile previews and verify that the conversation
-waits for the existing explicit confirmation before a write. Offline fake-publisher
-tests exercise the actual transport interlocks; a live write is not needed for setup.
-Local protocol and package tests cannot demonstrate that a model followed instructions.
+The launcher requires the selected installation's existing compatible schema and
+populated digest/snapshot. It refuses conflicting inherited `GARMIN_COACH_HOME`,
+`DB_PATH`, `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS` or `GARMIN_EMAIL`; unset the conflict
+or intentionally configure it in that installation's `.env`. Equivalent resolved
+paths are accepted; explicit external paths are allowed. Missing DB/schema/data
+requires the intended installation's import or offline `features` operation, never
+an implicit launcher migration. Read-only SQLite checks may create WAL/SHM auxiliaries;
+read-only records/schema does not promise zero filesystem effects.
 
-## Disconnect
+For Work, select local execution and the intended folder as primary. On macOS use
+Open folder (`Cmd+O`, then `Cmd+Shift+G` for an absolute path) when available; otherwise
+inspect the product's supported shortcut and record the capability gap. Configure the
+guarded stdio command through that Work version's supported local route. Verify skills
+and tools in Work itself; Codex symlink discovery is not proof of Work discovery.
+
+## Synthetic acceptance first
+
+Create an empty synthetic installation without Garmin transport:
+
+```sh
+COACH_FIXTURE="$(mktemp -d /tmp/garmin-coach-work-fixture.XXXXXX)"
+python3 "$COACH_SOURCE/scripts/coach_project.py" fixture --project "$COACH_FIXTURE"
+python3 "$COACH_SOURCE/scripts/coach_project.py" check --project "$COACH_FIXTURE"
+python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_FIXTURE" --client codex
+```
+
+Use that folder as primary and its generated configuration. The fixture has sparse
+synthetic observations through **2026-07-03**, complete guidance/coach resources and
+an explicitly synthetic dated profile. It is not a realistic personal history.
+Send this in a fresh conversation in **each** selected client:
+
+> This is a synthetic installation. Read the project guide, coach router, reporting
+> reference and available profile. Call only get_digest and get_snapshot. Explain
+> evidence dates, profile age and missing values. Do not refresh Garmin, write a plan
+> or profile, or push/remove workouts. End with the digest's disclaimer verbatim.
+
+Record client/version, discovered paths, selected installation, actual tool calls,
+freshness, null handling and disclaimer. Preview plan/workout/profile changes separately
+and verify the existing explicit confirmation gates. Fake-publisher tests exercise
+transport interlocks; setup acceptance requires no live account write. Protocol and
+package checks cannot establish model adherence.
+
+For a Work development demonstration, use a disposable detached checkout with its own
+Poetry environment and no personal state. Ask it to read AGENTS/DEVELOPMENT, inspect
+and run `tests/test_agents_mirror.py`, make a small relevant documentation change,
+show its diff and rerun the test. Keep that change in the disposable checkout.
+
+Final source acceptance uses the intended existing installation in a fresh local Work
+conversation. Explicitly request only digest/snapshot, correct folder/branch, profile
+access/age, freshness and the original disclaimer; exclude plan import, report generation,
+refresh and other writes. Record outcomes without copying private numbers or prose.
+
+## Disconnect and recovery
 
 ```sh
 garmin-coach --home ~/GarminCoach clients remove --clients work
 garmin-coach --home ~/GarminCoach clients remove --clients work --confirm
 ```
 
-The first command previews removal. The second removes only owned registrations;
-removing Work retains the shared OpenAI host while Codex remains selected. Omit
-`--clients` to disconnect every configured assistant. Changed owned resources are
-refused for review. Athlete records and unrelated settings are preserved.
+The first command previews; the second removes only verified owned registrations.
+Removing Work preserves the OpenAI registration while Codex remains selected, and
+conversely. Omit `--clients` for all clients. Edited resources are preserved/refused.
+Athlete records and unrelated settings remain. Use [maintenance](LIFECYCLE.md) for
+runtime repair, backups and a bounded protocol diagnosis.
 
-## Sources and acceptance status
+The legacy Desktop helper (`task claude:register`, `task claude:check`) and skill ZIP
+(`task claude:package`) remain supported. The ZIP is a skill upload, not MCP registration.
+Re-upload account-hosted copies after resource changes; verify a fresh conversation.
+Legacy device-bridge observations do not establish a new client's capability.
 
-Checked 2026-10-17 against [OpenAI MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
-[OpenAI plugin packaging](https://developers.openai.com/plugins/build/plugins),
-[OpenAI CLI plugin commands](https://learn.chatgpt.com/docs/developer-commands),
-[Claude Code plugins](https://code.claude.com/docs/en/plugins), and
-[Claude Code local marketplaces](https://code.claude.com/docs/en/plugin-marketplaces).
-The implementation was checked with temporary files, fake registration commands,
-the built wheel and real stdio reads from a copied plugin cache. Fresh authenticated
-Work, Codex and Claude Code acceptance for this distribution remains **not run**.
-The earlier source-checkout acceptance in [WORK_VALIDATION.md](WORK_VALIDATION.md)
-does not establish acceptance of these newly generated packages.
+## Evidence and sources
 
-Only `SKILL.md` and the report, planning, authoring and saved-context references
-are copied into generated plugins. The saved-context guide contains generic lookup
-instructions; race files and the athlete profile stay in the selected installation. Other source Markdown, including private athlete context, is excluded.
-A previous receipt that owns extra skill Markdown requires a clean plugin reinstall after
-hash-verified removal, so an old native cache cannot retain those files. This can require
-permission reapproval. Unknown or edited Markdown is preserved and blocks configuration
-until inspected; backups remain preserved and are filtered when restoring public resources.
+Source-checkout acceptance is recorded in closed [#82](https://github.com/bchabros/garmin-coach/issues/82).
+Synthetic reads across Work/Codex/Claude and isolated Work development were observed;
+initial Codex/Claude answers omitted the disclaimer. Work's first natural activation
+included `plan_import`; only the later explicit digest/snapshot rerun qualified as
+read-only. Plan/profile preview stops were observed separately.
 
+Generated-distribution fresh authenticated Work/Codex/Claude acceptance is still
+**not run**; source acceptance does not establish it. Clean-Mac, own-account login/MFA,
+retry, native launchd and installed-client checks remain in [distribution](DISTRIBUTION.md)
+and issues #85–#87. Never promote their status from local package/protocol tests.
 
-The canonical public resource list is packaged with the program. Both generated
-plugins and the legacy `task claude:package` archive select only those resources;
-extra Markdown and symlinked resources are excluded or refused. The legacy ZIP is
-a skill upload, not MCP registration or proof that Cowork loaded the tools. In a
-fresh session, verify a saved race-context lookup separately from current MCP reads,
-using only explicitly selected synthetic fixtures during development.
+Mechanisms were checked 2026-10-17 against [OpenAI MCP configuration](https://learn.chatgpt.com/docs/extend/mcp),
+[plugin packaging](https://developers.openai.com/plugins/build/plugins),
+[CLI commands](https://learn.chatgpt.com/docs/developer-commands),
+[Claude Code plugins](https://code.claude.com/docs/en/plugins) and
+[local marketplaces](https://code.claude.com/docs/en/plugin-marketplaces).
+These are dated references, not a claim of later client acceptance.

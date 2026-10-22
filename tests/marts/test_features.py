@@ -347,7 +347,9 @@ def test_recompute_is_idempotent(conn):
 def test_golden_regression_reproduces_reference_analysis(conn):
     """Seed the frozen real core data (2026-06-08..07-03) and reproduce the
     reference hand-analysis. Expected values are the algorithm's deterministic
-    output; see docs/prd/phase-2.md 'Reference vs. computed flag set'."""
+    output. June 17 is flagged because HRV 57 is strictly below the actual threshold
+    (about 57.002); the informal reference rounded it to 57. July 4 is outside the
+    frozen fixture's July 3 horizon."""
     conn.executescript((FIXTURES / "features_golden.sql").read_text())
 
     features.features(conn, data_start_date=DATA_START)

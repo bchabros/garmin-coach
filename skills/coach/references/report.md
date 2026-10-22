@@ -57,8 +57,8 @@ report that prerequisite; source-checkout commands are not an installation fallb
 
    Also read `reports/{today}/snapshot.json` (may be absent if the mart was never
    materialized). It is the current standing: `computed_at`, `vo2max` (+ `vo2max_delta`
-   / `vo2max_span_days`), `weight_kg` (+ trend), `hrv_baseline`/`hrv_sd` (+ `hrv_delta`
-   / `hrv_span_days`), race predictions (`t_5k_s`..`t_marathon_s`), `acwr` +
+   / `vo2max_span_days`), `hrv_baseline`/`hrv_sd` (+ `hrv_delta`
+   / `hrv_span_days`), `acwr` +
    `acwr_reliable`, `load_7d` + shares, `readiness_score`/`readiness_level`,
    `sleep_debt_h`, heat/altitude acclimation, the personal zones (mirrored), and
    `planned_intent_today`/`planned_label_today` + `plan_source_today`. Every field may
@@ -74,8 +74,7 @@ report that prerequisite; source-checkout commands are not an installation fallb
    - **Twoje aktualne staty** - only when `snapshot.json` is present. One compact block
      opening the report with where the athlete stands now: VO2max and its trend (state
      `vo2max_delta` over `vo2max_span_days` days when non-null, e.g. "VO2max 52, +1.0 w
-     24 dni"), body weight + trend, HRV baseline + its weekly-average trend, latest race
-     predictions (format seconds as h:mm:ss / mm:ss), Training Readiness
+     24 dni"), HRV baseline + its weekly-average trend, Training Readiness
      (`readiness_score` + `readiness_level`), the load/ACWR standing (`acwr` with
      `acwr_reliable` - call it *orientacyjny* when false - plus `load_7d` and the
      `low_share`/`high_share`/`anaero_share` split), the zones headline (`z2_hi_bpm` HR

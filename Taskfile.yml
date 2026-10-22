@@ -79,11 +79,6 @@ tasks:
       - >-
         poetry run garmin-coach daily{{if .TO}} --to {{.TO}}{{end}}
 
-  schema:check:
-    desc: Verify the packaged schema matches the docs snapshot.
-    cmds:
-      - poetry run pytest tests/test_schema_sync.py -p no:cacheprovider
-
   prune-reports:
     desc: Preview expired report files. Pass -- --confirm only after preserving durable lessons.
     cmds:

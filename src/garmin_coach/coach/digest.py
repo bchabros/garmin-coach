@@ -24,7 +24,6 @@ from ..marts import zones as _zones
 
 DISCLAIMER = "This is a reading of your recorded data, not medical or coaching advice."
 
-DEFAULT_THRESHOLDS = _thresholds.DEFAULTS
 
 _WEEKLY_FACT_COLS = (
     "week_start",
@@ -57,18 +56,12 @@ GARMIN_BALANCE_DAYS = 28
 _SEVERITY_ORDER = {"alert": 0, "warn": 1, "info": 2}
 
 
-def merge_thresholds(thresholds: dict[str, float] | None) -> dict[str, float]:
-    """Effective thresholds: code defaults overridden by the ``coach_thresholds`` table."""
-    return _thresholds.merge(thresholds)
-
-
 def _resolve_window(
     conn: sqlite3.Connection, from_date: str | None, to_date: str | None
 ) -> tuple[str | None, str | None]:
     """Fill missing bounds: default ``to`` = latest mart day, ``from`` = to - 27d."""
     if to_date is None:
-        row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
-        to_date = row[0] if row else None
+        to_date = _db.latest_mart_date(conn)
     if from_date is None and to_date is not None:
         from_date = (
             _dt.date.fromisoformat(to_date) - _dt.timedelta(days=WINDOW_DAYS - 1)
@@ -338,7 +331,7 @@ def build_digest(
     Returns:
         A dict with ``window``, ``headline``, ``signals``, and ``disclaimer``.
     """
-    thr = merge_thresholds(thresholds)
+    thr = _thresholds.merge(thresholds)
     from_date, to_date = _resolve_window(conn, from_date, to_date)
     weekly_rows = _read_weekly(conn, to_date)
     weekly_section = _weekly_section(conn, weekly_rows, thr)

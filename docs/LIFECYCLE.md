@@ -54,9 +54,9 @@ and a separate version directory. It does not modify the active environment in p
 Before the candidate reads your storage, the updater creates a private recovery folder
 under `<athlete-home>/backups/program/<timestamp>-<unique-id>/`. It contains a consistent
 SQLite backup, `settings.env`, the prior program receipt and copies of generated client
-assets/launchers when present. The snapshot includes committed WAL records and supports
+assets/launchers when present. The backup includes committed WAL records and supports
 an explicitly configured external database path. Treat it as private athlete data.
-`program backup` creates the same snapshot independently; no retention policy deletes it.
+`program backup` creates the same backup independently; no retention policy deletes it.
 
 The candidate validates the existing schema through a read-only connection. This
 release refuses an incompatible schema upgrade. It never silently migrates your
@@ -110,20 +110,15 @@ files may remain after client registration is removed; they contain no athlete r
 
 The command reports where the athlete installation remains. It does not erase the
 database, profile, authored plans, reports, workout specs, push receipts, tokens or
-recovery snapshots, and it does not remove anything from Garmin.
+recovery backups, and it does not remove anything from Garmin.
 
 ## Acceptance evidence
 
-Offline tests use temporary athlete/runtime/client folders, real SQLite and fake
-release acquisition, native client commands and launchctl. They exercise private WAL
-backups, storage compatibility refusal, activation/client failure rollback, interrupted
-operations, shared-host client removal, scheduler failure and ownership conflicts.
-Regression tests also cover independent interrupted-client states, external SQLite
-and other personal paths reached through symlinks, added or edited release contents,
-and a shadow authentication package in an unrelated starting folder.
+Offline tests use temporary installations, real SQLite and fake acquisition/client/
+launchctl boundaries. They cover WAL backups, storage refusal, owned activation/client
+rollback, interruptions, shared-host removal, scheduler failure, symlink aliases,
+unknown release contents and isolated authentication imports.
 
-Clean Mac provisioning, real launchd activation/removal, live saved-login acceptance,
-and fresh Work/Codex/Claude Code conversations are operator acceptance steps. They
-have not been performed by the lifecycle tests. Run those checks against a synthetic
-installation before describing the complete native journey as accepted; perform live
-Garmin authentication only with the tester's own account from their terminal.
+Consumer/native acceptance remains separately pending in [distribution](DISTRIBUTION.md)
+and [client setup](CLIENT_SETUP.md#activation-and-acceptance). Use synthetic evidence
+first and the tester's own terminal for any explicitly requested Garmin authentication.

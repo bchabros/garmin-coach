@@ -222,12 +222,9 @@ def _unanswerable_cause(exc: BaseException) -> LoginUnavailableError | None:
     return None
 
 
-def login(
-    settings: Settings | None = None,
-    prompt_mfa: Callable[[], str] | None = None,
-) -> "GarminTransport":
+def login(settings: Settings | None = None) -> "GarminTransport":
     """Log in (preferring cached tokens) and adapt the client to the read transport."""
-    return GarminTransport(login_api(settings, prompt_mfa))
+    return GarminTransport(login_api(settings))
 
 
 class GarminTransport:

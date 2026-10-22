@@ -12,7 +12,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 from typing import Any, Iterator
 from contextlib import contextmanager
 
@@ -23,11 +22,6 @@ from .core import installation
 _PUBLIC_COACH_RESOURCES = coach_resources.public_names()
 # Public resources added after the first generation; an older owned snapshot may lack them.
 _ADDED_AFTER_FIRST_GENERATION = frozenset({"references/saved-context.md"})
-
-
-def default_runtime_root() -> pathlib.Path:
-    """Return the managed macOS runtime location, separate from athlete records."""
-    return distribution.default_runtime_root()
 
 
 def integration_root(home: pathlib.Path, runtime_root: pathlib.Path) -> pathlib.Path:
@@ -198,7 +192,7 @@ def _claim_bindings(
             _audit_native_binding(home, runtime, host, previous)
     for host in dict.fromkeys(map(_host, selected)):
         registry["bindings"][host] = owner
-    _atomic_write(path, _json(registry))
+    distribution.atomic_write(path, _json(registry))
 
 
 def _release_bindings(
@@ -212,7 +206,7 @@ def _release_bindings(
     for host, claim in list(registry["bindings"].items()):
         if claim == owner and host not in set(map(_host, remaining)):
             del registry["bindings"][host]
-    _atomic_write(path, _json(registry))
+    distribution.atomic_write(path, _json(registry))
 
 
 def _read_resources(root: pathlib.Path) -> dict[str, bytes]:
@@ -340,17 +334,6 @@ def _marketplace_configuration(name: str) -> dict[str, bytes]:
     return files
 
 
-def _atomic_write(path: pathlib.Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-        temporary = pathlib.Path(stream.name)
-        stream.write(content)
-    try:
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _artifact_path(root: pathlib.Path, relative: str) -> pathlib.Path:
     path = pathlib.Path(relative)
     if path.is_absolute() or ".." in path.parts:
@@ -375,7 +358,7 @@ def _load(root: pathlib.Path) -> dict[str, Any]:
 
 
 def _save(root: pathlib.Path, receipt: dict[str, Any]) -> None:
-    _atomic_write(root / "registration.json", _json(receipt))
+    distribution.atomic_write(root / "registration.json", _json(receipt))
 
 
 def _command(arguments: list[str]) -> bool:
@@ -690,7 +673,7 @@ def _prepare_files(root: pathlib.Path, files: dict[str, bytes], receipt: dict[st
     receipt["clients"] = _client_states(receipt)
     _save(root, receipt)
     for relative, content in files.items():
-        _atomic_write(_artifact_path(root, relative), content)
+        distribution.atomic_write(_artifact_path(root, relative), content)
     _remove_obsolete_files(root, obsolete)
     receipt["artifacts"] = receipt.pop("pending_artifacts")
     _save(root, receipt)
@@ -1071,7 +1054,9 @@ def add_parser(subparsers: Any) -> None:
     operations = group.add_subparsers(dest="operation", required=True)
     for name in ("configure", "status", "remove"):
         operation = operations.add_parser(name)
-        operation.add_argument("--runtime-root", type=pathlib.Path, default=default_runtime_root())
+        operation.add_argument(
+            "--runtime-root", type=pathlib.Path, default=distribution.default_runtime_root()
+        )
         operation.add_argument("--clients", default="", required=name == "configure")
         operation.add_argument("--confirm", action="store_true")
         operation.set_defaults(func=_handle_cli)
@@ -1081,7 +1066,9 @@ def main(argv: list[str] | None = None) -> int:
     """Run standalone client setup; the main CLI exposes the same operations."""
     parser = argparse.ArgumentParser(description=__doc__)
     installation.add_home_argument(parser)
-    parser.add_argument("--runtime-root", type=pathlib.Path, default=default_runtime_root())
+    parser.add_argument(
+        "--runtime-root", type=pathlib.Path, default=distribution.default_runtime_root()
+    )
     parser.add_argument("operation", choices=("configure", "status", "remove"))
     parser.add_argument("--clients", default="")
     parser.add_argument("--confirm", action="store_true")

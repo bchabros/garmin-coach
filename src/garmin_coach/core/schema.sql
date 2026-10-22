@@ -99,9 +99,6 @@ CREATE TABLE IF NOT EXISTS activities (
   vig_intensity_min INTEGER,              -- vigorousIntensityMinutes
   bb_diff         INTEGER,                 -- differenceBodyBattery (drain from this session)
 
-  -- strength/hiit rollups
-  total_sets      INTEGER,
-  total_reps      INTEGER,
 
   -- fastest splits (running)
   split_1k_s      REAL,
@@ -111,7 +108,6 @@ CREATE TABLE IF NOT EXISTS activities (
 
   -- geo / flags
   location_name   TEXT,
-  start_lat REAL, start_lon REAL,
   is_pr           INTEGER DEFAULT 0,       -- personal-record flag on the activity
 
   -- environment (per-activity weather; Fahrenheit payload converted to Celsius)
@@ -381,55 +377,14 @@ CREATE TABLE IF NOT EXISTS training_status_daily (
 );
 
 -- Optional: body battery discrete events (SLEEP/ACTIVITY/STRESS/RECOVERY/NAP).
-CREATE TABLE IF NOT EXISTS body_battery_events (
-  date         TEXT NOT NULL,
-  event_idx    INTEGER NOT NULL,
-  event_type   TEXT,                       -- SLEEP|ACTIVITY|STRESS|RECOVERY|NAP
-  start_gmt    TEXT,
-  duration_ms  INTEGER,
-  bb_impact    INTEGER,                    -- +charge / -drain
-  feedback     TEXT,
-  PRIMARY KEY (date, event_idx)
-);
-
 -- =============================================================================
 -- CORE · PERIODIC / RARE  (pull weekly or on change)
 -- =============================================================================
-CREATE TABLE IF NOT EXISTS weight_log (
-  date        TEXT PRIMARY KEY,
-  weight_g    INTEGER,
-  bmi         REAL,
-  body_fat_pct REAL,
-  muscle_mass_g INTEGER,
-  body_water_pct REAL
-);
-
-CREATE TABLE IF NOT EXISTS race_predictions (
-  date        TEXT PRIMARY KEY,
-  t_5k_s      INTEGER,
-  t_10k_s     INTEGER,
-  t_half_s    INTEGER,
-  t_marathon_s INTEGER
-);
-
 -- Time series of fitness markers (one row when any value changes).
 CREATE TABLE IF NOT EXISTS fitness_markers (
   date               TEXT PRIMARY KEY,
-  vo2max_running     REAL,
-  vo2max_cycling     REAL,
   lactate_thr_hr     INTEGER,             -- lactate threshold heart rate
-  lactate_thr_pace   REAL,               -- lactate threshold pace (seconds per km)
-  endurance_score    INTEGER,
-  hill_score         INTEGER,
-  fitness_age        REAL
-);
-
-CREATE TABLE IF NOT EXISTS personal_records (
-  pr_id       INTEGER PRIMARY KEY,
-  type_key    TEXT,                        -- longest_run|fastest_5k|...
-  value       REAL,
-  achieved_at TEXT,
-  activity_id INTEGER
+  lactate_thr_pace   REAL               -- lactate threshold pace (seconds per km)
 );
 
 -- =============================================================================
@@ -465,7 +420,6 @@ INSERT OR IGNORE INTO coach_thresholds(key,value,note) VALUES
  ('deload_drop_pct',     0.40, 'retrospective: a load_total drop this large marks a deload week'),
  -- Phase 6b snapshot: trend lookback windows (days) + minimum measurable span
  ('snapshot_vo2max_lookback_days', 90, 'window for the VO2max trend delta (slow-moving)'),
- ('snapshot_weight_lookback_days', 28, 'window for the body-weight trend delta'),
  ('snapshot_hrv_lookback_days',    28, 'window for the HRV trend delta (Garmin weekly avg)'),
  ('snapshot_trend_min_span_days',   7, 'below this available span a trend delta is NULL'),
  -- Phase 7 strength/Hyrox load model + niggle log
@@ -525,7 +479,6 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
   hrv_baseline    REAL,                    -- rolling median
   hrv_sd          REAL,
   hrv_low_flag    INTEGER,                 -- hrv < baseline - k*SD
-  hrv_cv          REAL,                    -- night-to-night coefficient of variation
   -- load / ACWR
   load_day        REAL,
   acute7          REAL,                    -- mean daily load, 7d
@@ -541,19 +494,14 @@ CREATE TABLE IF NOT EXISTS daily_metrics (
   z1_min REAL, z2_min REAL, z3_min REAL, z4_min REAL, z5_min REAL,
   -- recovery
   sleep_score     INTEGER,
-  sleep_h         REAL,
   sleep_debt_h    REAL,                    -- cumulative need - actual
   rhr             INTEGER,
-  rhr_baseline    REAL,                    -- rolling median RHR
   rhr_delta       REAL,                    -- rhr - baseline (rise = fatigue/illness)
   skin_temp_dev_c REAL,
   bb_min INTEGER, bb_max INTEGER, bb_recharge INTEGER,
   stress_avg      INTEGER,
   readiness_score INTEGER,
-  recovery_time_h REAL,
-  vo2max          REAL,
-  -- composite flags for the coach
-  illness_watch   INTEGER                  -- HRV↓ & RHR↑ & (resp↑ or skin_temp↑)
+  vo2max          REAL
 );
 
 -- =============================================================================
@@ -621,16 +569,9 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   id                       INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
   computed_at              TEXT,              -- as-of date; every latest read scoped to <= this
   -- fitness markers (+ trend delta over an available window; span it was measured over)
-  vo2max                   REAL,              -- fitness_markers.vo2max_running (latest)
+  vo2max                   REAL,              -- training_status_daily.vo2max (latest)
   vo2max_delta             REAL,              -- signed change over the lookback (Phase 6b/02)
   vo2max_span_days         INTEGER,           -- actual days the delta spans (may be < lookback)
-  weight_kg                REAL,              -- weight_log.weight_g / 1000 (latest)
-  weight_delta             REAL,
-  weight_span_days         INTEGER,
-  t_5k_s                   INTEGER,           -- race_predictions (latest)
-  t_10k_s                  INTEGER,
-  t_half_s                 INTEGER,
-  t_marathon_s             INTEGER,
   -- HRV band (+ trend)
   hrv_baseline             REAL,              -- daily_metrics (latest)
   hrv_sd                   REAL,
@@ -708,34 +649,6 @@ CREATE TABLE IF NOT EXISTS pattern_overlap (
 -- =============================================================================
 -- VIEWS  (convenience joins; DuckDB-friendly)
 -- =============================================================================
-CREATE VIEW IF NOT EXISTS v_daily AS
-SELECT d.date,
-       m.hrv, m.hrv_baseline, m.hrv_low_flag,
-       m.acwr, m.n_chronic,
-       m.load_day, m.load_low, m.load_high, m.load_anaerobic,
-       s.total_s/3600.0 AS sleep_h, s.deep_s/60.0 AS deep_min, s.rem_s/60.0 AS rem_min,
-       s.score AS sleep_score, s.resting_hr AS rhr, s.skin_temp_dev_c,
-       w.bb_min, w.bb_max, w.stress_avg,
-       tr.score AS readiness, tr.level AS readiness_level,
-       ts.status AS training_status, ts.balance_phrase, ts.vo2max
-FROM daily_wellness d
-LEFT JOIN daily_metrics       m  ON m.date  = d.date
-LEFT JOIN sleep               s  ON s.date  = d.date
-LEFT JOIN hrv_nightly         h  ON h.date  = d.date
-LEFT JOIN daily_wellness      w  ON w.date  = d.date
-LEFT JOIN training_readiness  tr ON tr.date = d.date
-LEFT JOIN training_status_daily ts ON ts.date = d.date;
-
--- Activities enriched with pace (min/km) and the load bucket they fall into.
-CREATE VIEW IF NOT EXISTS v_activity_enriched AS
-SELECT a.*,
-       CASE WHEN a.distance_m > 0 AND a.avg_speed_mps > 0
-            THEN (1000.0/a.avg_speed_mps)/60.0 END AS pace_min_km,
-       CASE WHEN a.anaero_te >= 1.0 THEN 'anaerobic'
-            WHEN a.aero_te   <  2.5 THEN 'aerobic_low'
-            ELSE 'aerobic_high' END AS load_bucket
-FROM activities a;
-
 -- The single read surface for the movement-overlap mart: an activity's manual rows
 -- when it has any, its captured rows otherwise. Per-activity supersede, never a
 -- row-level merge - the captured row of a circuit is one pseudo-set standing in for
@@ -751,11 +664,3 @@ SELECT s.activity_id, s.set_idx, s.category, s.subcategory, s.reps, s.sets, s.du
        s.max_weight, 'captured' AS source
 FROM activity_sets s
 WHERE NOT EXISTS (SELECT 1 FROM manual_activity_sets m WHERE m.activity_id = s.activity_id);
-
--- Days flagged for the coach (low HRV / ACWR out of band / illness watch).
-CREATE VIEW IF NOT EXISTS v_flags AS
-SELECT date, hrv, hrv_low_flag, acwr, n_chronic, rhr_delta, illness_watch
-FROM daily_metrics
-WHERE hrv_low_flag = 1
-   OR illness_watch = 1
-   OR (n_chronic >= 28 AND (acwr > 1.5 OR acwr < 0.8));

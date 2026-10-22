@@ -2,12 +2,12 @@
 
 Pure and read-only over the digest the coach engine already built. Turns the
 digest's own ``signals`` into a single prospective answer for tomorrow, only ever
-*softening* the weekly template's planned intent (signal-driven,
+*softening* the plan of record's planned intent (signal-driven,
 most-conservative-wins). Every recommendation cites the signal codes that changed
 it, so the advice is explainable by construction. No DB, no Garmin.
 
-The ``avoid`` list and ``replan`` menu are stubbed here (empty / None); later
-tickets fill them.
+Movement-overlap signals populate ``avoid``; missed-session evidence supplies
+the optional ``replan`` menu.
 """
 
 from __future__ import annotations

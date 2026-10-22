@@ -460,3 +460,8 @@ def replace_weekly_plan_actual(
             for row in rows
         ],
     )
+
+
+def latest_mart_date(conn: sqlite3.Connection) -> str | None:
+    """Return the latest materialized daily date, or None for an empty mart."""
+    return conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]

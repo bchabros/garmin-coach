@@ -81,8 +81,7 @@ def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
     weekly review that misread a not-yet-uploaded run as a rest day was written from
     the weekly read (issue #72).
     """
-    row = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()
-    data_through = row[0] if row else None
+    data_through = db.latest_mart_date(conn)
     today_included = data_through == dt.date.today().isoformat()
     return {
         "data_through": data_through,
@@ -558,7 +557,7 @@ def repair_confirm(
         return _wrap(conn, {"applied": False, "error": error})
 
     days = _repair_dates(from_date, to_date)
-    before = _stored_activities(conn, from_date, to_date)
+    before = db.count_activities(conn, from_date, to_date)
     try:
         sync.backfill(client, conn, from_date, to_date)
     except Exception as exc:  # noqa: BLE001 - a tool reports; it never raises out of MCP
@@ -569,7 +568,7 @@ def repair_confirm(
         "from_date": from_date,
         "to_date": to_date,
         "days": len(days),
-        "activities_stored": _stored_activities(conn, from_date, to_date) - before,
+        "activities_stored": db.count_activities(conn, from_date, to_date) - before,
         "features_ok": False,
         "error": None,
     }
@@ -579,10 +578,6 @@ def repair_confirm(
     except Exception as exc:  # noqa: BLE001 - the pull landed; say the rebuild did not
         data["error"] = f"data pulled, but the mart rebuild failed: {exc}"
     return _wrap(conn, data)
-
-
-def _stored_activities(conn: sqlite3.Connection, from_date: str, to_date: str) -> int:
-    return db.count_activities(conn, from_date, to_date)
 
 
 def author_workout(

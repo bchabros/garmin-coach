@@ -2,6 +2,8 @@
 
 Use Python 3.13, four-space indentation and the Ruff configuration in `pyproject.toml`.
 Keep changes focused and follow the module boundaries in `docs/DEVELOPMENT.md`.
+Follow SOLID. Keep functions at one abstraction level and short enough to fit on
+one screen without scrolling; split longer functions into focused private helpers.
 
 - Use `snake_case` for functions/modules, `CamelCase` for classes and `UPPER_SNAKE_CASE`
   for constants. Keep constants beside the domain logic that owns them.

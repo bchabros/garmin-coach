@@ -230,6 +230,7 @@ def unconfirmed_days(
     conn: sqlite3.Connection,
     *,
     window_days: int,
+    today: str | None = None,
     through: str | None = None,
 ) -> list[dict]:
     """The trailing days the plan expected a session on and no activity has arrived for.
@@ -244,6 +245,7 @@ def unconfirmed_days(
     Args:
         conn: Open SQLite connection with the schema bootstrapped.
         window_days: Length of the re-check window (``sync_recheck_days``).
+        today: The as-of date (default: the real today).
         through: Horizon of the reading window; days after it are dropped, so a report
             built for a past day reports none.
 
@@ -251,7 +253,7 @@ def unconfirmed_days(
         One dict per unconfirmed day, oldest first: ``date``, ``planned``, ``intent``,
         ``source``.
     """
-    end = _dt.date.today()
+    end = _dt.date.fromisoformat(today) if today else _dt.date.today()
     days = []
     for back in range(window_days, 0, -1):
         date = (end - _dt.timedelta(days=back)).isoformat()

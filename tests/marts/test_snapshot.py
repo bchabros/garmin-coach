@@ -233,6 +233,19 @@ def test_empty_db_degrades_to_nulls(conn):
 # --- conn seam: snapshot.rollup persists the singleton row ---
 
 
+@pytest.mark.parametrize("populated", [False, True])
+def test_every_built_field_survives_persistence_and_read(conn, populated):
+    if populated:
+        _seed_full_standing(conn)
+    built = snapshot.build(conn, through_date="2026-07-08")
+
+    snapshot.rollup(conn, through_date="2026-07-08")
+
+    assert snapshot.read(conn) == built
+    schema_fields = {row[1] for row in conn.execute("PRAGMA table_info(athlete_status)")}
+    assert set(built) == schema_fields - {"id"}
+
+
 def test_rollup_writes_single_status_row(conn):
     _seed_full_standing(conn)
     snapshot.rollup(conn, through_date="2026-07-08")

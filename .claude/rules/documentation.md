@@ -22,6 +22,8 @@ Before the final review of every PR, and again after a material scope change:
 2. Move still-needed explanations to the maintained guides, binding decisions and
    their reasons to ADRs, and terms to the glossary. Keep acceptance evidence and
    deferred work in the issue or PR, with follow-up issues where needed.
+   When shortening an ADR, retain explicit supersession links and scope, the concrete
+   incident or evidence behind the decision, and reasons for rejecting alternatives.
 3. Remove obsolete duplicates and tracked PRDs or temporary plans whose scope is
    fully implemented and verified in this PR or an already merged PR. Git history
    retains the originals; avoid creating an archive directory. A closed issue or

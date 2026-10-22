@@ -4,9 +4,21 @@
 
 Accepted
 
+Supersedes the "one ladder read in two directions" decision of
+[ADR 0021](0021-plan-guard-on-authoring-and-push.md); the rest of ADR 0021 stands.
+
 ## Context
 
-A session name alone let threshold targets evade an easy-day guard.
+ADR 0021 ranked both planned intent and the requested session type on one ladder.
+Issue [#62](https://github.com/bchabros/garmin-coach/issues/62) exposed both failure
+directions: an `easy` request with a 4:25–4:35/km work band passed on an easy day
+despite a 5:14/km Z2 ceiling, while threshold repeats named `quality` were refused
+on a planned tempo day. Renaming or editing the plan to satisfy the guard distorted
+the agreed day and its later adherence record.
+
+An athlete-declared hardness field would permit the same bypass under a new name.
+The replacement must derive hardness from what the watch will actually ask, while
+retaining one numeric ordering for the plan and authored workout.
 
 ## Decision
 

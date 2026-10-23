@@ -43,6 +43,7 @@ class DailyResult:
         plans_imported: week_start of every plan file cached by the plans stage.
         invalidated_pushes: Workouts the imported plans no longer allow; warnings
             only, with no effect on the run's status or the Garmin account.
+        plan_warnings: Dated plan-conflict checks blocked by unreadable local evidence.
     """
 
     sync: sync.SyncResult | None = None
@@ -52,6 +53,7 @@ class DailyResult:
     fatal: bool = False
     plans_imported: list[str] = field(default_factory=list)
     invalidated_pushes: list[dict] = field(default_factory=list)
+    plan_warnings: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -100,6 +102,9 @@ def _run_plans_stage(
     )
     result.plans_imported = imported.weeks
     result.invalidated_pushes = imported.invalidated_pushes
+    result.plan_warnings = imported.warnings
+    for warning in imported.warnings:
+        logger.warning("daily: %s", warning)
     if imported.error is not None:
         logger.error("daily: plan import failed: %s", imported.error)
         result.errors.append(f"plan import failed: {imported.error}")

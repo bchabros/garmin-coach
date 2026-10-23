@@ -12,7 +12,7 @@ import pytest
 from garmin_coach import cli
 from garmin_coach.core import db, plan
 from garmin_coach.cli import build_parser
-from garmin_coach.workouts import publish
+from garmin_coach.workouts import publish, push
 from tests.conftest import FakePublisher, run_spec
 
 DATA_START = "2026-06-08"
@@ -67,7 +67,7 @@ def test_cli_push_passes_the_receipts_workout_id_as_the_lookup_candidate(tmp_pat
     """Rename plus a changed spec: only the receipt's id still finds the workout."""
     pub = FakePublisher()
     _, day_dir = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE))
-    assert publish.receipt_workout_id(day_dir) == 1000
+    assert push.receipt_workout_id(day_dir) == 1000
     pub.workouts[1000]["workoutName"] = "Hyrox Tempo"
 
     code, _ = _run_cli_push(tmp_path, monkeypatch, pub, run_spec(date=PUSH_DATE, work_s=2400))
@@ -734,3 +734,76 @@ def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
 
     assert cli.main(["sync"]) == 2
     assert "no terminal is attached" in capsys.readouterr().out
+
+
+def test_cli_author_requires_a_hyrox_variant_without_reporting_success(
+    tmp_path, monkeypatch, capsys
+):
+    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"sport": "run", "origin": "athlete", "session_type": "hyrox"}))
+    args = build_parser().parse_args(
+        [
+            "author",
+            "--date",
+            "2099-07-17",
+            "--request",
+            str(request),
+            "--reports-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert args.func(args) == 1
+    assert "hyrox" in capsys.readouterr().out.lower()
+    assert not (tmp_path / "2099-07-17" / "workout.json").exists()
+
+
+def test_cli_repeat_matches_conversation_and_preserves_the_saved_workout(
+    tmp_path, monkeypatch, athlete_home
+):
+    from garmin_coach.mcp import tools
+
+    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    source, target = "2099-07-17", "2099-07-18"
+    day = tmp_path / source
+    day.mkdir()
+    spec = run_spec(date=source)
+    spec["name"] = "GC reusable tempo"
+    path = day / "workout.json"
+    path.write_text(json.dumps(spec))
+    original = path.read_bytes()
+    args = build_parser().parse_args(
+        ["author", "--date", target, "--reuse-from", source, "--reports-dir", str(tmp_path)]
+    )
+
+    assert args.func(args) == 0
+    cli_spec = json.loads((tmp_path / target / "workout.json").read_text())
+    conn = db.connect(settings.db_path)
+    try:
+        conversational = tools.author_workout(
+            conn, target, reuse_from=source, reports_dir=str(tmp_path)
+        )
+    finally:
+        conn.close()
+    assert cli_spec == conversational["data"]["spec"]
+    assert cli_spec["date"] == target
+    assert cli_spec["steps"] == spec["steps"]
+    assert cli_spec["name"] == "GC reusable tempo"
+    assert path.read_bytes() == original
+    assert not (tmp_path / target / "push.json").exists()
+
+
+def test_cli_author_refuses_a_non_object_request_as_a_plain_error(
+    tmp_path, monkeypatch, capsys, athlete_home
+):
+    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    request = tmp_path / "request.json"
+    request.write_text("[]")
+    args = build_parser().parse_args(["author", "--date", "2099-07-17", "--request", str(request)])
+
+    assert args.func(args) == 1
+    assert "JSON object" in capsys.readouterr().out

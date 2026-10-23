@@ -277,3 +277,10 @@ a `confirm_token`. Show it to the athlete; on their go-ahead
   Garmin still reports the day as off the watch (`last_known`), and the plan no longer
   counts that day as diverging - off the calendar is off the watch, until the athlete
   puts it back by hand and a read sees it. Name the day and the workout that left it.
+
+## Damaged saved workout evidence
+
+If a status or account operation reports unreadable saved evidence, surface the date
+and error. Preserve the files for operator repair. Listing and plan-import `warnings`
+mean some days could not be checked; an empty result with warnings does not prove
+that no workout was pushed or that every workout agrees with the plan.

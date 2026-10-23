@@ -11,7 +11,10 @@ One conversational surface needs finished-DB reads, local logs and guarded refre
 ## Decision
 
 - One local stdio server delegates to existing application seams. CLI/MCP adapters
-  should share behavior; #102 tracks observed duplication rather than assuming parity.
+  share the dated-workout flow, including artifact ownership and import-time conflict
+  reads (#102 T1). The original Hyrox success/error mismatch and chat-only reuse showed
+  why moving account calls alone did not establish parity; publisher remains account
+  policy, without artifact reads. #102 T2–T6 track the remaining shared-flow work.
 - Local writes and explicit transport operations coexist, but metric computation
   never reads Garmin live. Refresh reuses ETL, stays partial and never advances
   watermarks; freshness accompanies all reads. Nightly owns alerts.

@@ -35,7 +35,9 @@ report that prerequisite; source-checkout commands are not an installation fallb
 
    `plan import` first, because the report reads the plan of record from the DB cache.
    It imports authored weeks and rebuilds their marts itself; it never touches Garmin.
-   Report accepted weeks and any `invalidated_pushes` it returns. If it fails, state
+   Report accepted weeks, any `invalidated_pushes`, and dated `warnings` for conflict
+   checks blocked by unreadable workout evidence. Warnings do not establish agreement
+   with the watch. If it fails, state
    the error and any accepted weeks, then stop rather than scoring against a stale cache.
 
    `report` writes `reports/{today}/`: `digest.json`, `hrv_band.png`, `acwr.png`, and
@@ -236,7 +238,8 @@ changed afterwards.
 - **A plan file the athlete edited by hand.** `plan_import()` re-reads
   `plans/<monday>_week.md` into the plan of record. It reports the weeks it read and any
   `invalidated_pushes` - days whose already-pushed workout the edited plan no longer
-  allows; name those days and offer to re-author them.
+  allows; name those days and offer to re-author them. Surface dated `warnings` too:
+  those days could not be checked, even when the conflict list is empty.
 
 ## Rules
 

@@ -7,13 +7,11 @@ are exercised without any live Garmin call. Prior art: ``tests/test_sync.py``.
 
 from __future__ import annotations
 
-import json
 import logging
 
 from garmin_coach.workouts.publish import (
     UNSCHEDULED,
     confirm_token,
-    invalidated_pushes,
     plan_divergence,
     publish,
     spec_hash,
@@ -710,22 +708,6 @@ def test_divergence_returns_once_a_later_read_finds_the_workout_back_on_the_day(
 
     assert plan_divergence(silent, None, "easy") is None
     assert plan_divergence(back, None, "easy") is not None
-
-
-def test_invalidated_pushes_skip_a_day_taken_off(tmp_path):
-    """A plan re-import must not ask for a re-author of a session no longer on the watch."""
-    for date, extra in (
-        ("2026-07-17", {"unscheduled_at": "2026-07-16T08:00:00"}),
-        ("2026-07-18", {}),
-    ):
-        (tmp_path / date).mkdir()
-        (tmp_path / date / "push.json").write_text(
-            json.dumps({"workout_id": 1000, "session_type": "quality", **extra})
-        )
-
-    conflicts = invalidated_pushes(tmp_path, {"2026-07-17": "easy", "2026-07-18": "easy"})
-
-    assert [c["date"] for c in conflicts] == ["2026-07-18"]
 
 
 def test_the_token_survives_an_entry_without_an_id():

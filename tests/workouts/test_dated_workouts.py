@@ -867,10 +867,19 @@ def _push_receipt(reports, date, **over):
     return receipt
 
 
-def test_author_workout_repeats_a_spec_from_another_day(conn, tmp_path):
+@pytest.mark.parametrize("as_of", [f"2026-10-{day:02d}" for day in range(19, 26)])
+def test_author_workout_repeats_a_spec_from_another_day(conn, tmp_path, monkeypatch, as_of):
     """ "Repeat FBB A from the 19th on Friday" needs no retyping of the steps (#58)."""
+
+    class ClockDate(dt.date):
+        @classmethod
+        def today(cls):
+            return cls.fromisoformat(as_of)
+
+    monkeypatch.setattr(dt, "date", ClockDate)
     _seed_mart(conn, YESTERDAY, hrv=60)
     source, target = (_authorable_day(conn), (dt.date.today() + dt.timedelta(days=3)).isoformat())
+    _seed_plan(conn, target)
     day = tmp_path / source
     day.mkdir(parents=True)
     spec = {

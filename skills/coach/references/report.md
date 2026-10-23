@@ -204,7 +204,8 @@ report that prerequisite; source-checkout commands are not an installation fallb
 ## What the athlete can tell you that the watch cannot
 
 Three local writes belong to the report flow, because what they record is what the next
-read is missing. All three are transport-free and recompute the marts themselves.
+read is missing. All three are transport-free. RPE and stations refresh derived data;
+niggles are read directly without an unnecessary mart pass.
 
 - **How hard it felt.** `log_rpe(activity_id, rpe, soreness?, mood?, note?)` - the Borg
   CR10 session RPE (1-10) for a stored activity. It blends into that day's load, so offer
@@ -213,6 +214,19 @@ read is missing. All three are transport-free and recompute the marts themselves
   severity 1-5. Record it when the athlete mentions one; the niggle signal reads these.
 - **The stations of a circuit.** `log_sets(activity_id, stations)` - see the movement
   coverage note above.
+
+### Local write outcomes
+
+Read `saved` separately from `recomputed` and `error`. If `saved=false`, the write was
+refused or failed. If `saved=true` and `recomputed=false`, name the saved record and
+explain that cached metrics are still older; do not say the entry was lost or add the
+event again. A niggle normally has `recomputed=null`. For a partial goal change,
+`block_before` is older evidence and `block_after` is unknown, not a refreshed block.
+
+Use the returned `recovery_command` only in the same selected athlete installation
+(for example `garmin-coach --home <the same installation> features`), then repeat the
+cached read. Without terminal access, ask the operator to run it. This recovery is
+offline; do not substitute a live Garmin refresh or claim the change was recomputed.
 
 ## When a read shows the data is wrong or missing
 

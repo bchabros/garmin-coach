@@ -230,6 +230,28 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
 - Scheduling is documented, not auto-installed: see
   `scripts/com.garmincoach.daily.plist.example` for a launchd template.
 
+## Local athlete changes and failed recomputation
+
+RPE, manual circuit stations and goal-event changes save the athlete's core fact before
+recomputing derived data. Niggles need no mart pass. Successful CLI writes exit 0;
+refused/failed writes and saved-but-unrefreshed results exit 2. Partial results name the
+saved activity/event and print recovery instructions; repeating event add is unnecessary.
+MCP exposes `saved`, `recomputed` and `error` alongside the existing evidence/freshness.
+`saved=true, recomputed=false` means the fact survived but the old mart generation remains.
+`recomputed=null` is normal for niggles. A saved goal event is reported separately from
+the old block; its `block_after` stays unknown until recomputation succeeds.
+
+After correcting the reported failure, run the existing offline command for the
+**same selected installation**, for example:
+
+```sh
+garmin-coach --home /absolute/path/to/athlete features
+```
+
+Then repeat the cached read. This does not contact Garmin. There is no automatic retry
+queue in the local-write flow. Event add/update also displays the current block before
+and after a successful rebuild, with its anchor race date; missing blocks stay explicit.
+
 ## Exit-code contract
 
 `daily` (and `scripts/daily.sh`, which passes it through) exits with:

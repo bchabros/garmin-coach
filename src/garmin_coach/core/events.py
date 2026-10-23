@@ -1,7 +1,8 @@
-"""Goal-event writers: the seam the CLI and the coach MCP server both call.
+"""Goal-event persistence, independent of derived consequences.
 
 Transport-free. The metrics rebuild that a changed race implies belongs to the
-caller (`core` never imports the marts), so both surfaces run it themselves.
+shared athlete-change flow (`core` never imports the marts). Its durable-write
+outcome is shared by both terminal and conversation.
 """
 
 from __future__ import annotations
@@ -117,7 +118,9 @@ def add_goal_event(
     }
     try:
         event_id = db.insert_goal_event(conn, row)
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as exc:
+        if exc.sqlite_errorcode != sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+            raise
         existing = next(
             e
             for e in db.list_goal_events(conn)

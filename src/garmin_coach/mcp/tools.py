@@ -23,9 +23,9 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from .. import cli, daily, plan_changes
+from .. import athlete_changes, daily, plan_changes
 from ..coach import digest, thresholds as _thresholds
-from ..core import db, events, manual_sets, plan
+from ..core import db, manual_sets, plan
 from ..core.config import get_settings
 from ..etl import sync
 from ..etl.sync import GarminClient
@@ -248,9 +248,10 @@ def log_rpe(
     note: str | None = None,
     data_start_date: str,
 ) -> dict[str, Any]:
-    """Log a session RPE from chat; recomputes the affected day's blended load."""
-    try:
-        date = cli.log_session_rpe(
+    """Report saved session effort and its refresh outcome with freshness."""
+    return _wrap(
+        conn,
+        athlete_changes.log_session_rpe(
             conn,
             activity_id=activity_id,
             rpe=rpe,
@@ -258,10 +259,8 @@ def log_rpe(
             mood=mood,
             note=note,
             data_start_date=data_start_date,
-        )
-    except ValueError as exc:
-        return _wrap(conn, {"error": str(exc)})
-    return _wrap(conn, {"activity_id": activity_id, "rpe": rpe, "date": date, "error": None})
+        ).as_data(),
+    )
 
 
 def log_niggle(
@@ -272,12 +271,13 @@ def log_niggle(
     date: str | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
-    """Log a niggle (a sub-injury complaint) from chat."""
-    try:
-        day = cli.log_niggle(conn, body_part=body_part, severity=severity, date=date, note=note)
-    except ValueError as exc:
-        return _wrap(conn, {"error": str(exc)})
-    return _wrap(conn, {"body_part": body_part, "severity": severity, "date": day, "error": None})
+    """Report a saved complaint with freshness; no mart refresh is required."""
+    return _wrap(
+        conn,
+        athlete_changes.log_niggle(
+            conn, body_part=body_part, severity=severity, date=date, note=note
+        ).as_data(),
+    )
 
 
 def log_sets(
@@ -287,20 +287,16 @@ def log_sets(
     stations: list[str | manual_sets.ManualStationDetails],
     data_start_date: str,
 ) -> dict[str, Any]:
-    """Log a circuit's stations from chat (issue #60); recomputes from that day.
-
-    The station list is what the box published, in order - bare Garmin names or
-    ``{subcategory, reps?, sets?, duration_s?, max_weight?}`` mappings. Names the
-    movement map does not know come back as ``unmapped`` so the chat can say the
-    overlap read is partial for them.
-    """
-    try:
-        out = cli.log_activity_sets(
-            conn, activity_id=activity_id, stations=stations, data_start_date=data_start_date
-        )
-    except ValueError as exc:
-        return _wrap(conn, {"error": str(exc)})
-    return _wrap(conn, {"activity_id": activity_id, **out, "error": None})
+    """Report the shared manual-overlay outcome with freshness."""
+    return _wrap(
+        conn,
+        athlete_changes.log_activity_sets(
+            conn,
+            activity_id=activity_id,
+            stations=stations,
+            data_start_date=data_start_date,
+        ).as_data(),
+    )
 
 
 def refresh_today(
@@ -519,29 +515,6 @@ def author_workout(
 # --- goal events and plan import: the writers that keep the plan correct (#72)
 
 
-def _current_block(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The block calendar's row for the week that holds today, or None without an anchor.
-
-    Carries the anchor race's id beside the block, so a report of the move names the
-    race the periodization is now dated from.
-    """
-    row = periodize.current_plan(conn, dt.date.today().isoformat())
-    if row is None:
-        return None
-    return {**row, "anchor_event_id": periodize.anchor_event_id(conn, row["week_start"])}
-
-
-def _event_row(conn: sqlite3.Connection, event_id: int) -> dict[str, Any] | None:
-    """The recorded race the write touched, annotated as ``event list`` shows it.
-
-    Looked up by the id the write returned rather than by the fields the caller
-    passed: the writer normalises what it stores, so a date the athlete typed in
-    another shape would never match itself.
-    """
-    rows = periodize.annotate(db.list_goal_events(conn), dt.date.today().isoformat())
-    return next((row for row in rows if row["id"] == event_id), None)
-
-
 def event_add(
     conn: sqlite3.Connection,
     *,
@@ -554,15 +527,10 @@ def event_add(
     note: str | None = None,
     data_start_date: str,
 ) -> dict[str, Any]:
-    """Record a goal race from chat and re-date the periodization.
-
-    Reports the block calendar's row for the current week before and after the
-    write, so the athlete sees what the race did to the plan rather than being
-    told a row was inserted.
-    """
-    before = _current_block(conn)
-    try:
-        event_id = events.add_goal_event(
+    """Report the shared goal-event change with freshness."""
+    return _wrap(
+        conn,
+        athlete_changes.event_add(
             conn,
             date=date,
             type=type,
@@ -571,11 +539,9 @@ def event_add(
             date_precision=date_precision,
             target=target,
             note=note,
-        )
-    except ValueError as exc:
-        return _wrap(conn, _event_error(str(exc)))
-    features.rebuild_marts(conn, data_start_date=data_start_date)
-    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
+            data_start_date=data_start_date,
+        ).as_data(),
+    )
 
 
 def event_update(
@@ -591,16 +557,12 @@ def event_update(
     note: str | None = None,
     data_start_date: str,
 ) -> dict[str, Any]:
-    """Change a recorded race from chat (pin a date, commit a start) and re-date the plan.
-
-    Fields left unset keep their value. Reports the block calendar's row for the
-    current week before and after the write.
-    """
-    before = _current_block(conn)
-    try:
-        events.update_goal_event(
+    """Report the shared goal-event change with freshness."""
+    return _wrap(
+        conn,
+        athlete_changes.event_update(
             conn,
-            event_id,
+            event_id=event_id,
             date=date,
             type=type,
             priority=priority,
@@ -608,22 +570,9 @@ def event_update(
             date_precision=date_precision,
             target=target,
             note=note,
-        )
-    except ValueError as exc:
-        return _wrap(conn, _event_error(str(exc)))
-    features.rebuild_marts(conn, data_start_date=data_start_date)
-    return _wrap(conn, _event_result(_event_row(conn, event_id), before, _current_block(conn)))
-
-
-def _event_error(message: str) -> dict[str, Any]:
-    """A refused race write: nothing was written, so no block moved."""
-    return {"event": None, "block_before": None, "block_after": None, "error": message}
-
-
-def _event_result(
-    row: dict[str, Any] | None, before: dict[str, Any] | None, after: dict[str, Any] | None
-) -> dict[str, Any]:
-    return {"event": row, "block_before": before, "block_after": after, "error": None}
+            data_start_date=data_start_date,
+        ).as_data(),
+    )
 
 
 def plan_import(

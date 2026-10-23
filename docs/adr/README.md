@@ -42,10 +42,12 @@ in GitHub issues and PRs; earlier phase documents remain in Git history.
 | 0033 | [ADR 0033 — Program ownership and storage compatibility during lifecycle operations](0033-program-lifecycle-ownership.md) |
 | 0034 | [Exclusive client bindings and resumable owned generations](0034-exclusive-client-binding-and-recovery.md) |
 | 0035 | [Public coach context and consistent resource exports](0035-public-coach-context-and-resource-exports.md) |
+| 0036 | [Athlete facts survive derived rebuild failures](0036-athlete-facts-survive-rebuild-failure.md) |
 
 Key amendments: 0006/0017 bound historical reporting and transactions; 0010/0027
 replace original load bucketing; 0015 allows optional templates after #84; 0019/0021
 refine confirmation; 0023/0024 separate session shape from hardness; 0029/0030 refine
-reuse/removal; 0031–0035 govern installation, native ownership and public resources.
+reuse/removal; 0031–0035 govern installation, native ownership and public resources;
+0036 separates durable athlete facts from derived-refresh outcomes.
 #103 retires duplicate phase history and unpopulated snapshot paths while preserving
 legacy database and input compatibility.

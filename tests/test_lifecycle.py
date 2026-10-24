@@ -17,6 +17,22 @@ import pytest
 from garmin_coach.core import db
 
 
+def runtime_success(command):
+    """Model a successful runtime's documented database-evidence response."""
+    output = ""
+    if command[1:3] == ["-I", "-c"] and len(command) == 5:
+        request = json.loads(command[4])
+        if request.get("command") == "evidence":
+            output = json.dumps(
+                {
+                    "schema": "compatible",
+                    "data_through": "2026-10-16",
+                    "snapshot_computed_at": "2026-10-16",
+                }
+            )
+    return subprocess.CompletedProcess(command, 0, output)
+
+
 class NativeClients:
     """Fake only documented client inventory and mutation commands."""
 
@@ -28,7 +44,7 @@ class NativeClients:
         host = pathlib.Path(command[0]).name
         args = command[1:]
         if host not in self.plugins:
-            return subprocess.CompletedProcess(command, 0, "")
+            return runtime_success(command)
         if args[:3] == ["plugin", "marketplace", "list"]:
             value = self.marketplaces[host]
             return subprocess.CompletedProcess(
@@ -347,7 +363,7 @@ def test_update_preserves_records_and_restores_prior_release_on_failure(
         current = str(root / "current") in command[0]
         if probe and (failure == "schema" or (failure == "activation" and current)):
             raise subprocess.CalledProcessError(1, command, stderr="secret-value")
-        return subprocess.CompletedProcess(command, 0)
+        return runtime_success(command)
 
     monkeypatch.setattr(subprocess, "run", external)
     before = (home / "data" / "garmin.db").read_bytes()

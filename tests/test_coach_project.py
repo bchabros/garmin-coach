@@ -13,6 +13,7 @@ import tomllib
 
 import pytest
 
+from garmin_coach import coach_resources
 from garmin_coach.core import db
 from garmin_coach.marts import snapshot
 
@@ -24,7 +25,10 @@ LAUNCHER = ROOT / "scripts" / "coach_project.py"
 def project(tmp_path):
     root = tmp_path / "athlete project"
     root.mkdir()
-    shutil.copytree(ROOT / "skills", root / "skills")
+    for name, content in coach_resources.read_public(ROOT / "skills/coach").items():
+        target = root / "skills/coach" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
     for name in ("CLAUDE.md", "AGENTS.md"):
         shutil.copyfile(ROOT / name, root / name)
     (root / ".env").write_text("")
@@ -386,3 +390,32 @@ def test_launcher_explains_an_unusable_runtime_without_a_traceback(tmp_path):
     assert result.returncode == 1
     assert "poetry install" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_source_fixture_uses_only_public_coach_resources(tmp_path):
+    from tests.test_release_build import _source_checkout
+    from garmin_coach import coach_resources
+
+    source = _source_checkout(tmp_path)
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        shutil.copyfile(ROOT / name, source / name)
+    shutil.copytree(ROOT / "docs", source / "docs")
+    shutil.copytree(ROOT / ".claude/rules", source / ".claude/rules")
+    (source / "memory").mkdir()
+    shutil.copyfile(ROOT / "memory/README.md", source / "memory/README.md")
+    private = source / "skills/coach/references/context.md"
+    private.write_text("Synthetic private marker; preserve this source file")
+    destination = tmp_path / "fixture"
+    result = run_command(
+        destination,
+        [sys.executable, "-m", "garmin_coach.project", "fixture", "--project", str(destination)],
+        env_overrides={"PYTHONPATH": str(source / "src")},
+    )
+    assert result.returncode == 0, result.stderr
+    copied = {
+        str(path.relative_to(destination / "skills/coach"))
+        for path in (destination / "skills/coach").rglob("*")
+        if path.is_file()
+    }
+    assert copied == set(coach_resources.public_names())
+    assert private.read_text() == "Synthetic private marker; preserve this source file"

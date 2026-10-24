@@ -105,6 +105,11 @@ python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_FIXTUR
 Use that folder as primary and its generated configuration. The fixture has sparse
 synthetic observations through **2026-07-03**, complete guidance/coach resources and
 an explicitly synthetic dated profile. It is not a realistic personal history.
+The shared packaged builder owns the settings and observations; source setup adds guidance
+and manifest-selected public coach resources, excluding private context. An existing
+nonempty destination is refused. The same bounded inventory/digest/snapshot probe serves
+source checks, diagnosis and candidate checks; its result still leaves fresh-client
+acceptance pending.
 Send this in a fresh conversation in **each** selected client:
 
 > This is a synthetic installation. Read the project guide, coach router, reporting

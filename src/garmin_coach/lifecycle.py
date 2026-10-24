@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from collections.abc import Iterator
 from typing import Any
 
@@ -59,18 +59,12 @@ def _storage_check(home: pathlib.Path, root: pathlib.Path, settings: Settings) -
 
 
 def _database(settings: Settings) -> dict[str, str]:
-    path = pathlib.Path(settings.db_path)
-    if not path.is_file():
+    evidence = installation.inspect_database(settings)
+    if evidence.schema == "missing":
         return _check("missing", "Run setup to import the selected athlete's history.")
-    try:
-        with closing(installation.read_database(settings)) as conn:
-            horizon = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
-            snapshot = conn.execute(
-                "SELECT computed_at FROM athlete_status WHERE id = 1"
-            ).fetchone()
-    except sqlite3.Error:
+    if evidence.schema == "incompatible":
         return _check("incompatible", "Back up the database, then run offline features recovery.")
-    if horizon is None or not snapshot or snapshot[0] is None:
+    if evidence.data_through is None or evidence.snapshot_computed_at is None:
         return _check("data_missing", "Import history, then run the offline features command.")
     return _check("ready")
 
@@ -428,22 +422,9 @@ def _managed(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
 
 
 def _read_candidate(release: pathlib.Path, home: pathlib.Path) -> None:
-    script = (
-        "import sys; from garmin_coach.core import installation; "
-        "settings = installation.load(installation.select(sys.argv[1])); "
-        "conn = installation.read_database(settings); "
-        "assert conn.execute('SELECT MAX(date) FROM daily_metrics').fetchone()[0]; "
-        "assert conn.execute('SELECT computed_at FROM athlete_status WHERE id=1').fetchone()[0]; "
-        "conn.close()"
-    )
-    subprocess.run(
-        [str(release / "venv" / "bin" / "python"), "-I", "-c", script, str(home)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=30,
-        check=True,
-    )
+    from . import distribution
+
+    distribution.inspect_runtime_database(release / "venv/bin/python", home, require_data=True)
 
 
 def _refresh_clients(

@@ -15,7 +15,6 @@ computation happens here.
 from __future__ import annotations
 
 import argparse
-import pathlib
 import sqlite3
 import sys
 from typing import Any
@@ -60,10 +59,7 @@ def _open() -> sqlite3.Connection:
     """Open the configured DB, preserving the guarded project launch policy."""
     settings = get_settings()
     if _EXISTING_DB_ONLY:
-        path = pathlib.Path(settings.db_path).expanduser().resolve()
-        conn = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return installation.open_existing_database(settings, writable=True)
     return installation.open_database(settings)
 
 

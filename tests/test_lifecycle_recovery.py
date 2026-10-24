@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from garmin_coach import cli, clients, distribution
-from tests.test_lifecycle import NativeClients, make_home, managed_program
+from tests.test_lifecycle import NativeClients, make_home, managed_program, runtime_success
 
 
 def test_removing_a_client_updates_the_installers_saved_selection(tmp_path, monkeypatch, capsys):
@@ -81,9 +81,7 @@ def test_interrupted_preparation_is_recoverable_on_retry(tmp_path, monkeypatch, 
         return new
 
     monkeypatch.setattr(distribution, "prepare_release", prepare)
-    monkeypatch.setattr(
-        subprocess, "run", lambda command, **kw: subprocess.CompletedProcess(command, 0)
-    )
+    monkeypatch.setattr(subprocess, "run", lambda command, **kw: runtime_success(command))
     args = update_args(home, root, new / "manifest.json")
     with pytest.raises(SystemExit):
         cli.main(args)
@@ -124,6 +122,8 @@ def test_missing_selected_client_does_not_fail_a_runtime_update(tmp_path, monkey
     monkeypatch.setattr(distribution, "prepare_release", lambda *args: new)
 
     def native(command, **kwargs):
+        if command[1:3] == ["-I", "-c"]:
+            return runtime_success(command)
         result = {"clients": {"claude-code": {"state": "client_missing"}}}
         return subprocess.CompletedProcess(command, 0, json.dumps(result))
 
@@ -269,7 +269,7 @@ def test_terminated_activation_can_retry_without_overwriting_an_edited_launcher(
             if not terminated:
                 terminated = True
                 raise SystemExit("Terminate after activating candidate")
-        return subprocess.CompletedProcess(command, 0)
+        return runtime_success(command)
 
     monkeypatch.setattr(subprocess, "run", native)
     args = update_args(home, root, new / "manifest.json")

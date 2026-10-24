@@ -24,6 +24,10 @@ A consumer Mac needs a private reproducible runtime without developer dependenci
   no password, immediate import or automatic scheduling. Preserve unrelated/edited jobs,
   resume unchanged owned jobs, and detect the legacy daily job before enabling another.
 - No silent auto-update or schema migration. Candidate storage checks are read-only.
+- Candidate checks use its isolated interpreter and versioned packaged probe (#102 T4),
+  sharing the explicit synthetic builder and stdio conversation. Only absent capability
+  permits the older release's own supported check; unknown versions, import errors and
+  failed checks refuse. This preserves old-release rollback without hiding regressions.
 - Intel macOS keeps cryptography 48.0.1 where newer wheels dropped support, while
   other platforms retain 49. Binary absence refuses rather than building from source;
   review this ceiling before future release promotion.

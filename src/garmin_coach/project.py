@@ -9,15 +9,13 @@ import os
 import pathlib
 import re
 import shutil
-import sqlite3
 import sys
-from contextlib import closing
 from typing import Any
 
-from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from .core import db, installation
+from .core import installation
+from .mcp import probe
+from . import coach_resources, synthetic
 
 
 def _prepare(root: pathlib.Path) -> None:
@@ -31,55 +29,44 @@ def _prepare(root: pathlib.Path) -> None:
     if not references or any(not (skill / name).is_file() for name in references):
         raise ValueError("Coach references missing; install the complete canonical skill.")
     settings = installation.activate(root)
-    path = pathlib.Path(settings.db_path).expanduser().resolve()
-    if not path.is_file():
+    evidence = installation.inspect_database(settings)
+    if evidence.schema == "missing":
         raise ValueError(
             "Database missing; select the existing installation or complete its initial import."
         )
-    try:
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
-            db.validate_schema(conn)
-            horizon = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
-            snapshot = conn.execute(
-                "SELECT computed_at FROM athlete_status WHERE id = 1"
-            ).fetchone()
-    except sqlite3.Error:
+    if evidence.schema == "incompatible":
         raise ValueError(
             "Database schema unavailable or incompatible; from the selected project run "
             "poetry run garmin-coach features offline, then repeat check."
-        ) from None
-    if horizon is None or not snapshot or snapshot[0] is None:
+        )
+    if evidence.data_through is None or evidence.snapshot_computed_at is None:
         raise ValueError(
             "Coach data missing; run the documented offline features command after importing history."
         )
 
 
 async def _probe(root: pathlib.Path) -> dict[str, Any]:
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "garmin_coach.project", "serve", "--project", str(root)],
+    evidence = await probe.check(
+        pathlib.Path(sys.executable),
+        root,
+        command=[
+            sys.executable,
+            "-I",
+            "-m",
+            "garmin_coach.project",
+            "serve",
+            "--project",
+            str(root),
+        ],
         env=dict(os.environ),
-        cwd=str(pathlib.Path.cwd()),
+        cwd=pathlib.Path.cwd(),
     )
-    async with asyncio.timeout(15):
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                tools = await session.list_tools()
-                values = {}
-                for name in ("get_digest", "get_snapshot"):
-                    result = await session.call_tool(name, {})
-                    if result.isError or not result.structuredContent:
-                        raise ValueError(
-                            "Coach read failed; rebuild the marts with the offline features command."
-                        )
-                    values[name] = result.structuredContent
     return {
         "project": str(root),
         "runtime": sys.version.split()[0],
-        "tools": sorted(tool.name for tool in tools.tools),
-        "data_through": values["get_digest"]["freshness"]["data_through"],
-        "snapshot_computed_at": values["get_snapshot"]["data"]["computed_at"],
+        "tools": list(evidence.tools),
+        "data_through": evidence.data_through,
+        "snapshot_computed_at": evidence.snapshot_computed_at,
         "client_acceptance": "not_run",
     }
 
@@ -105,16 +92,15 @@ def _configuration(root: pathlib.Path, client: str) -> str:
 
 
 def _fixture(root: pathlib.Path) -> None:
-    if root.exists() and (not root.is_dir() or any(root.iterdir())):
-        raise ValueError(
-            "Fixture requires a new or empty directory; existing records are preserved."
-        )
+    synthetic.create_installation(root)
     source = pathlib.Path(__file__).resolve().parents[2]
-    root.mkdir(parents=True, exist_ok=True)
     for name in ("AGENTS.md", "CLAUDE.md"):
         shutil.copyfile(source / name, root / name)
-    for name in ("skills", "docs"):
-        shutil.copytree(source / name, root / name)
+    shutil.copytree(source / "docs", root / "docs")
+    for name, content in coach_resources.read_public(source / "skills/coach").items():
+        target = root / "skills/coach" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
     shutil.copytree(source / ".claude" / "rules", root / ".claude" / "rules")
     for client in (".agents", ".claude"):
         discovery = root / client / "skills"
@@ -128,18 +114,6 @@ def _fixture(root: pathlib.Path) -> None:
         "Synthetic test context. The athlete wants to exercise the coach read.\n"
         "These are not observations about the owner.\n"
     )
-    (root / ".env").write_text("DB_PATH=./data/garmin.db\nDATA_START_DATE=2026-06-08\n")
-    (root / "data").mkdir()
-    from .marts import snapshot
-
-    conn = db.connect(str(root / "data" / "garmin.db"))
-    try:
-        db.bootstrap(conn)
-        db.upsert_daily(conn, "daily_metrics", {"date": "2026-07-03", "hrv": 61, "load_day": 80})
-        snapshot.rollup(conn)
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def main() -> int:

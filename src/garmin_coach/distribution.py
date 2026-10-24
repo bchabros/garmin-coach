@@ -18,7 +18,6 @@ import tarfile
 import tempfile
 import urllib.request
 import uuid
-from contextlib import closing
 from typing import Any
 
 
@@ -226,39 +225,43 @@ def prepare_release(manifest: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
     return release
 
 
-RUNTIME_PROBE = """
-import asyncio
-import pathlib
+_PROBE_BRIDGE = """
+from contextlib import closing
+import importlib
+import importlib.util
 import json
+import pathlib
 import sys
-from garmin_coach.core import db
-from garmin_coach.marts import snapshot
-from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
-home = pathlib.Path(sys.argv[1])
-server_command = json.loads(sys.argv[2])
-home.mkdir()
-(home / '.env').write_text('DB_PATH=./data/garmin.db\\nDATA_START_DATE=2026-06-08\\n')
-(home / 'data').mkdir()
-conn = db.connect(str(home / 'data' / 'garmin.db'))
-db.bootstrap(conn)
-db.upsert_daily(conn, 'daily_metrics', {'date': '2026-07-03', 'hrv': 61, 'load_day': 80})
-snapshot.rollup(conn)
-conn.commit()
-conn.close()
-async def probe():
-    params = StdioServerParameters(
-        command=server_command[0], args=server_command[1:] + ['--home', str(home)]
-    )
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            for tool in ('get_digest', 'get_snapshot'):
-                result = await session.call_tool(tool, {})
-                assert not result.isError, result
-                assert result.structuredContent['freshness']['data_through'] == '2026-07-03'
-asyncio.run(asyncio.wait_for(probe(), timeout=45))
-print('packaged stdio digest and snapshot: passed; client_acceptance: not_run')
+request = json.loads(sys.argv[1])
+spec = importlib.util.find_spec('garmin_coach.mcp.probe')
+probe = importlib.import_module('garmin_coach.mcp.probe') if spec is not None else None
+if probe is not None and hasattr(probe, 'PROBE_API_VERSION'):
+    if probe.PROBE_API_VERSION != 1:
+        raise RuntimeError('Unsupported packaged probe contract.')
+    raise SystemExit(probe.main(request['arguments']))
+# Only absent capability may use a release's own earlier supported contract.
+legacy = importlib.import_module('garmin_coach.distribution')
+if not hasattr(legacy, 'RUNTIME_PROBE'):
+    raise RuntimeError('Packaged probe capability is unavailable; preserve this runtime.')
+if request['command'] == 'synthetic':
+    launcher = pathlib.Path(request['launcher']) if request.get('launcher') else None
+    legacy.check_runtime_protocol(pathlib.Path(request['release']), launcher=launcher)
+    raise SystemExit(0)
+# Older storage checks use the old release's validated read-only opener and schema.
+from garmin_coach.core import installation
+settings = installation.activate(request['home'])
+evidence = dict(schema='missing', data_through=None, snapshot_computed_at=None)
+if pathlib.Path(settings.db_path).is_file():
+    with closing(installation.read_database(settings)) as connection:
+        through = connection.execute('SELECT MAX(date) FROM daily_metrics').fetchone()[0]
+        snapshot = connection.execute('SELECT computed_at FROM athlete_status WHERE id=1').fetchone()
+    evidence.update(schema='compatible', data_through=through,
+                    snapshot_computed_at=snapshot[0] if snapshot else None)
+print(json.dumps(evidence))
+if evidence['schema'] == 'missing':
+    raise SystemExit(0 if request.get('allow_missing') else 2)
+if request.get('require_data') and not (evidence['data_through'] and evidence['snapshot_computed_at']):
+    raise SystemExit(2)
 """
 
 
@@ -276,28 +279,88 @@ def _probe_environment() -> dict[str, str]:
         "DATA_START_DATE",
         "WEEKLY_TEMPLATE",
     }
-    result = {key: value for key, value in os.environ.items() if key not in excluded}
+    result = {key: value for key, value in os.environ.items() if key.upper() not in excluded}
     return {**result, "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
 
 
-def check_runtime_protocol(release: pathlib.Path, *, launcher: pathlib.Path | None = None) -> None:
-    """Read synthetic digest/snapshot through the candidate's real stdio MCP server.
-
-    Args:
-        release: Candidate runtime; no personal installation is read or changed.
-        launcher: Optional stable server launcher for the post-activation release smoke.
-    """
-    python = str(release / "venv" / "bin" / "python")
-    command = [str(launcher)] if launcher else [python, "-I", "-m", "garmin_coach.mcp.server"]
-    with tempfile.TemporaryDirectory(prefix="coach-candidate-probe-") as temporary:
-        folder = pathlib.Path(temporary)
-        subprocess.run(
-            [python, "-I", "-c", RUNTIME_PROBE, str(folder / "athlete"), json.dumps(command)],
-            cwd=folder,
-            env={**_probe_environment(), "HOME": str(folder)},
+def _run_packaged_probe(
+    python: pathlib.Path,
+    request: dict[str, Any],
+    *,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="coach-runtime-probe-") as temporary:
+        return subprocess.run(
+            [str(python), "-I", "-c", _PROBE_BRIDGE, json.dumps(request)],
+            cwd=temporary,
+            env={**_probe_environment(), "HOME": temporary},
+            stdin=subprocess.DEVNULL,
+            capture_output=capture,
+            text=True,
             check=True,
             timeout=60,
         )
+
+
+def check_runtime_protocol(release: pathlib.Path, *, launcher: pathlib.Path | None = None) -> None:
+    """Require the candidate's packaged synthetic protocol contract before activation.
+
+    Only absence of the new capability uses the old release's own supported probe;
+    an unsupported version, import failure or failed check never triggers fallback.
+    """
+    with tempfile.TemporaryDirectory(prefix="coach-candidate-probe-") as temporary:
+        home = pathlib.Path(temporary) / "athlete"
+        arguments = ["synthetic", "--home", str(home)]
+        if launcher is not None:
+            arguments += ["--server-command", json.dumps([str(launcher)])]
+        _run_packaged_probe(
+            release / "venv/bin/python",
+            {
+                "command": "synthetic",
+                "arguments": arguments,
+                "home": str(home),
+                "release": str(release),
+                "launcher": str(launcher) if launcher else None,
+            },
+        )
+
+
+def inspect_runtime_database(
+    python: pathlib.Path,
+    home: pathlib.Path,
+    *,
+    require_data: bool = False,
+    allow_missing: bool = False,
+) -> dict[str, Any]:
+    """Obtain schema/date evidence using that runtime's code without bootstrap dependencies."""
+    arguments = ["evidence", "--home", str(home)]
+    if require_data:
+        arguments.append("--require-data")
+    if allow_missing:
+        arguments.append("--allow-missing")
+    result = _run_packaged_probe(
+        python,
+        {
+            "command": "evidence",
+            "arguments": arguments,
+            "home": str(home),
+            "require_data": require_data,
+            "allow_missing": allow_missing,
+        },
+        capture=True,
+    )
+    evidence = json.loads(result.stdout)
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("schema") not in ("missing", "compatible", "incompatible")
+        or any(
+            key not in evidence
+            or (evidence[key] is not None and not isinstance(evidence[key], str))
+            for key in ("data_through", "snapshot_computed_at")
+        )
+    ):
+        raise ValueError("Packaged database evidence is unavailable.")
+    return evidence
 
 
 def _runtime_check(release: pathlib.Path, metadata: dict[str, Any]) -> None:
@@ -638,16 +701,10 @@ def _run_stage(arguments: list[str]) -> int:
 
 
 def _readiness(home: pathlib.Path) -> str:
-    import sqlite3
-
-    from garmin_coach.core import installation
-
     try:
-        settings = installation.activate(home)
-        with closing(installation.read_database(settings)) as connection:
-            horizon = connection.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
-        return "ready" if horizon else "missing_data"
-    except (ValueError, OSError, sqlite3.Error):
+        evidence = inspect_runtime_database(pathlib.Path(sys.executable), home)
+        return "ready" if evidence["data_through"] else "missing_data"
+    except (ValueError, OSError, subprocess.SubprocessError):
         return "not_ready"
 
 
@@ -953,18 +1010,7 @@ def _complete_setup(args: argparse.Namespace) -> int:
 def _validate_existing_installation(release: pathlib.Path, home: pathlib.Path) -> None:
     if not (home / ".env").is_file():
         return
-    script = (
-        "import pathlib, sys; from garmin_coach.core import installation; "
-        "settings = installation.activate(sys.argv[1]); "
-        "path = pathlib.Path(settings.db_path); "
-        "connection = installation.read_database(settings) if path.exists() else None; "
-        "connection.close() if connection is not None else None"
-    )
-    subprocess.run(
-        [str(release / "venv" / "bin" / "python"), "-I", "-c", script, str(home)],
-        check=True,
-        timeout=60,
-    )
+    inspect_runtime_database(release / "venv/bin/python", home, allow_missing=True)
 
 
 def _install(args: argparse.Namespace, argv: list[str] | None) -> int:

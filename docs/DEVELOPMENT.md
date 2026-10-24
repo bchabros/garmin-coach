@@ -57,7 +57,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `daily.py`, `plan_changes.py`, `athlete_changes.py` | Complete nightly, plan-import and athlete-change outcomes, including their consequences. |
 | `onboarding.py`, `project.py` | Terminal setup/adoption; guarded source launch and synthetic fixtures. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
-| `distribution.py`, `lifecycle.py` | Standalone bootstrap/scheduling, runtime ownership and recoverable maintenance. |
+| `distribution.py`, `lifecycle.py`, `program_receipt.py` | Bootstrap/scheduling and maintenance, sharing program-state and ownership operations. |
 | `retention.py` | Explicit report-file retention without DB/transport access. |
 
 `onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
@@ -80,11 +80,21 @@ refuses a release when the two differ or a public file is missing or symlinked, 
 it runs `poetry build` (`tests/test_release_build.py`). A hand-run local `poetry build`
 skips that check; no installation path uses its output.
 
-`distribution.py` is standard-library-only: release tooling ships it as the standalone
-bootstrap before application dependencies exist. It owns verified versioned runtime
-preparation, stable launchers and
-opt-in scheduling. `lifecycle.py` consumes those ownership receipts for diagnosis,
-backup, staged update/rollback and removal. Durable database reads and SQLite backup
+`distribution.py` and `program_receipt.py` are standard-library-only. Release tooling
+bundles their canonical sources as one executable Python archive, `bootstrap.py`, so
+isolated Python can run the installer before application dependencies exist. Its entry
+point propagates the installer's exit code. Tests execute the generated artifact with
+`-I -S`, including receipt refusal, plus the rendered shell's real temporary install.
+
+`program_receipt.ProgramReceipt` owns v1 program-state parsing, atomic private writes,
+progress journals, scheduler identity, activation and runtime ownership checks. Its
+purpose operations reload state before saving, preserving nested build/update progress;
+callers treat read snapshots as evidence. `UpdateJournal` preserves the pre-versioned
+v0.1.0 recovery rule and treats unknown v1 phases conservatively. Integration registration
+remains owned by `clients`; `recorded_selection` reads saved choices without native probes.
+`distribution` prepares/activates releases and schedules explicit jobs; `lifecycle`
+orchestrates diagnosis, backup, update/recovery and removal through the shared owner.
+Durable database reads and SQLite backup
 remain in `core/installation.py`; maintenance refuses incompatible schemas and
 personal storage overlapping the program. See `docs/LIFECYCLE.md` for operator
 recovery and the separate native/client acceptance checks.
@@ -147,6 +157,9 @@ ones sparingly:
 - Test bootstrap through its standard-library API and rendered installer shell
   (`tests/test_distribution.py`): checksum failures, interrupted sibling builds,
   activation journals, synthetic first setup, native command failures and resumable jobs.
+  Public receipt operations (`tests/test_program_receipt.py`) verify compatibility,
+  private writes, malformed-state preservation and scheduler aliases; the generated
+  bootstrap is exercised without site packages (`tests/test_release_build.py`).
 - Test maintenance through public CLI commands (`tests/test_lifecycle*.py`): verified
   ownership, backups including WAL, interrupted updates, rollback, non-mutating identical
   updates and preview/confirmed removal. Native subprocesses are faked; the doctor stdio

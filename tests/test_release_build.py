@@ -10,13 +10,17 @@ import zipfile
 import pytest
 
 
-@pytest.fixture
-def release_builder():
+def load_release_builder():
     path = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "build_release.py"
     spec = importlib.util.spec_from_file_location("release_builder", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def release_builder():
+    return load_release_builder()
 
 
 def test_wheel_audit_rejects_untracked_private_skill_resources(tmp_path, release_builder):
@@ -88,12 +92,13 @@ def test_rendered_installer_checks_assets_and_runs_real_private_cli(
     assert not (home / "Library" / "LaunchAgents").exists()
 
 
-def test_bootstrap_imports_and_reports_help_without_site_packages(tmp_path):
+def test_bootstrap_imports_and_reports_help_without_site_packages(tmp_path, release_builder):
     import os
     import subprocess
     import sys
 
-    bootstrap = pathlib.Path(__file__).resolve().parents[1] / "src/garmin_coach/distribution.py"
+    bootstrap = tmp_path / "bootstrap.py"
+    release_builder.build_bootstrap(bootstrap)
     result = subprocess.run(
         [sys.executable, "-I", "-S", str(bootstrap), "--help"],
         cwd=tmp_path,
@@ -162,7 +167,7 @@ def test_release_bundle_excludes_even_tracked_private_skill_resources(
         shutil.copyfile(source / "skills/coach" / name, target)
     private = checkout / "skills/coach/references/context.md"
     private.write_text("Synthetic private athlete facts")
-    for name in ("distribution.py", "coach_resources.json"):
+    for name in ("distribution.py", "program_receipt.py", "coach_resources.json"):
         target = checkout / "src/garmin_coach" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / "src/garmin_coach" / name, target)
@@ -280,3 +285,95 @@ def test_release_wheel_build_refuses_a_symlinked_public_resource_before_poetry_r
     with pytest.raises(ValueError, match="Symlinked public coach resource"):
         release_builder._build_wheel(tmp_path / "staging")
     assert commands == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"builds": []},
+        {"pending_activation": {"launchers": []}},
+        {"owned_launchers": {"/launcher": []}},
+    ],
+)
+def test_generated_bootstrap_reads_and_preserves_bad_receipt_without_installed_package(
+    tmp_path, release_builder, fields
+):
+    import json
+    import os
+    import subprocess
+
+    bootstrap = tmp_path / "bootstrap.py"
+    release_builder.build_bootstrap(bootstrap)
+    root = tmp_path / "runtime"
+    root.mkdir()
+    path = root / "install-state.json"
+    content = json.dumps({"schema_version": 1, "extension": "private marker", **fields})
+    path.write_text(content)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(bootstrap),
+            "install",
+            "--prepare-only",
+            "--manifest",
+            str(tmp_path / "absent-manifest.json"),
+            "--runtime-root",
+            str(root),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "Unsupported install receipt" in result.stderr
+    assert "private marker" not in result.stderr
+    assert path.read_text() == content
+    assert not (root / "releases").exists()
+
+
+@pytest.mark.parametrize("explicit_home", [False, True])
+def test_generated_bootstrap_accepts_nullable_unbound_home(
+    tmp_path, release_builder, explicit_home
+):
+    import json
+    import os
+    import subprocess
+
+    bootstrap = tmp_path / "bootstrap.py"
+    release_builder.build_bootstrap(bootstrap)
+    root = tmp_path / "runtime"
+    root.mkdir()
+    path = root / "install-state.json"
+    content = json.dumps({"schema_version": 1, "selected_home": None})
+    path.write_text(content)
+    missing = tmp_path / "absent-manifest.json"
+    arguments = [
+        sys.executable,
+        "-I",
+        "-S",
+        str(bootstrap),
+        "install",
+        "--prepare-only",
+        "--manifest",
+        str(missing),
+        "--runtime-root",
+        str(root),
+    ]
+    if explicit_home:
+        arguments += ["--home", str(tmp_path / "chosen-athlete")]
+    result = subprocess.run(
+        arguments,
+        cwd=tmp_path,
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert str(missing) in result.stderr
+    assert "Traceback" not in result.stderr
+    assert path.read_text() == content

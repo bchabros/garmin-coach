@@ -429,6 +429,8 @@ def _prepare_read(
             file=sys.stderr,
         )
         raise ValueError("Authored plans need repair before the first coach read.")
+    for warning in imported.warnings:
+        print(f"setup: warning: {warning}")
     if imported.invalidated_pushes:
         print(
             "setup: imported plans conflict with pushed workouts; review them with `plan import`."

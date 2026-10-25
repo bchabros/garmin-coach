@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pathlib
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .core import plan
 from .marts import features
-from .workouts import publish
+from .workouts import push
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,7 @@ class PlanImportResult:
     weeks: list[str]
     invalidated_pushes: list[dict[str, Any]]
     error: str | None
+    warnings: list[str] = field(default_factory=list)
 
     def as_data(self) -> dict[str, Any]:
         """Return the common plan-import response fields."""
@@ -31,6 +32,7 @@ class PlanImportResult:
             "weeks": self.weeks,
             "invalidated_pushes": self.invalidated_pushes,
             "error": self.error,
+            "warnings": self.warnings,
         }
 
 
@@ -66,13 +68,14 @@ def import_plans(
         weeks = plan.import_dir(conn, plans_dir, week=week)
     except plan.PlanParseError as exc:
         weeks, error = exc.imported_weeks, str(exc)
-    conflicts = [
-        conflict
+    checks = [
+        push.invalidated_pushes(reports_dir, plan.planned_by_date(conn, imported_week))
         for imported_week in weeks
-        for conflict in publish.invalidated_pushes(
-            reports_dir, plan.planned_by_date(conn, imported_week)
-        )
     ]
+    conflicts = [conflict for check in checks for conflict in check.conflicts]
+    warnings = [warning for check in checks for warning in check.warnings]
     if weeks and rebuild:
         features.rebuild_marts(conn, data_start_date=data_start_date)
-    return PlanImportResult(weeks=weeks, invalidated_pushes=conflicts, error=error)
+    return PlanImportResult(
+        weeks=weeks, invalidated_pushes=conflicts, error=error, warnings=warnings
+    )

@@ -200,6 +200,8 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 
 ## Workout authoring
 
+- **dated workout** - an authored workout assigned to a calendar day, with its
+  preparation, push history and current account finding kept distinct.
 - **workout request** - the structured session ask, independent of who originated it.
 - **workout spec** - the deterministic complete session description available for
   review before account mutation.

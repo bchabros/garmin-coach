@@ -428,12 +428,23 @@ and confirmation rules live in `skills/coach/references/authoring.md` (ADR 0013)
 
 ```sh
 garmin-coach author --date YYYY-MM-DD --request request.json
+garmin-coach author --date YYYY-MM-DD --reuse-from YYYY-MM-DD
 garmin-coach push --date YYYY-MM-DD
 garmin-coach push --date YYYY-MM-DD --confirm
 ```
 
 Review the dry run before confirmation. Plan guards refuse harder-than-planned work;
 replacement is explicit and account-based idempotency preserves reusable workouts.
+Repeating preserves the saved name/steps and rechecks the new date and plan; it never
+pushes automatically. Choose one source: request, recommendation or `--reuse-from`.
+Unresolved Hyrox authoring requests need the running/station choice and exit 1 without
+a spec; rest is a successful no-workout outcome (exit 0).
+
+Unreadable or malformed workout/receipt evidence is reported by date and retained.
+Push/removal refuses unsafe evidence before login; status reports the local error.
+The pushed-workout listing keeps readable entries and returns dated warnings. Plan
+import retains accepted weeks, rebuilds their marts and warns when a conflict cannot
+be judged; that warning is not proof that the plan agrees with the watch.
 Keep `workout.json` and `push.json` as records. The nightly run never pushes workouts.
 Earlier outbound probes are historical evidence in Git commit
 `6fbd938a4c62b83812315de1a77d00946cc5ef50` under `scratch/`; their live calls are not tests.

@@ -419,3 +419,48 @@ def test_source_fixture_uses_only_public_coach_resources(tmp_path):
     }
     assert copied == set(coach_resources.public_names())
     assert private.read_text() == "Synthetic private marker; preserve this source file"
+
+
+@pytest.mark.parametrize("broken_server", [False, True])
+def test_source_check_probes_the_selected_checkout_with_a_shared_runtime(
+    project, tmp_path, broken_server
+):
+    checkout = tmp_path / "selected checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    launcher = scripts / "coach_project.py"
+    shutil.copyfile(LAUNCHER, launcher)
+    shutil.copytree(
+        ROOT / "src/garmin_coach",
+        checkout / "src/garmin_coach",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    (checkout / ".venv").symlink_to(sys.prefix, target_is_directory=True)
+    server = checkout / "src/garmin_coach/mcp/server.py"
+    marker = tmp_path / "selected-server-imported"
+    extra = (
+        "\nfrom pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('selected checkout')\n"
+        "@server.tool()\n"
+        "def selected_checkout_probe() -> dict[str, str]:\n"
+        "    return {'source': 'selected checkout'}\n"
+    )
+    if broken_server:
+        extra += "raise RuntimeError('Selected checkout server is broken')\n"
+    server.write_text(server.read_text() + extra)
+    database = project / "data/garmin.db"
+    before = database.read_bytes()
+
+    result = run_command(
+        project,
+        [sys.executable, str(launcher), "check", "--project", str(project)],
+    )
+
+    assert marker.is_file(), "The check must execute the selected checkout's server"
+    assert result.returncode == (1 if broken_server else 0), result.stderr
+    if broken_server:
+        assert "MCP connection failed" in result.stderr
+        assert result.stdout == ""
+    else:
+        assert "selected_checkout_probe" in json.loads(result.stdout)["tools"]
+    assert database.read_bytes() == before

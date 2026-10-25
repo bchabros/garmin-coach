@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import tomllib
 import zipfile
+import zipapp
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PYTHON_RELEASE = "20261013"
@@ -163,8 +164,22 @@ def _wheelhouse(
     )
 
 
+def build_bootstrap(target: pathlib.Path) -> None:
+    """Bundle canonical stdlib modules into one isolated executable Python archive."""
+    with tempfile.TemporaryDirectory(prefix="bootstrap-") as temporary:
+        package = pathlib.Path(temporary) / "garmin_coach"
+        package.mkdir()
+        (package / "__init__.py").write_text("")
+        for name in ("distribution.py", "program_receipt.py"):
+            shutil.copyfile(ROOT / "src" / "garmin_coach" / name, package / name)
+        (pathlib.Path(temporary) / "__main__.py").write_text(
+            "from garmin_coach.distribution import main\nraise SystemExit(main())\n"
+        )
+        zipapp.create_archive(temporary, target=target)
+
+
 def _canonical_assets(bundle: pathlib.Path) -> None:
-    shutil.copy2(ROOT / "src" / "garmin_coach" / "distribution.py", bundle / "bootstrap.py")
+    build_bootstrap(bundle / "bootstrap.py")
     tracked = set(
         subprocess.check_output(
             ["git", "ls-files", "skills/coach"], cwd=ROOT, text=True

@@ -6,12 +6,10 @@ import argparse
 import asyncio
 import datetime as dt
 import fcntl
-import hashlib
 import importlib.metadata
 import json
 import os
 import pathlib
-import plistlib
 import shutil
 import shlex
 import sqlite3
@@ -24,6 +22,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from . import clients
+from .program_receipt import ProgramReceipt, ReceiptError, verify_release_inventory
 from .core import installation
 from .core.config import Settings
 
@@ -77,10 +76,8 @@ def _database(settings: Settings) -> dict[str, str]:
 
 
 def _read_state(root: pathlib.Path) -> dict[str, Any]:
-    from . import distribution
-
     try:
-        return distribution.read_state(root)
+        return ProgramReceipt(root).read()
     except (OSError, ValueError):
         raise LifecycleError(
             "Program receipt unreadable; preserve it and recover using the pinned bootstrap."
@@ -98,8 +95,6 @@ def _runtime(root: pathlib.Path, state: dict[str, Any]) -> dict[str, str]:
         )
     if (root / "current").resolve().parent != root / "releases":
         return _check("changed", "Restore the managed current-release pointer.")
-    from . import distribution
-
     release = (root / "current").resolve()
     inventory = state.get("managed_release_inventories", {}).get(str(release))
     if not inventory:
@@ -108,7 +103,7 @@ def _runtime(root: pathlib.Path, state: dict[str, Any]) -> dict[str, str]:
             "Preserve this runtime; use a new managed root with an ownership inventory.",
         )
     try:
-        distribution.verify_release_inventory(release, inventory)
+        verify_release_inventory(release, inventory)
     except (OSError, ValueError):
         return _check(
             "changed", "Preserve unknown or edited runtime files before repair or removal."
@@ -170,14 +165,13 @@ def _skill_check() -> dict[str, str]:
 def _integration_checks(
     home: pathlib.Path, root: pathlib.Path
 ) -> tuple[dict[str, str], dict[str, str], dict[str, Any]]:
-    if not (clients.integration_root(home, root) / "registration.json").is_file():
-        return (
-            _check("not_selected", "Run clients configure to select an assistant."),
-            _skill_check(),
-            {},
-        )
-
     try:
+        if clients.recorded_selection(home, root) is None:
+            return (
+                _check("not_selected", "Run clients configure to select an assistant."),
+                _skill_check(),
+                {},
+            )
         status = clients.status(home, root)
     except (OSError, ValueError):
         return _check("changed", "Repair the integration receipt."), _check("unverified"), {}
@@ -260,7 +254,7 @@ def _schedule_check(
             "not_scheduled", "Existing manually configured jobs are not adopted automatically."
         )
     try:
-        path = _owned_schedule(home, root, state)
+        path = ProgramReceipt(root).owned_schedule(home)
     except (OSError, ValueError):
         return _check("changed", "Restore the owned daily job before modifying its registration.")
     if path is None:
@@ -402,8 +396,7 @@ def _backup(home: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
     database = target / "database.sqlite"
     source = pathlib.Path(settings.db_path)
     installation.backup_database(settings, database)
-    if (root / "install-state.json").is_file():
-        shutil.copyfile(root / "install-state.json", target / "install-state.json")
+    ProgramReceipt(root).backup_to(target)
     integrations = clients.integration_root(home, root)
     if integrations.exists():
         shutil.copytree(integrations, target / "integration")
@@ -456,12 +449,10 @@ def _read_candidate(release: pathlib.Path, home: pathlib.Path) -> None:
 def _refresh_clients(
     home: pathlib.Path, root: pathlib.Path, release: pathlib.Path, selected: list[str] | None = None
 ) -> None:
-    receipt = clients.integration_root(home, root) / "registration.json"
-    if not receipt.is_file():
+    recorded = clients.recorded_selection(home, root)
+    if recorded is None:
         return
-    selected = (
-        selected if selected is not None else json.loads(receipt.read_text())["selected_clients"]
-    )
+    selected = selected if selected is not None else recorded
     if not selected:
         return
     completed = subprocess.run(
@@ -516,49 +507,21 @@ def _restore(
     if (backup / "integration").exists():
         restored = clients.restore(home, root, backup / "integration")
         _require_client_preparation(json.dumps(restored), restored["selected_clients"])
-    _restore_program_receipt(root, state)
-
-
-def _restore_program_receipt(root: pathlib.Path, prior: dict[str, Any]) -> None:
-    from . import distribution
-
-    current = distribution.read_state(root)
-    restored = dict(current, **prior)
-    for key in ("builds", "managed_releases", "managed_release_inventories"):
-        restored[key] = {**current.get(key, {}), **prior.get(key, {})}
-    restored["owned_launchers"] = current.get("owned_launchers", prior.get("owned_launchers", {}))
-    restored.pop("operation", None)
-    restored.pop("pending_activation", None)
-    distribution.write_state(root, restored)
+    ProgramReceipt(root).restore(state)
 
 
 def _prepare_update(
     home: pathlib.Path,
     root: pathlib.Path,
-    state: dict[str, Any],
     backup: pathlib.Path,
     manifest: pathlib.Path,
 ) -> pathlib.Path:
     from . import distribution
 
-    journal = dict(
-        state,
-        operation={
-            "schema_version": 1,
-            "kind": "update",
-            "phase": "preparing",
-            "backup": str(backup),
-            "home": str(home),
-            "previous": str((root / "current").resolve()),
-            "manifest": str(manifest.resolve()),
-        },
-    )
-    distribution.write_state(root, journal)
+    receipt = ProgramReceipt(root)
+    receipt.begin_update(home, backup, (root / "current").resolve(), manifest)
     candidate = distribution.prepare_release(manifest, root)
-    journal = distribution.read_state(root)
-    journal["operation"]["candidate"] = str(candidate)
-    journal["operation"]["phase"] = "validating_candidate"
-    distribution.write_state(root, journal)
+    receipt.checkpoint_update("validating_candidate", candidate=candidate)
     _read_candidate(candidate, home)
     return candidate
 
@@ -566,22 +529,15 @@ def _prepare_update(
 def _activate_update(home: pathlib.Path, root: pathlib.Path, candidate: pathlib.Path) -> None:
     from . import distribution
 
-    receipt = clients.integration_root(home, root) / "registration.json"
-    selected = json.loads(receipt.read_text())["selected_clients"] if receipt.exists() else []
-    journal = distribution.read_state(root)
-    journal["operation"]["phase"] = "activating"
-    distribution.write_state(root, journal)
+    selected = clients.recorded_selection(home, root) or []
+    receipt = ProgramReceipt(root)
+    receipt.checkpoint_update("activating")
     distribution.activate_release(candidate, root)
-    journal = distribution.read_state(root)
-    journal["operation"]["phase"] = "validating"
-    distribution.write_state(root, journal)
+    receipt.checkpoint_update("validating")
     _read_candidate(root / "current", home)
-    journal["operation"]["phase"] = "configuring_clients"
-    distribution.write_state(root, journal)
+    receipt.checkpoint_update("configuring_clients")
     _refresh_clients(home, root, root / "current", selected)
-    ready = distribution.read_state(root)
-    ready.pop("operation", None)
-    distribution.write_state(root, ready)
+    receipt.finish_update()
 
 
 def _recover_update(
@@ -592,53 +548,33 @@ def _recover_update(
     backup: pathlib.Path,
     touched: bool,
 ) -> bool:
-    from . import distribution
-
     try:
         if touched:
             _restore(root, home, previous, state, backup)
         else:
-            _restore_program_receipt(root, state)
+            ProgramReceipt(root).restore(state)
         return True
     except (OSError, ValueError, subprocess.SubprocessError):
-        current = distribution.read_state(root)
-        distribution.write_state(
-            root,
-            dict(
-                current,
-                operation={
-                    **current.get("operation", {}),
-                    "kind": "update",
-                    "phase": "recovery_required",
-                    "backup": str(backup),
-                    "home": str(home),
-                    "previous": str(previous),
-                    "candidate": current.get("operation", {}).get("candidate"),
-                },
-            ),
-        )
+        ProgramReceipt(root).require_recovery(home, previous, backup)
         return False
 
 
 def _recover_interrupted(
     home: pathlib.Path, root: pathlib.Path, state: dict[str, Any]
 ) -> dict[str, Any]:
-    from . import distribution
-
-    operation = state.get("operation")
-    if not operation:
+    receipt = ProgramReceipt(root)
+    operation = receipt.interrupted_update()
+    if operation is None:
         return state
-    if operation.get("kind") != "update" or operation.get("schema_version") not in (None, 1):
-        raise LifecycleError("Unknown interrupted operation; preserve its receipt and backup.")
-    backup = pathlib.Path(operation["backup"]).resolve()
+    backup = operation.backup.resolve()
     if not backup.is_relative_to(home / "backups" / "program"):
         raise LifecycleError("Recovery backup does not belong to this athlete installation.")
     record = json.loads((backup / "recovery.json").read_text())
-    prior = json.loads((backup / "install-state.json").read_text())
-    if record.get("home") != str(home) or operation.get("home", str(home)) != str(home):
+    prior = ProgramReceipt(backup).read()
+    if record.get("home") != str(home) or operation.home not in (None, str(home)):
         raise LifecycleError("Recovery journal belongs to another athlete installation.")
-    _verified_releases(root, prior)
-    previous = pathlib.Path(operation.get("previous", prior["release_dir"]))
+    receipt.verified_releases(prior)
+    previous = operation.previous or pathlib.Path(prior["release_dir"])
     if str(previous) not in prior.get("managed_releases", {}):
         raise LifecycleError("Prior runtime is not in the saved ownership inventory.")
     # v0.1.0 could detach clients while its journal still reported preparing.
@@ -648,19 +584,18 @@ def _recover_interrupted(
         previous,
         prior,
         backup,
-        operation.get("schema_version") is None
-        or operation.get("phase") not in {"preparing", "validating_candidate"},
+        operation.may_have_changed_clients,
     ):
         raise LifecycleError("Recovery incomplete; preserve the backup and retry program update.")
-    return distribution.read_state(root)
+    return receipt.read()
 
 
 def _program_update(args: argparse.Namespace) -> int:
     home, root = installation.select(args.home), _root(args.runtime_root)
     manifest = pathlib.Path(args.manifest).expanduser().resolve()
     state = _recover_interrupted(home, root, _managed(home, root))
-    _verified_files(root, state)
-    _verified_releases(root, state)
+    ProgramReceipt(root).verified_launchers()
+    ProgramReceipt(root).verified_releases()
     previous = (root / "current").resolve()
     if previous.parent != root / "releases" or not (previous / "ready.json").is_file():
         raise LifecycleError(
@@ -671,7 +606,7 @@ def _program_update(args: argparse.Namespace) -> int:
         return 0
     backup, touched = _backup(home, root), False
     try:
-        candidate = _prepare_update(home, root, state, backup, manifest)
+        candidate = _prepare_update(home, root, backup, manifest)
         touched = True
         _activate_update(home, root, candidate)
     except (OSError, ValueError, subprocess.SubprocessError, tarfile.TarError, KeyboardInterrupt):
@@ -742,7 +677,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             return (
                 _program_update(args) if args.program_command == "update" else _program_remove(args)
             )
-    except LifecycleError as exc:
+    except (LifecycleError, ReceiptError) as exc:
         print(f"lifecycle: {exc}", file=sys.stderr)
         return 2
     except (
@@ -760,78 +695,6 @@ def _dispatch(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-
-
-def _verified_files(root: pathlib.Path, state: dict[str, Any]) -> list[pathlib.Path]:
-    paths = []
-    for name, expected in state.get("owned_launchers", {}).items():
-        path = pathlib.Path(name)
-        if path.parent != root / "bin" or path.is_symlink() or (root / "bin").is_symlink():
-            raise LifecycleError("Launcher ownership is inconsistent; preserve the program.")
-        if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            raise LifecycleError(
-                "A launcher was modified; preserve it and resolve ownership first."
-            )
-        paths.append(path)
-    return paths
-
-
-def _verified_releases(root: pathlib.Path, state: dict[str, Any]) -> list[pathlib.Path]:
-    from . import distribution
-
-    paths = []
-    for name, expected in state.get("managed_releases", {}).items():
-        path = pathlib.Path(name)
-        if (
-            path.parent != root / "releases"
-            or path.is_symlink()
-            or (root / "releases").is_symlink()
-        ):
-            raise LifecycleError("Release ownership is inconsistent; preserve the program.")
-        if path.exists():
-            manifest = path / "manifest.json"
-            if (
-                not manifest.is_file()
-                or hashlib.sha256(manifest.read_bytes()).hexdigest() != expected
-            ):
-                raise LifecycleError(
-                    "A release manifest changed; preserve it and resolve ownership first."
-                )
-            inventory = state.get("managed_release_inventories", {}).get(name)
-            if not inventory:
-                raise LifecycleError(
-                    "Release inventory is unverified; preserve it and choose a new runtime root."
-                )
-            distribution.verify_release_inventory(path, inventory)
-        paths.append(path)
-    return paths
-
-
-def _owned_schedule(
-    home: pathlib.Path, root: pathlib.Path, state: dict[str, Any]
-) -> pathlib.Path | None:
-    schedule = state.get("scheduler") or {}
-    if not schedule.get("path") and not schedule.get("plist_path"):
-        if schedule.get("label"):
-            raise LifecycleError(
-                "Daily job ownership has no recorded plist path; preserve its label."
-            )
-        return None
-    path = pathlib.Path(schedule.get("plist_path") or schedule["path"])
-    if path.is_symlink():
-        raise LifecycleError("Scheduled job is a symlink; preserve it and resolve ownership first.")
-    if not path.exists():
-        label = "com.garmincoach.daily." + hashlib.sha256(str(home).encode()).hexdigest()[:12]
-        if schedule.get("label") != label or path.name != label + ".plist":
-            raise LifecycleError("Missing daily job has no verifiable installation-specific label.")
-        return None
-    if hashlib.sha256(path.read_bytes()).hexdigest() != schedule.get("sha256"):
-        raise LifecycleError("Scheduled job changed; preserve it and resolve ownership first.")
-    job = plistlib.loads(path.read_bytes())
-    expected = [str(root / "bin" / "garmin-coach"), "--home", str(home), "daily"]
-    if job.get("Label") != schedule.get("label") or job.get("ProgramArguments") != expected:
-        raise LifecycleError("Scheduled job does not address the selected athlete installation.")
-    return path
 
 
 def _remove_schedule(state: dict[str, Any], path: pathlib.Path | None) -> None:
@@ -855,7 +718,7 @@ def _remove_schedule(state: dict[str, Any], path: pathlib.Path | None) -> None:
 def _remove_clients(
     home: pathlib.Path, root: pathlib.Path, selected: list[str] | None, confirm: bool
 ) -> dict[str, Any]:
-    if not (clients.integration_root(home, root) / "registration.json").exists():
+    if clients.recorded_selection(home, root) is None:
         return {"state": "not_selected"}
 
     result = clients.remove(home, root, selected, confirm=confirm)
@@ -869,11 +732,9 @@ def _remove_clients(
 def _remove_runtime(
     home: pathlib.Path, root: pathlib.Path, state: dict[str, Any], confirm: bool
 ) -> dict[str, Any]:
-    from . import distribution
-
-    launchers = _verified_files(root, state)
-    releases = _verified_releases(root, state)
-    schedule = _owned_schedule(home, root, state)
+    launchers = ProgramReceipt(root).verified_launchers()
+    releases = ProgramReceipt(root).verified_releases()
+    schedule = ProgramReceipt(root).owned_schedule(home)
     selection = _remove_clients(home, root, None, confirm)
     resources = {
         "launchers": [str(path) for path in launchers],
@@ -891,15 +752,8 @@ def _remove_runtime(
         for path in releases:
             if path.exists():
                 shutil.rmtree(path)
-        state.update(
-            removed=True,
-            owned_launchers={},
-            managed_releases={},
-            managed_release_inventories={},
-            scheduler={},
-            selected_clients=[],
-        )
-        distribution.write_state(root, state)
+        ProgramReceipt(root).mark_removed()
+
     return {"state": "removed" if confirm else "preview", "resources": resources}
 
 
@@ -911,8 +765,6 @@ def _retained_paths(home: pathlib.Path) -> list[str]:
 
 
 def _program_remove(args: argparse.Namespace) -> int:
-    from . import distribution
-
     home, root = installation.select(args.home), _root(args.runtime_root)
     state = _managed(home, root)
     if state.get("operation"):
@@ -922,8 +774,7 @@ def _program_remove(args: argparse.Namespace) -> int:
     if args.client:
         selection = _remove_clients(home, root, [args.client], args.confirm)
         if args.confirm:
-            state["selected_clients"] = clients.status(home, root)["selected_clients"]
-            distribution.write_state(root, state)
+            ProgramReceipt(root).retain_clients(clients.recorded_selection(home, root) or [])
         result = {
             "state": "removed" if args.confirm else "preview",
             "client": args.client,

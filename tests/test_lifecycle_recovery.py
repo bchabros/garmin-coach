@@ -133,13 +133,23 @@ def test_missing_selected_client_does_not_fail_a_runtime_update(tmp_path, monkey
     assert (root / "current").resolve() == new
 
 
-def test_doctor_reports_a_corrupt_program_receipt_without_hiding_diagnosis(tmp_path, capsys):
+@pytest.mark.parametrize(
+    "content",
+    [
+        "invalid private receipt contents",
+        '{"schema_version": 1, "release": {"private": "private receipt contents"}}',
+        '{"schema_version": 1, "source_commit": {"private": "private receipt contents"}}',
+    ],
+)
+def test_doctor_reports_a_corrupt_program_receipt_without_hiding_diagnosis(
+    tmp_path, capsys, content
+):
     import json
 
     home = make_home(tmp_path / "athlete")
     root = tmp_path / "program"
     root.mkdir()
-    (root / "install-state.json").write_text("invalid private receipt contents")
+    (root / "install-state.json").write_text(content)
     assert cli.main(["--home", str(home), "doctor", "--runtime-root", str(root)]) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["checks"]["runtime"]["state"] == "receipt_unreadable"

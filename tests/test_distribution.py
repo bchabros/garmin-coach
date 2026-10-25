@@ -101,10 +101,11 @@ def _release_fixture(
     with tarfile.open(bundle, "w:gz") as archive:
         archive.add(wheels, arcname="wheels")
         archive.add(requirements, arcname="requirements.txt")
-        archive.add(
-            pathlib.Path(__file__).resolve().parents[1] / "src/garmin_coach/distribution.py",
-            arcname="bootstrap.py",
-        )
+        from tests.test_release_build import load_release_builder
+
+        bootstrap = tmp_path / "bootstrap.py"
+        load_release_builder().build_bootstrap(bootstrap)
+        archive.add(bootstrap, arcname="bootstrap.py")
     python = tmp_path / "python.tar.gz"
     with tarfile.open(python, "w:gz") as archive:
         import sysconfig

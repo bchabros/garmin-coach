@@ -80,6 +80,13 @@ An interrupted update is recovered from its recorded backup and previous runtime
 `program update` is retried. The journal records the selected athlete installation,
 manifest, candidate and recovery phase. Preserve both runtimes and the backup if native
 client recovery fails; retrying the same command attempts recovery again.
+The program-state owner retains the existing v1 format and older field aliases.
+For v0.1.0's pre-versioned update journal, even `preparing` may mean clients were
+already detached, so recovery restores them. Unknown v1 phases are also treated as
+potentially mutating; unsupported operation versions are refused with the receipt
+preserved. Restoring prior activation retains newly recorded builds, release inventories
+and launcher ownership. Unreadable program state is reported by doctor while its other
+checks continue; backup preserves the original receipt bytes.
 No command automatically overwrites the live database with an older backup.
 
 ## Removal

@@ -9,14 +9,15 @@ import pathlib
 import sqlite3
 import sys
 from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
 
 from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
 from .coach import report
 from .core import db, events as _events, installation
-from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
-from .workouts import publish, push
+from .runtime import InstallationContext, current
+from .workouts import push
 
 if TYPE_CHECKING:
     from .core.config import Settings
@@ -24,14 +25,14 @@ if TYPE_CHECKING:
 
 def _reports_dir(args: argparse.Namespace) -> str:
     """The command's ``--reports-dir`` override, else the installation's reports folder."""
-    return args.reports_dir or str(installation.reports_dir())
+    return args.reports_dir or str(current().reports_dir)
 
 
 def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sync.GarminClient]:
-    settings = get_settings()
-    conn = installation.open_database(settings, create=create)
+    settings = current().settings
+    conn = current().open_database(create=create)
     try:
-        transport = client.login(settings)
+        transport = current().connect_import()
     except BaseException:
         conn.close()
         raise
@@ -73,8 +74,8 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 
 def _cmd_features(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
 
     features.features(
         conn,
@@ -90,12 +91,12 @@ def _cmd_features(args: argparse.Namespace) -> int:
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
 
     out = report.generate_report(
         conn,
-        reports_dir=str(installation.reports_dir()),
+        reports_dir=str(current().reports_dir),
         from_date=args.from_date,
         to_date=args.to_date,
         recheck_days=settings.sync_recheck_days,
@@ -113,8 +114,8 @@ def _cmd_author(args: argparse.Namespace) -> int:
         except (OSError, ValueError) as exc:
             print(f"author failed: cannot read request {args.request}: {exc}")
             return 1
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
     try:
         outcome = push.author_workout(
             conn,
@@ -141,13 +142,12 @@ def _cmd_author(args: argparse.Namespace) -> int:
 
 
 def _cmd_push(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    conn = current().open_database()
     try:
         outcome = push.push_for_date(
             conn,
             date=args.date,
-            connect=lambda: publish.connect_publisher(settings),
+            connect=current().connect_publisher,
             reports_dir=_reports_dir(args),
             confirm=args.confirm,
             replace=args.replace,
@@ -180,8 +180,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    conn = current().open_database()
 
     status = snapshot.read(conn)
     conn.close()
@@ -197,8 +196,8 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
 
 def _cmd_plan(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
     plans_dir = args.plans_dir or settings.plans_dir
 
     try:
@@ -248,8 +247,8 @@ def _report_change_error(label: str, result: athlete_changes.ChangeResult, ident
 
 
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
     try:
         if args.activity_id is not None:
             if args.rpe is None:
@@ -291,8 +290,8 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
 
 
 def _cmd_log_sets(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
     try:
         result = athlete_changes.log_activity_sets(
             conn,
@@ -344,8 +343,8 @@ def _format_block(row: dict[str, Any] | None) -> str:
 
 
 def _cmd_event(args: argparse.Namespace) -> int:
-    settings = get_settings()
-    conn = installation.open_database(settings)
+    settings = current().settings
+    conn = current().open_database()
     try:
         if args.event_command not in {"add", "update"}:
             return _list_events(conn)
@@ -378,7 +377,7 @@ def _cmd_event(args: argparse.Namespace) -> int:
 
 
 def _cmd_daily(args: argparse.Namespace) -> int:
-    settings = get_settings()
+    settings = current().settings
     # Refuse before the log exists: a run that cannot happen leaves nothing behind.
     installation.require_database(settings)
     daily.configure_logging(
@@ -386,10 +385,10 @@ def _cmd_daily(args: argparse.Namespace) -> int:
         max_bytes=settings.log_max_bytes,
         backup_count=settings.log_backup_count,
     )
-    conn = installation.open_database(settings)
+    conn = current().open_database()
 
     try:
-        transport = client.login(settings)
+        transport = current().connect_import()
     except Exception as exc:  # noqa: BLE001 - surface login failures as a failed run
         # An unanswerable login is a configuration message, not a crash: no traceback.
         readable = isinstance(exc, client.LoginUnavailableError)
@@ -730,10 +729,10 @@ def _nonnegative_days(value: str) -> int:
 
 
 def _cmd_prune_reports(args: argparse.Namespace) -> int:
-    installation.require_database(get_settings())
+    installation.require_database(current().settings)
     try:
         result = retention.prune_reports(
-            installation.reports_dir(),
+            current().reports_dir,
             today=_dt.date.today(),
             older_than=args.older_than,
             confirm=args.confirm,
@@ -756,18 +755,23 @@ def _cmd_prune_reports(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    context_factory: Callable[[str | None], InstallationContext] = InstallationContext.select,
+) -> int:
     """Run the command-line interface."""
     args = build_parser().parse_args(argv)
     if args.command == "setup":
         return onboarding.run(args.home, configure_only=args.configure_only, to_date=args.to_date)
     try:
-        installation.activate(args.home)
+        context = context_factory(args.home)
     except installation.InstallationError as exc:
         print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2
     try:
-        return args.func(args)
+        with context.use():
+            return args.func(args)
     except installation.InstallationError as exc:
         print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2

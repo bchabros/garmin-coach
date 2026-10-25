@@ -24,9 +24,7 @@ from mcp.types import ToolAnnotations
 
 from . import tools
 from ..core import installation, manual_sets
-from ..core.config import get_settings
-from ..etl import client
-from ..workouts import publish
+from ..runtime import InstallationContext, current
 
 server = FastMCP("coach")
 
@@ -42,25 +40,20 @@ _WRITES_LOCAL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openW
 _REPULLS_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
 _WRITES_GARMIN = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
 
-_EXISTING_DB_ONLY = False
-
 
 def _reports_dir() -> str:
     """The selected installation's reports folder: specs, receipts, dated reports."""
-    return str(installation.reports_dir())
+    return str(current().reports_dir)
 
 
 def _plans_dir() -> str:
     """The selected installation's configured plans folder."""
-    return get_settings().plans_dir
+    return str(current().plans_dir)
 
 
 def _open() -> sqlite3.Connection:
     """Open the configured DB, preserving the guarded project launch policy."""
-    settings = get_settings()
-    if _EXISTING_DB_ONLY:
-        return installation.open_existing_database(settings, writable=True)
-    return installation.open_database(settings)
+    return current().open_database()
 
 
 @server.tool(annotations=_READS_DB)
@@ -163,7 +156,7 @@ def plan_confirm(week_start: str, days: list[dict[str, Any]]) -> dict[str, Any]:
             days=days,
             plans_dir=_plans_dir(),
             reports_dir=_reports_dir(),
-            data_start_date=get_settings().data_start_date,
+            data_start_date=current().settings.data_start_date,
         )
     finally:
         conn.close()
@@ -178,7 +171,7 @@ def plan_import(week: str | None = None) -> dict[str, Any]:
     Without ``week`` every plan file is read. ``invalidated_pushes`` lists days
     whose already-pushed workout the edited plan no longer allows.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.plan_import(
@@ -210,7 +203,7 @@ def event_add(
     seconds. The response carries the block calendar's row for this week before and
     after the write - report that move to the athlete.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.event_add(
@@ -245,7 +238,7 @@ def event_update(
     same vocabulary as ``event_add`` applies. The response carries the block
     calendar's row for this week before and after the write.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.event_update(
@@ -314,7 +307,7 @@ def get_workout_status(date: str) -> dict[str, Any]:
         return tools.get_workout_status(
             conn,
             date=date,
-            connect=lambda: publish.connect_publisher(get_settings()),
+            connect=current().connect_publisher,
             reports_dir=_reports_dir(),
         )
     finally:
@@ -330,7 +323,7 @@ def log_rpe(
     note: str | None = None,
 ) -> dict[str, Any]:
     """Log a session RPE (1-10) for an activity; recomputes the day's blended load."""
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.log_rpe(
@@ -374,7 +367,7 @@ def log_sets(
     day's load split is recomputed at once. Names outside the movement map come
     back as ``unmapped``.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.log_sets(
@@ -395,10 +388,10 @@ def refresh_today() -> dict[str, Any]:
     advanced - the nightly run re-pulls the day complete. Intraday fields stay
     partial until then; check the freshness envelope.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
-        transport = client.login(settings)
+        transport = current().connect_import()
         return tools.refresh_today(conn, transport, data_start_date=settings.data_start_date)
     finally:
         conn.close()
@@ -414,7 +407,7 @@ def repair_preview(from_date: str, to_date: str) -> dict[str, Any]:
     of record expected. Show it to the athlete; ``repair_confirm`` with the returned
     token is what pulls. At most 14 days, and never today (that is refresh_today).
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         return tools.repair_preview(
@@ -435,7 +428,7 @@ def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str
     contacting Garmin. The range is pulled whole (every stream, every day), so a day
     missing one stream is completed too. Watermarks are never written.
     """
-    settings = get_settings()
+    settings = current().settings
     conn = _open()
     try:
         # The refusals are transport-free on purpose: a stale token must not cost a login.
@@ -448,7 +441,7 @@ def repair_confirm(from_date: str, to_date: str, confirm_token: str) -> dict[str
         )
         if refusal is not None:
             return tools.wrap(conn, {"applied": False, "error": refusal})
-        transport = client.login(settings)
+        transport = current().connect_import()
         return tools.repair_confirm(
             conn,
             transport,
@@ -531,13 +524,12 @@ def push_preview(date: str) -> dict[str, Any]:
     the plan of record now allows - the plan was revised after it was authored.
     Re-author the date instead of pushing.
     """
-    settings = get_settings()
     conn = _open()
     try:
         return tools.push_preview(
             conn,
             date=date,
-            connect=lambda: publish.connect_publisher(settings),
+            connect=current().connect_publisher,
             reports_dir=_reports_dir(),
         )
     finally:
@@ -553,14 +545,13 @@ def push_confirm(date: str, confirm_token: str, replace: bool = False) -> dict[s
     same-name workout, mirroring the CLI's --replace; it does not override the plan
     guard, which refuses a session harder than the plan of record either way.
     """
-    settings = get_settings()
     conn = _open()
     try:
         return tools.push_confirm(
             conn,
             date=date,
             confirm_token=confirm_token,
-            connect=lambda: publish.connect_publisher(settings),
+            connect=current().connect_publisher,
             replace=replace,
             reports_dir=_reports_dir(),
         )
@@ -581,13 +572,12 @@ def unschedule_preview(date: str) -> dict[str, Any]:
     hand is removed in Garmin Connect). Show it to the athlete; ``unschedule_confirm``
     is what removes.
     """
-    settings = get_settings()
     conn = _open()
     try:
         return tools.unschedule_preview(
             conn,
             date=date,
-            connect=lambda: publish.connect_publisher(settings),
+            connect=current().connect_publisher,
             reports_dir=_reports_dir(),
         )
     finally:
@@ -606,14 +596,13 @@ def unschedule_confirm(date: str, confirm_token: str) -> dict[str, Any]:
     so ``get_workout_status``, ``get_pushed_workouts`` and the plan-divergence read
     see the day as off the watch.
     """
-    settings = get_settings()
     conn = _open()
     try:
         return tools.unschedule_confirm(
             conn,
             date=date,
             confirm_token=confirm_token,
-            connect=lambda: publish.connect_publisher(settings),
+            connect=current().connect_publisher,
             reports_dir=_reports_dir(),
         )
     finally:
@@ -631,13 +620,13 @@ def main(existing_db_only: bool = False, argv: list[str] | None = None) -> None:
     installation.add_home_argument(parser)
     args = parser.parse_args(argv)
     try:
-        installation.require_database(installation.activate(args.home))
+        context = InstallationContext.select(args.home, existing_db_only=existing_db_only)
+        installation.require_database(context.settings)
     except installation.InstallationError as exc:
         print(f"garmin-coach-mcp: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    global _EXISTING_DB_ONLY
-    _EXISTING_DB_ONLY = existing_db_only
-    server.run()
+    with context.use():
+        server.run()
 
 
 if __name__ == "__main__":

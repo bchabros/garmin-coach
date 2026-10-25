@@ -12,27 +12,24 @@ import asyncio
 import datetime as _dt
 import json
 import pathlib
-import types
 
 import pytest
 
 from garmin_coach.core import db
 from garmin_coach.etl import client
 from garmin_coach.mcp import server
+from garmin_coach.runtime import InstallationContext
 
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
 
 
-def _existing_db(tmp_path) -> str:
-    """The installation's database, already imported: the server never creates one."""
-    path = tmp_path / "t.db"
-    if not path.exists():
-        conn = db.connect(str(path))
-        db.bootstrap(conn)
-        conn.commit()
-        conn.close()
-    return str(path)
+@pytest.fixture
+def existing_context():
+    """An already imported temporary installation for protocol operations."""
+    from garmin_coach.runtime import current
+
+    current().open_database(create=True).close()
 
 
 def _past(days: int) -> str:
@@ -112,21 +109,17 @@ def test_log_sets_accepts_bare_names_and_detailed_stations():
     assert details["additionalProperties"] is False
 
 
-def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(tmp_path, monkeypatch):
+def test_refresh_today_reports_an_unanswerable_login_as_readable_error_text(
+    athlete_home, existing_context
+):
     """The protocol pipe is never a terminal: the typed login error becomes tool error text (#71)."""
-    monkeypatch.setattr(
-        server,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date="2026-06-08"),
-    )
 
     def _login(_settings):
         raise client.LoginUnavailableError("no terminal is attached; run sync from a terminal")
 
-    monkeypatch.setattr(server.client, "login", _login)
-
-    with pytest.raises(Exception, match="no terminal is attached; run sync from a terminal"):
-        asyncio.run(server.server.call_tool("refresh_today", {}))
+    with InstallationContext.select(athlete_home, import_factory=_login).use():
+        with pytest.raises(Exception, match="no terminal is attached; run sync from a terminal"):
+            asyncio.run(server.server.call_tool("refresh_today", {}))
 
 
 def test_log_niggle_names_the_severity_scale_the_writer_accepts():
@@ -137,27 +130,18 @@ def test_log_niggle_names_the_severity_scale_the_writer_accepts():
     assert "1-5" in niggle.description
 
 
-def _settings(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        server,
-        "get_settings",
-        lambda: types.SimpleNamespace(
-            db_path=_existing_db(tmp_path), data_start_date="2026-06-08", sync_recheck_days=3
-        ),
-    )
-
-
-def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(tmp_path, monkeypatch):
+def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(athlete_home, existing_context):
     """Unattended, a stale saved login is a message to read, not a traceback (#71)."""
-    _settings(tmp_path, monkeypatch)
 
     def _login(_settings_arg):
         raise client.LoginUnavailableError("saved login expired; run a command in a terminal")
 
-    monkeypatch.setattr(server.client, "login", _login)
     preview = server.repair_preview(from_date=_past(3), to_date=_past(1))["data"]
 
-    with pytest.raises(Exception, match="saved login expired"):
+    with (
+        InstallationContext.select(athlete_home, import_factory=_login).use(),
+        pytest.raises(Exception, match="saved login expired"),
+    ):
         asyncio.run(
             server.server.call_tool(
                 "repair_confirm",
@@ -170,40 +154,38 @@ def test_repair_confirm_reports_an_unanswerable_login_as_tool_text(tmp_path, mon
         )
 
 
-def test_repair_confirm_refuses_a_stale_token_without_logging_in(tmp_path, monkeypatch):
+def test_repair_confirm_refuses_a_stale_token_without_logging_in(athlete_home, existing_context):
     """A refusal must not cost a Garmin login (ADR 0028)."""
-    _settings(tmp_path, monkeypatch)
     logins = []
-    monkeypatch.setattr(server.client, "login", lambda s: logins.append(s))
-
-    out = server.repair_confirm(
-        from_date=_past(3), to_date=_past(1), confirm_token="0000000000000000"
-    )
+    with InstallationContext.select(athlete_home, import_factory=lambda s: logins.append(s)).use():
+        out = server.repair_confirm(
+            from_date=_past(3), to_date=_past(1), confirm_token="0000000000000000"
+        )
 
     assert "preview" in out["data"]["error"]
     assert out["data"]["applied"] is False
     assert logins == []
 
 
-def test_unschedule_confirm_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
+def test_unschedule_confirm_without_a_receipt_never_logs_in(athlete_home, existing_context):
     """A day the coach never pushed is refused before any login (issue #74)."""
-    _settings(tmp_path, monkeypatch)
     logins = []
-    monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
-
-    out = server.unschedule_confirm(date="2026-07-17", confirm_token="0000000000000000")
+    with InstallationContext.select(
+        athlete_home, publisher_factory=lambda s: logins.append(s)
+    ).use():
+        out = server.unschedule_confirm(date="2026-07-17", confirm_token="0000000000000000")
 
     assert "no push receipt" in out["data"]["error"]
     assert out["data"]["applied"] is False
     assert logins == []
 
 
-def test_unschedule_preview_without_a_receipt_never_logs_in(tmp_path, monkeypatch):
-    _settings(tmp_path, monkeypatch)
+def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existing_context):
     logins = []
-    monkeypatch.setattr(server.publish, "connect_publisher", lambda s: logins.append(s))
-
-    out = server.unschedule_preview(date="2026-07-17")
+    with InstallationContext.select(
+        athlete_home, publisher_factory=lambda s: logins.append(s)
+    ).use():
+        out = server.unschedule_preview(date="2026-07-17")
 
     assert "no push receipt" in out["data"]["error"]
     assert out["data"]["confirm_token"] is None
@@ -275,7 +257,7 @@ def test_the_coach_server_refuses_a_missing_database_instead_of_creating_one(ath
     assert not (athlete_home / "data").exists()
 
 
-def test_a_push_from_chat_records_its_receipt_in_the_installation(athlete_home, monkeypatch):
+def test_a_push_from_chat_records_its_receipt_in_the_installation(athlete_home):
     """The receipt a terminal status check later reads is where the chat push wrote it."""
     from tests.conftest import FakePublisher
 
@@ -288,15 +270,21 @@ def test_a_push_from_chat_records_its_receipt_in_the_installation(athlete_home, 
     day = (_dt.date.fromisoformat(week) + _dt.timedelta(days=2)).isoformat()
     request = json.loads((FIXTURES / "hiit_request.json").read_text())
     account = FakePublisher()
-    monkeypatch.setattr(server.publish, "connect_publisher", lambda settings: account)
+    factories = []
 
-    server.plan_confirm(week, [{"planned": "WOD", "intent": "crossfit"}] * 7)
-    server.author_workout(date=day, request=request)
-    token = server.push_preview(date=day)["data"]["confirm_token"]
-    server.push_confirm(date=day, confirm_token=token)
+    def publisher(settings):
+        factories.append(settings.db_path)
+        return account
+
+    with InstallationContext.select(athlete_home, publisher_factory=publisher).use():
+        server.plan_confirm(week, [{"planned": "WOD", "intent": "crossfit"}] * 7)
+        server.author_workout(date=day, request=request)
+        token = server.push_preview(date=day)["data"]["confirm_token"]
+        server.push_confirm(date=day, confirm_token=token)
 
     receipt = athlete_home / "reports" / day / "push.json"
     assert json.loads(receipt.read_text())["applied"] is True
+    assert factories == [str(athlete_home / "data/garmin.db")] * 2
 
 
 def _workout_week(athlete_home, *, target_intent="strength"):

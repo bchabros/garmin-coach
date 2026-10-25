@@ -123,6 +123,13 @@ acceptance remain separate from offline setup verification.
 
 ## The athlete installation (where every run reads and writes)
 
+Each command and coach server captures its installation configuration at startup.
+After editing `.env` or changing inherited settings, start a new command or restart
+the coach MCP server (reconnect/restart its client if needed). The running server keeps
+its original database path, folders and recheck window. New records, plan/workout files
+and saved tokens at those captured paths remain visible immediately; no restart is
+needed for ordinary training changes.
+
 Every command, the nightly run and the coach server act on one **athlete installation**:
 the folder holding one athlete's personal state - its `.env`, `data/garmin.db`, `plans/`,
 `reports/`, `logs/`, `memory/`, and by default the saved Garmin login (ADR 0031). The

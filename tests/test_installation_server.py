@@ -132,6 +132,44 @@ def test_the_server_honours_the_installations_configured_plans_folder(tmp_path, 
     assert not (home / "plans").exists()
 
 
+def test_running_server_keeps_configuration_but_reads_live_data_until_restart(tmp_path, elsewhere):
+    home = make_installation(
+        tmp_path / "athlete", env="PLANS_DIR=./agreed-plans\nSYNC_RECHECK_DAYS=5\n"
+    )
+    other = make_installation(tmp_path / "other", horizon="2026-08-14")
+    database = home / "data/garmin.db"
+    with db.connect(str(database)) as conn:
+        conn.executemany(
+            "INSERT INTO plan_template(dow,planned,intent) VALUES (?,?,?)",
+            [(day, "tempo", "tempo") for day in range(7)],
+        )
+
+    async def scenario():
+        async with coach_server(elsewhere, home) as session:
+            first = await call(session, "get_digest")
+            (home / ".env").write_text(
+                f"DB_PATH={other / 'data/garmin.db'}\nPLANS_DIR=./new-plans\nSYNC_RECHECK_DAYS=7\n"
+            )
+            stable = await call(session, "get_digest")
+            assert stable == first
+            assert len(stable["freshness"]["unconfirmed_days"]) == 5
+            await call(session, "plan_confirm", week_start=WEEK, days=CROSSFIT_WEEK)
+            assert (home / "agreed-plans" / f"{WEEK}_week.md").is_file()
+            with db.connect(str(database)) as conn:
+                db.upsert_daily(conn, "daily_metrics", {"date": "2026-07-04", "load_day": 100})
+                snapshot.rollup(conn)
+            live = await call(session, "get_snapshot")
+            assert live["data"]["computed_at"] == "2026-07-04"
+        async with coach_server(elsewhere, home) as restarted:
+            assert (await call(restarted, "get_digest"))["freshness"][
+                "data_through"
+            ] == "2026-08-14"
+            await call(restarted, "plan_confirm", week_start=WEEK, days=CROSSFIT_WEEK)
+            assert (home / "new-plans" / f"{WEEK}_week.md").is_file()
+
+    run(scenario())
+
+
 def test_two_installations_served_at_once_stay_apart(tmp_path, elsewhere):
     first = make_installation(tmp_path / "first", horizon="2026-07-03")
     second = make_installation(tmp_path / "second", horizon="2026-08-14")

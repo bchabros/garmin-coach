@@ -76,6 +76,12 @@ python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_SOURCE
 Regenerate if the checkout/interpreter moves. Trust the project and verify connection
 in a fresh client conversation (`/mcp` in Claude Code).
 
+The coach server captures `.env` and inherited configuration when it starts. After
+changing configuration, restart/reconnect the server through the client; a new chat
+alone may reuse the existing server. New observations, plans, workout files and saved
+tokens at the configured paths remain live without a restart (see
+[installation configuration](OPERATIONS.md#the-athlete-installation-where-every-run-reads-and-writes)).
+
 The launcher requires the selected installation's existing compatible schema and
 populated digest/snapshot. It refuses conflicting inherited `GARMIN_COACH_HOME`,
 `DB_PATH`, `PLANS_DIR`, `LOG_PATH`, `GARMINTOKENS` or `GARMIN_EMAIL`; unset the conflict

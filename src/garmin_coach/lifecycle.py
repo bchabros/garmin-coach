@@ -23,6 +23,7 @@ from typing import Any
 
 from . import clients
 from .program_receipt import ProgramReceipt, ReceiptError, verify_release_inventory
+from .runtime import InstallationContext, settings_for
 from .core import installation
 from .core.config import Settings
 
@@ -281,7 +282,7 @@ def diagnose(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
     Returns:
         Redacted readiness checks and manual acceptance status.
     """
-    settings = installation.load(home)
+    settings = settings_for(home)
     receipt_error = None
     try:
         state = _read_state(root)
@@ -346,18 +347,18 @@ def _doctor(args: argparse.Namespace) -> int:
 
 
 def _live_auth(home: pathlib.Path) -> dict[str, str]:
-    tokens = pathlib.Path(installation.load(home).garmintokens)
+    tokens = pathlib.Path(settings_for(home).garmintokens)
     if not tokens.is_dir() or not any(tokens.iterdir()):
         return _check("missing", "Run setup in a terminal to save this installation's login.")
     script = (
-        "import sys; from garmin_coach.core import installation; "
+        "import sys; from garmin_coach.core.config import Settings; "
         "from garmin_coach.etl.client import login_api; "
-        "settings = installation.load(installation.select(sys.argv[1])); "
-        "login_api(settings.model_copy(update={'garmin_email': '', 'garmin_password': ''}))"
+        "login_api(Settings(_env_file=None, garmintokens=sys.argv[1], "
+        "garmin_email='', garmin_password=None))"
     )
     try:
         result = subprocess.run(
-            [sys.executable, "-I", "-c", script, str(home)],
+            [sys.executable, "-I", "-c", script, str(tokens)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -376,7 +377,7 @@ def _live_auth(home: pathlib.Path) -> dict[str, str]:
 
 
 def _backup(home: pathlib.Path, root: pathlib.Path) -> pathlib.Path:
-    settings = installation.load(home)
+    settings = settings_for(home)
     installation.require_database(settings)
     parent = home / "backups" / "program"
     if not parent.resolve().is_relative_to(home):
@@ -409,7 +410,7 @@ def _program_backup(args: argparse.Namespace) -> int:
 
 
 def _managed(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
-    if _storage_check(home, root, installation.load(home))["state"] != "ready":
+    if _storage_check(home, root, settings_for(home))["state"] != "ready":
         raise LifecycleError(
             "Personal records overlap the program root; move them before maintenance."
         )
@@ -739,7 +740,7 @@ def _remove_runtime(
 
 
 def _retained_paths(home: pathlib.Path) -> list[str]:
-    settings = installation.load(home)
+    settings = settings_for(home)
     paths = {home, home / "backups", home / "memory", home / "reports"}
     paths.update(pathlib.Path(getattr(settings, key)) for key in installation.PATH_SETTINGS)
     return sorted(str(path) for path in paths)
@@ -815,8 +816,8 @@ def main(argv: list[str] | None = None) -> int:
     add_commands(parser.add_subparsers(dest="command", required=True))
     args = parser.parse_args(argv)
     try:
-        installation.activate(args.home)
-        return args.func(args)
+        with InstallationContext.select(args.home).use():
+            return args.func(args)
     except (ValueError, OSError):
         print(
             "lifecycle: operation refused; check the selected installation and program receipt.",

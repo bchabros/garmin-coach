@@ -6,10 +6,28 @@ import json
 import os
 import pathlib
 import time
+from contextlib import ExitStack
 
 import pytest
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def command_runner():
+    """Inject a recording transport at the public command seam for each operation."""
+    from garmin_coach import system_commands
+    from tests.command_runner import RecordingRunner
+
+    with ExitStack() as stack:
+
+        def install(handler):
+            runner = RecordingRunner(handler)
+            stack.enter_context(system_commands.use_runner(runner))
+            return runner
+
+        yield install
+
 
 # Every variable that selects an installation or points a run at a path or Garmin account.
 _INSTALLATION_VARIABLES = (

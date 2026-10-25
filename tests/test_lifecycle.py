@@ -20,8 +20,20 @@ from garmin_coach.core import db
 def runtime_success(command):
     """Model a successful runtime's documented database-evidence response."""
     output = ""
-    if command[1:3] == ["-I", "-c"] and len(command) == 5:
+    imports = {"import garmin_coach.cli, garmin_coach.mcp.server"}
+    imports.update(
+        "import importlib.metadata as m; from importlib.resources import files; "
+        "import garmin_coach.cli, garmin_coach.mcp.server; "
+        f"assert m.version('garmin-coach') == {version!r}; "
+        "assert files('garmin_coach.core').joinpath('schema.sql').is_file()"
+        for version in ("0.1.0", "0.1.1")
+    )
+    if pathlib.Path(command[0]).name != "python" or command[1:3] != ["-I", "-c"]:
+        raise AssertionError(f"Unexpected system command: {command!r}")
+    if len(command) == 5:
         request = json.loads(command[4])
+        if request.get("command") not in ("evidence", "synthetic"):
+            raise AssertionError(f"Unexpected probe request: {request!r}")
         if request.get("command") == "evidence":
             output = json.dumps(
                 {
@@ -30,6 +42,8 @@ def runtime_success(command):
                     "snapshot_computed_at": "2026-10-16",
                 }
             )
+    elif len(command) != 4 or command[3] not in imports:
+        raise AssertionError(f"Unexpected runtime check: {command!r}")
     return subprocess.CompletedProcess(command, 0, output)
 
 
@@ -140,7 +154,9 @@ def test_doctor_never_bootstraps_missing_or_old_database(tmp_path, capsys):
     assert database.read_bytes() == before
 
 
-def test_explicit_live_auth_hides_transport_output_and_does_not_sync(tmp_path, monkeypatch, capsys):
+def test_explicit_live_auth_hides_transport_output_and_does_not_sync(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     from garmin_coach import lifecycle
 
     home = make_home(tmp_path / "athlete")
@@ -149,10 +165,12 @@ def test_explicit_live_auth_hides_transport_output_and_does_not_sync(tmp_path, m
     calls = []
 
     def login_probe(command, **kwargs):
+        assert command[:3] == [sys.executable, "-I", "-c"] and "login_api" in command[3]
+        assert command[-1] == str(home / ".garminconnect")
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 1, "secret-value", "private@example.test")
 
-    monkeypatch.setattr(subprocess, "run", login_probe)
+    command_runner(login_probe)
     assert (
         lifecycle.main(
             [
@@ -348,7 +366,7 @@ def managed_program(tmp_path):
 
 @pytest.mark.parametrize("failure", [None, "schema", "activation"])
 def test_update_preserves_records_and_restores_prior_release_on_failure(
-    tmp_path, monkeypatch, capsys, failure
+    tmp_path, monkeypatch, capsys, failure, command_runner
 ):
     from garmin_coach import distribution, lifecycle
 
@@ -365,7 +383,7 @@ def test_update_preserves_records_and_restores_prior_release_on_failure(
             raise subprocess.CalledProcessError(1, command, stderr="secret-value")
         return runtime_success(command)
 
-    monkeypatch.setattr(subprocess, "run", external)
+    command_runner(external)
     before = (home / "data" / "garmin.db").read_bytes()
     code = lifecycle.main(
         [
@@ -421,7 +439,7 @@ def test_program_removal_previews_then_removes_only_owned_resources(tmp_path, ca
 
 @pytest.mark.parametrize("setting", ["DB_PATH", "PLANS_DIR", "GARMINTOKENS", "LOG_PATH"])
 def test_removal_refuses_external_personal_paths_inside_a_release_before_native_changes(
-    tmp_path, monkeypatch, capsys, setting, native_clients
+    tmp_path, monkeypatch, capsys, setting, native_clients, command_runner
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -429,10 +447,8 @@ def test_removal_refuses_external_personal_paths_inside_a_release_before_native_
     root, old, _ = managed_program(tmp_path)
     calls = []
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs),
+    command_runner(
+        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs)
     )
     clients.configure(home, root, ["codex", "claude-code"])
     calls.clear()
@@ -499,7 +515,7 @@ def test_removal_refuses_modified_owned_launcher_before_deleting_release(tmp_pat
 
 @pytest.mark.parametrize("change", ["added_note", "edited_program"])
 def test_removal_preserves_unknown_or_edited_release_contents_before_native_changes(
-    tmp_path, monkeypatch, capsys, change, native_clients
+    tmp_path, monkeypatch, capsys, change, native_clients, command_runner
 ):
     from garmin_coach import clients, lifecycle
 
@@ -507,10 +523,8 @@ def test_removal_preserves_unknown_or_edited_release_contents_before_native_chan
     root, old, _ = managed_program(tmp_path)
     calls = []
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs),
+    command_runner(
+        lambda command, **kwargs: calls.append(command) or native_clients(command, **kwargs)
     )
     clients.configure(home, root, ["codex", "claude-code"])
     calls.clear()
@@ -555,7 +569,7 @@ def test_removal_resolves_fixed_personal_directories_before_deleting_a_release(
 
 
 def test_one_client_removal_retains_other_host_and_program(
-    tmp_path, monkeypatch, capsys, native_clients
+    tmp_path, monkeypatch, capsys, native_clients, command_runner
 ):
     from garmin_coach import clients, lifecycle
 
@@ -568,7 +582,7 @@ def test_one_client_removal_retains_other_host_and_program(
         calls.append(command)
         return native_clients(command, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     clients.configure(home, root, ["work", "codex", "claude-code"])
     calls.clear()
 
@@ -613,7 +627,10 @@ def test_one_client_removal_retains_other_host_and_program(
     assert old.exists()
 
 
-def test_daily_job_failure_preserves_program_and_unrelated_jobs(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("returncode", [0, 3, 113, 5])
+def test_removing_program_respects_scheduler_exit_codes(
+    tmp_path, monkeypatch, capsys, command_runner, returncode
+):
     from garmin_coach import distribution, lifecycle
 
     home = make_home(tmp_path / "athlete")
@@ -646,20 +663,20 @@ def test_daily_job_failure_preserves_program_and_unrelated_jobs(tmp_path, monkey
     calls = []
 
     def fail(command, **kwargs):
+        assert command[:2] == ["launchctl", "bootout"]
+        assert command[-1].endswith("/com.garmincoach.fixture")
         calls.append(command)
-        return subprocess.CompletedProcess(command, 5)
+        return subprocess.CompletedProcess(command, returncode)
 
-    monkeypatch.setattr(subprocess, "run", fail)
-    assert (
-        lifecycle.main(
-            ["--home", str(home), "program", "remove", "--runtime-root", str(root), "--confirm"]
-        )
-        == 2
-    )
+    command_runner(fail)
+    assert lifecycle.main(
+        ["--home", str(home), "program", "remove", "--runtime-root", str(root), "--confirm"]
+    ) == (2 if returncode == 5 else 0)
     capsys.readouterr()
     assert len(calls) == 1
     assert calls[0][-1].endswith("/com.garmincoach.fixture")
-    assert job.exists() and old.exists()
+    assert job.exists() == (returncode == 5)
+    assert old.exists() == (returncode == 5)
     assert unrelated.read_text() == "unrelated scheduler"
 
 
@@ -687,16 +704,14 @@ def test_doctor_reports_versions_integrations_and_interrupted_operation(
 
 
 def test_doctor_preserves_each_clients_interrupted_registration_state(
-    tmp_path, monkeypatch, capsys, native_clients
+    tmp_path, monkeypatch, capsys, native_clients, command_runner
 ):
     from garmin_coach import clients, lifecycle
 
     home = make_home(tmp_path / "athlete")
     root, _, _ = managed_program(tmp_path)
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
-    monkeypatch.setattr(
-        subprocess, "run", lambda command, **kwargs: native_clients(command, **kwargs)
-    )
+    command_runner(lambda command, **kwargs: native_clients(command, **kwargs))
     clients.configure(home, root, ["work", "codex", "claude-code"])
     receipt = clients.integration_root(home, root) / "registration.json"
     record = json.loads(receipt.read_text())
@@ -716,7 +731,7 @@ def test_doctor_preserves_each_clients_interrupted_registration_state(
 
 @pytest.mark.parametrize("rollback_failure", [False, True])
 def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state(
-    tmp_path, monkeypatch, capsys, rollback_failure, native_clients
+    tmp_path, monkeypatch, capsys, rollback_failure, native_clients, command_runner
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -757,7 +772,7 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
                 return subprocess.CompletedProcess(command, 1, "secret-value", "private output")
         return native_clients(command, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     with monkeypatch.context() as previous:
         previous.setattr(
             importlib.metadata,
@@ -804,7 +819,7 @@ def test_client_update_failure_restores_prior_runtime_and_reports_recovery_state
 
 @pytest.mark.parametrize("incomplete", ["client_missing", "preparing"])
 def test_missing_client_is_accepted_but_preparing_rolls_back_after_cli_success(
-    tmp_path, monkeypatch, capsys, incomplete, native_clients
+    tmp_path, monkeypatch, capsys, incomplete, native_clients, command_runner
 ):
     from garmin_coach import clients, distribution, lifecycle
 
@@ -829,7 +844,7 @@ def test_missing_client_is_accepted_but_preparing_rolls_back_after_cli_success(
             return subprocess.CompletedProcess(command, 0, json.dumps(result))
         return native_clients(command, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     clients.configure(home, root, ["codex", "claude-code"])
     assert lifecycle.main(
         [
@@ -885,7 +900,9 @@ def test_repeating_active_release_is_verified_without_rewriting_athlete_state(
     assert not (home / "backups").exists()
 
 
-def test_candidate_probe_rejects_a_null_snapshot_before_activation(tmp_path, monkeypatch, capsys):
+def test_candidate_probe_rejects_a_null_snapshot_before_activation(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     from garmin_coach import distribution, lifecycle
 
     home = make_home(tmp_path / "athlete")
@@ -903,9 +920,9 @@ def test_candidate_probe_rejects_a_null_snapshot_before_activation(tmp_path, mon
             source = pathlib.Path(__file__).resolve().parents[1] / "src"
             actual[3] = f"import sys; sys.path.insert(0, {str(source)!r}); " + actual[3]
             return real_run(actual, **kwargs)
-        return subprocess.CompletedProcess(command, 0)
+        return runtime_success(command)
 
-    monkeypatch.setattr(subprocess, "run", runtime)
+    command_runner(runtime)
     assert (
         lifecycle.main(
             [

@@ -59,6 +59,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `onboarding.py`, `project.py`, `synthetic.py` | Terminal setup/adoption; guarded source launch; explicit synthetic installations. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
 | `distribution.py`, `lifecycle.py`, `program_receipt.py` | Bootstrap/scheduling and maintenance, sharing program-state and ownership operations. |
+| `system_commands.py` | Scoped command transport for bootstrap, maintenance and their native-client operations. |
 | `retention.py` | Explicit report-file retention without DB/transport access. |
 
 `onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
@@ -81,11 +82,21 @@ refuses a release when the two differ or a public file is missing or symlinked, 
 it runs `poetry build` (`tests/test_release_build.py`). A hand-run local `poetry build`
 skips that check; no installation path uses its output.
 
-`distribution.py` and `program_receipt.py` are standard-library-only. Release tooling
+`distribution.py`, `program_receipt.py` and `system_commands.py` are standard-library-only. Release tooling
 bundles their canonical sources as one executable Python archive, `bootstrap.py`, so
 isolated Python can run the installer before application dependencies exist. Its entry
 point propagates the installer's exit code. Tests execute the generated artifact with
 `-I -S`, including receipt refusal, plus the rendered shell's real temporary install.
+
+`system_commands.run()` forwards each caller's subprocess options unchanged: argv,
+environment/cwd, streams, text/bytes, check and timeout remain owned by that caller.
+`use_runner()` scopes injected transport through nested installation/client/recovery
+operations, restoring it after failure or interruption. It adds no retry or error
+translation and does not affect subprocesses in the MCP SDK or release tooling.
+Candidate children still run their own code. Tests inject the recording fake through
+this public seam instead of replacing the global subprocess module; unknown commands
+must refuse. Real temporary programs exercise the production adapter's stream/error/
+timeout behavior, while executable and stdio integration tests remain real.
 
 `program_receipt.ProgramReceipt` owns v1 program-state parsing, atomic private writes,
 progress journals, scheduler identity, activation and runtime ownership checks. Its

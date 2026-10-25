@@ -8,14 +8,16 @@ from garmin_coach import cli, clients, distribution
 from tests.test_lifecycle import NativeClients, make_home, managed_program, runtime_success
 
 
-def test_removing_a_client_updates_the_installers_saved_selection(tmp_path, monkeypatch, capsys):
+def test_removing_a_client_updates_the_installers_saved_selection(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     home = make_home(tmp_path / "athlete")
     root, _, _ = managed_program(tmp_path)
     state = distribution.read_state(root)
     state.update(selected_home=str(home), selected_clients=["codex", "claude-code"])
     distribution.write_state(root, state)
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
-    monkeypatch.setattr(subprocess, "run", NativeClients())
+    command_runner(NativeClients())
     clients.configure(home, root, ["codex", "claude-code"])
 
     assert (
@@ -66,7 +68,9 @@ def test_unchanged_update_never_rebuilds_the_active_release(tmp_path, monkeypatc
     assert (root / "current").resolve() == old
 
 
-def test_interrupted_preparation_is_recoverable_on_retry(tmp_path, monkeypatch, capsys):
+def test_interrupted_preparation_is_recoverable_on_retry(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     import pytest
 
     home = make_home(tmp_path / "athlete")
@@ -81,7 +85,7 @@ def test_interrupted_preparation_is_recoverable_on_retry(tmp_path, monkeypatch, 
         return new
 
     monkeypatch.setattr(distribution, "prepare_release", prepare)
-    monkeypatch.setattr(subprocess, "run", lambda command, **kw: runtime_success(command))
+    command_runner(lambda command, **kw: runtime_success(command))
     args = update_args(home, root, new / "manifest.json")
     with pytest.raises(SystemExit):
         cli.main(args)
@@ -112,7 +116,9 @@ def test_keyboard_interrupt_rolls_back_with_relevant_guidance(tmp_path, monkeypa
     assert distribution.read_state(root).get("operation") is None
 
 
-def test_missing_selected_client_does_not_fail_a_runtime_update(tmp_path, monkeypatch, capsys):
+def test_missing_selected_client_does_not_fail_a_runtime_update(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     import json
 
     home = make_home(tmp_path / "athlete")
@@ -124,10 +130,12 @@ def test_missing_selected_client_does_not_fail_a_runtime_update(tmp_path, monkey
     def native(command, **kwargs):
         if command[1:3] == ["-I", "-c"]:
             return runtime_success(command)
+        assert command[1:4] == ["-I", "-m", "garmin_coach.clients"]
+        assert "configure" in command
         result = {"clients": {"claude-code": {"state": "client_missing"}}}
         return subprocess.CompletedProcess(command, 0, json.dumps(result))
 
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     assert cli.main(update_args(home, root, new / "manifest.json")) == 0
     assert '"updated"' in capsys.readouterr().out
     assert (root / "current").resolve() == new
@@ -157,7 +165,9 @@ def test_doctor_reports_a_corrupt_program_receipt_without_hiding_diagnosis(
     assert "private receipt contents" not in json.dumps(result)
 
 
-def test_live_auth_with_no_saved_tokens_never_starts_a_login_process(tmp_path, monkeypatch, capsys):
+def test_live_auth_with_no_saved_tokens_never_starts_a_login_process(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     import json
 
     home = make_home(tmp_path / "athlete")
@@ -165,7 +175,7 @@ def test_live_auth_with_no_saved_tokens_never_starts_a_login_process(tmp_path, m
     def forbidden(*args, **kwargs):
         raise AssertionError("Missing saved tokens are a local state, not a network probe")
 
-    monkeypatch.setattr(subprocess, "run", forbidden)
+    command_runner(forbidden)
     assert (
         cli.main(
             [
@@ -204,7 +214,9 @@ def test_doctor_refuses_missing_required_indexes_and_policy_rows(tmp_path, capsy
     assert result["checks"]["database"]["state"] == "incompatible"
 
 
-def test_removal_stops_the_owned_job_even_when_its_plist_is_missing(tmp_path, monkeypatch, capsys):
+def test_removal_stops_the_owned_job_even_when_its_plist_is_missing(
+    tmp_path, monkeypatch, capsys, command_runner
+):
     import hashlib
 
     home = make_home(tmp_path / "athlete")
@@ -219,11 +231,13 @@ def test_removal_stops_the_owned_job_even_when_its_plist_is_missing(tmp_path, mo
     }
     distribution.write_state(root, state)
     calls = []
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda command, **kw: calls.append(command) or subprocess.CompletedProcess(command, 0),
-    )
+
+    def stop_job(command, **options):
+        assert command[:2] == ["launchctl", "bootout"] and command[-1].endswith("/" + label)
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    command_runner(stop_job)
     assert (
         cli.main(
             ["--home", str(home), "program", "remove", "--runtime-root", str(root), "--confirm"]
@@ -254,7 +268,7 @@ def test_removal_preview_lists_owned_resources_and_retained_external_storage(tmp
 
 @pytest.mark.parametrize("edited_launcher", [False, True])
 def test_terminated_activation_can_retry_without_overwriting_an_edited_launcher(
-    tmp_path, monkeypatch, capsys, edited_launcher
+    tmp_path, monkeypatch, capsys, edited_launcher, command_runner
 ):
     import json
 
@@ -271,7 +285,7 @@ def test_terminated_activation_can_retry_without_overwriting_an_edited_launcher(
                 raise SystemExit("Terminate after activating candidate")
         return runtime_success(command)
 
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     args = update_args(home, root, new / "manifest.json")
     with pytest.raises(SystemExit):
         cli.main(args)
@@ -352,7 +366,7 @@ def test_doctor_warns_about_a_legacy_daily_job_without_adopting_it(tmp_path, mon
 
 @pytest.mark.parametrize("phase", ["preparing", "activating"])
 def test_legacy_update_journal_restores_clients_detached_before_the_phase_checkpoint(
-    tmp_path, monkeypatch, capsys, phase
+    tmp_path, monkeypatch, capsys, phase, command_runner
 ):
     import json
     from tests.test_lifecycle import NativeClients
@@ -361,7 +375,7 @@ def test_legacy_update_journal_restores_clients_detached_before_the_phase_checkp
     root, old, _ = managed_program(tmp_path)
     native = NativeClients()
     monkeypatch.setattr(clients.shutil, "which", lambda name: "/fixture/bin/" + name)
-    monkeypatch.setattr(subprocess, "run", native)
+    command_runner(native)
     clients.configure(home, root, ["claude-code"])
     state = distribution.read_state(root)
     state.update(selected_home=str(home), selected_clients=["claude-code"])
@@ -391,7 +405,7 @@ def test_legacy_update_journal_restores_clients_detached_before_the_phase_checkp
 
 
 def test_unknown_update_intent_version_is_preserved_before_any_native_operation(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, command_runner
 ):
     home = make_home(tmp_path / "athlete")
     root, old, _ = managed_program(tmp_path)
@@ -403,7 +417,7 @@ def test_unknown_update_intent_version_is_preserved_before_any_native_operation(
     def forbidden(*args, **kwargs):
         raise AssertionError("Unknown intent must be refused before native operations")
 
-    monkeypatch.setattr(subprocess, "run", forbidden)
+    command_runner(forbidden)
     assert cli.main(update_args(home, root, old / "manifest.json")) == 2
     assert "Unknown interrupted operation" in capsys.readouterr().err
     assert (root / "install-state.json").read_bytes() == before

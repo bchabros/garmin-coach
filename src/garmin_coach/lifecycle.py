@@ -24,6 +24,7 @@ from typing import Any
 from . import clients
 from .program_receipt import ProgramReceipt, ReceiptError, verify_release_inventory
 from .runtime import InstallationContext, settings_for
+from . import system_commands
 from .core import installation
 from .core.config import Settings
 
@@ -108,7 +109,7 @@ def _runtime(root: pathlib.Path, state: dict[str, Any]) -> dict[str, str]:
 
 def _runtime_import(root: pathlib.Path) -> dict[str, str]:
     try:
-        subprocess.run(
+        system_commands.run(
             [
                 str(root / "current/venv/bin/python"),
                 "-I",
@@ -257,7 +258,7 @@ def _schedule_check(
     if state["scheduler"].get("status") != "enabled":
         return _check("prepared", "Finish the scheduler activation from bootstrap.")
     try:
-        result = subprocess.run(
+        result = system_commands.run(
             ["launchctl", "print", f"gui/{os.getuid()}/{state['scheduler']['label']}"],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -357,7 +358,7 @@ def _live_auth(home: pathlib.Path) -> dict[str, str]:
         "garmin_email='', garmin_password=None))"
     )
     try:
-        result = subprocess.run(
+        result = system_commands.run(
             [sys.executable, "-I", "-c", script, str(tokens)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -437,7 +438,7 @@ def _refresh_clients(
     selected = selected if selected is not None else recorded
     if not selected:
         return
-    completed = subprocess.run(
+    completed = system_commands.run(
         [
             str(release / "venv" / "bin" / "python"),
             "-I",
@@ -683,7 +684,7 @@ def _remove_schedule(state: dict[str, Any], path: pathlib.Path | None) -> None:
     if not state.get("scheduler", {}).get("label"):
         return
     label = state["scheduler"]["label"]
-    result = subprocess.run(
+    result = system_commands.run(
         ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

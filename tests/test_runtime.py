@@ -5,6 +5,7 @@ import json
 import sqlite3
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -145,7 +146,7 @@ def test_cli_diagnosis_uses_the_same_captured_database_as_other_commands(
 
 
 def test_explicit_login_diagnosis_keeps_the_captured_token_path(
-    athlete_home, tmp_path, monkeypatch, capsys
+    athlete_home, tmp_path, monkeypatch, capsys, command_runner
 ):
     from garmin_coach import cli
     from garmin_coach.runtime import InstallationContext
@@ -160,6 +161,8 @@ def test_explicit_login_diagnosis_keeps_the_captured_token_path(
     calls = []
 
     def run(command, **kwargs):
+        assert command[:3] == [sys.executable, "-I", "-c"] and "login_api" in command[3]
+        assert command[-1] == str(tokens)
         calls.append(command)
         return subprocess.CompletedProcess(command, 1)
 
@@ -167,7 +170,7 @@ def test_explicit_login_diagnosis_keeps_the_captured_token_path(
         (athlete_home / ".env").write_text("GARMINTOKENS=./other-tokens\n")
         return context
 
-    monkeypatch.setattr(subprocess, "run", run)
+    command_runner(run)
     assert (
         cli.main(
             ["doctor", "--live-auth", "--runtime-root", str(tmp_path / "program")],

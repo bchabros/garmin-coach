@@ -1240,3 +1240,35 @@ def test_rpe_response_reports_a_saved_fact_when_recomputation_fails(conn):
     assert result["data"]["activity_id"] == 1
     assert "record saved" in result["data"]["error"]
     assert "freshness" in result
+
+
+@pytest.mark.parametrize("pace_field", ["fast_s_per_km", "slow_s_per_km"])
+def test_plan_import_rebuilds_when_saved_workout_pace_is_zero(conn, tmp_path, pace_field):
+    plans, reports = tmp_path / "plans", tmp_path / "reports"
+    plans.mkdir()
+    reports.mkdir()
+    _plan_file(plans)
+    _seed_core_day(conn, PUSH_DATE)
+    day = _seed_pushed(reports)
+    path = day / "workout.json"
+    spec = json.loads(path.read_text())
+    spec["steps"][1]["target"][pace_field] = 0
+    path.write_text(json.dumps(spec))
+    before = path.read_bytes()
+    receipt_before = (day / "push.json").read_bytes()
+    assert db.latest_mart_date(conn) is None
+
+    result = tools.plan_import(
+        conn, plans_dir=str(plans), reports_dir=str(reports), data_start_date=DATA_START
+    )
+
+    assert result["data"]["weeks"] == [WEEK]
+    assert result["data"]["error"] is None
+    assert _cached_days(conn) == 7
+    assert len(result["data"]["warnings"]) == 1
+    assert PUSH_DATE in result["data"]["warnings"][0]
+    assert "workout.json" in result["data"]["warnings"][0]
+    assert result["freshness"]["data_through"] == PUSH_DATE
+    assert db.latest_mart_date(conn) == PUSH_DATE
+    assert path.read_bytes() == before
+    assert (day / "push.json").read_bytes() == receipt_before

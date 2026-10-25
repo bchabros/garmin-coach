@@ -254,7 +254,7 @@ def _validate_spec(spec: dict[str, Any], path: pathlib.Path) -> None:
         raise PushRefused(f"invalid {path}: warnings must be a list of strings")
     try:
         author.to_garmin(spec)
-    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+    except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError) as exc:
         raise PushRefused(f"invalid {path}: {exc}") from exc
 
 

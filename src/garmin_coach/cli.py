@@ -10,9 +10,9 @@ import sqlite3
 import sys
 from typing import TYPE_CHECKING, Any
 
-from . import clients, daily, lifecycle, onboarding, plan_changes, retention
+from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
 from .coach import report
-from .core import db, events as _events, installation, manual_sets
+from .core import db, events as _events, installation
 from .core.config import get_settings
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -36,163 +36,6 @@ def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sy
         conn.close()
         raise
     return settings, conn, transport
-
-
-def _check_range(name: str, value: int | None, lo: int, hi: int) -> None:
-    """Raise ValueError when an optional integer input falls outside [lo, hi]."""
-    if value is not None and not (lo <= value <= hi):
-        raise ValueError(f"{name} must be between {lo} and {hi} (got {value})")
-
-
-def log_session_rpe(
-    conn: sqlite3.Connection,
-    *,
-    activity_id: int,
-    rpe: int,
-    soreness: int | None = None,
-    mood: int | None = None,
-    note: str | None = None,
-    source: str = "manual",
-    data_start_date: str,
-) -> str:
-    """Write a session-RPE to core and recompute the affected day's blended load.
-
-    Validates the input ranges and that the activity exists, upserts ``session_rpe``,
-    then recomputes ``features`` from the activity's date so the sRPE blend is
-    immediately reflected in ``load_day`` / ACWR. Transport-free (never calls Garmin).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        activity_id: The rated activity; must already exist in ``activities``.
-        rpe: Borg CR10 session RPE (1-10).
-        soreness: Optional post-session soreness (1-10).
-        mood: Optional post-session mood (1-10).
-        note: Optional free-text note.
-        source: How the row was entered (default ``manual``).
-        data_start_date: First real-data date, passed to the recompute.
-
-    Returns:
-        The activity's calendar date (the recompute start).
-
-    Raises:
-        ValueError: If a value is out of range or the activity does not exist.
-    """
-    _check_range("rpe", rpe, 1, 10)
-    _check_range("soreness", soreness, 1, 10)
-    _check_range("mood", mood, 1, 10)
-    row = conn.execute(
-        "SELECT date(start_local) FROM activities WHERE activity_id = ?", (activity_id,)
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"activity {activity_id} not found; run `garmin-coach sync` first")
-    activity_date = row[0]
-    db.upsert_session_rpe(
-        conn,
-        {
-            "activity_id": activity_id,
-            "rpe": rpe,
-            "soreness": soreness,
-            "mood": mood,
-            "source": source,
-            "notes": note,
-        },
-    )
-    conn.commit()
-    features.features(conn, data_start_date=data_start_date, from_date=activity_date)
-    return activity_date
-
-
-def log_niggle(
-    conn: sqlite3.Connection,
-    *,
-    body_part: str,
-    severity: int,
-    date: str | None = None,
-    note: str | None = None,
-) -> str:
-    """Write a niggle entry to core (transport-free); no recompute needed.
-
-    Reduced-mode is a digest-layer read, so it surfaces on the next report rather
-    than requiring a mart recompute here. A re-log for the same body part on the
-    same day updates it.
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        body_part: The affected body part (free text, e.g. ``kolano``).
-        severity: Niggle severity (1-5).
-        date: The niggle date (default: today).
-        note: Optional free-text note.
-
-    Returns:
-        The date the niggle was recorded against.
-
-    Raises:
-        ValueError: If severity is out of range.
-    """
-    _check_range("severity", severity, 1, 5)
-    day = date or _dt.date.today().isoformat()
-    db.upsert_niggle(
-        conn, {"date": day, "body_part": body_part, "severity": severity, "note": note}
-    )
-    conn.commit()
-    return day
-
-
-def _unmapped_stations(conn: sqlite3.Connection, names: list[str]) -> list[str]:
-    """The logged names that ``exercise_pattern`` does not know yet (coverage drift)."""
-    known = {r[0] for r in conn.execute("SELECT subcategory FROM exercise_pattern")}
-    return sorted({n for n in names if n not in known})
-
-
-def log_activity_sets(
-    conn: sqlite3.Connection,
-    *,
-    activity_id: int,
-    stations: list[str | manual_sets.ManualStationDetails],
-    data_start_date: str,
-) -> dict[str, Any]:
-    """Write a circuit's stations to the manual set overlay and recompute from that day.
-
-    A Hyrox / group-HIIT session reaches the DB as one nameless set, so the
-    movement-overlap mart cannot see what it loaded (issue #60). The athlete logs the
-    stations by hand here; the rows land in ``manual_activity_sets`` (core ground
-    truth the ETL never touches), supersede the captured round through the
-    ``movement_sets`` view, and ``features`` is recomputed from the activity's date so
-    ``pattern_overlap`` reflects them at once. Transport-free (never calls Garmin).
-
-    Args:
-        conn: Open SQLite connection with the schema bootstrapped.
-        activity_id: The circuit; must already exist in ``activities``.
-        stations: One entry per station, in order: a bare name (``SLED_PULL``, any
-            case, spaces or hyphens tolerated) or a mapping with ``subcategory`` and
-            optional ``category``, ``reps``, ``sets``, ``duration_s``, ``max_weight``.
-            A re-log replaces the prior stations wholesale.
-        data_start_date: First real-data date, passed to the recompute.
-
-    Returns:
-        ``{"date", "n_sets", "unmapped"}`` - the activity's calendar date (the
-        recompute start), how many rows were written, and the logged names the
-        movement map does not know yet (they count as coverage drift, not as load).
-
-    Raises:
-        ValueError: If the list is empty, a station is malformed, or the activity
-            does not exist.
-    """
-    rows = manual_sets.normalize(activity_id, stations)
-    found = conn.execute(
-        "SELECT date(start_local) FROM activities WHERE activity_id = ?", (activity_id,)
-    ).fetchone()
-    if found is None:
-        raise ValueError(f"activity {activity_id} not found; run `garmin-coach sync` first")
-    activity_date = found[0]
-    db.replace_manual_activity_sets(conn, activity_id, rows)
-    conn.commit()
-    features.features(conn, data_start_date=data_start_date, from_date=activity_date)
-    return {
-        "date": activity_date,
-        "n_sets": len(rows),
-        "unmapped": _unmapped_stations(conn, [r["subcategory"] for r in rows]),
-    }
 
 
 def _cmd_backfill(args: argparse.Namespace) -> int:
@@ -391,15 +234,27 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     return 1 if result.error else 0
 
 
+def _report_change_error(label: str, result: athlete_changes.ChangeResult, identity: str) -> bool:
+    """Print an unsuccessful or partial result without denying a committed fact."""
+    if result.error is None:
+        return False
+    state = "partial" if result.saved else "failed"
+    print(f"{label} {state}: {result.error}")
+    if result.saved:
+        print(f"saved: {identity}")
+    if result.recovery_command is not None:
+        print(f"recovery (same athlete installation): {result.recovery_command}")
+    return True
+
+
 def _cmd_log_rpe(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = installation.open_database(settings)
-
     try:
         if args.activity_id is not None:
             if args.rpe is None:
                 raise ValueError("--rpe is required with --activity")
-            activity_date = log_session_rpe(
+            result = athlete_changes.log_session_rpe(
                 conn,
                 activity_id=args.activity_id,
                 rpe=args.rpe,
@@ -408,48 +263,50 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
                 note=args.note,
                 data_start_date=settings.data_start_date,
             )
-            message = (
-                f"log-rpe complete: activity {args.activity_id} rpe={args.rpe}; "
-                f"load recomputed from {activity_date}"
-            )
+            identity = f"activity {args.activity_id} rpe={args.rpe} on {result.data.get('date')}"
+            message = f"{identity}; load recomputed from {result.data.get('date')}"
         else:
             if args.severity is None:
                 raise ValueError("--severity is required with --niggle")
-            day = log_niggle(
+            result = athlete_changes.log_niggle(
                 conn,
                 body_part=args.body_part,
                 severity=args.severity,
                 date=args.date,
                 note=args.note,
             )
-            message = f"log-rpe complete: niggle {args.body_part} severity={args.severity} on {day}"
+            identity = (
+                f"niggle {args.body_part} severity={args.severity} on {result.data.get('date')}"
+            )
+            message = identity
     except ValueError as exc:
-        conn.close()
         print(f"log-rpe failed: {exc}")
         return 2
-
-    conn.close()
-    print(message)
+    finally:
+        conn.close()
+    if _report_change_error("log-rpe", result, identity):
+        return 2
+    print(f"log-rpe complete: {message}")
     return 0
 
 
 def _cmd_log_sets(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = installation.open_database(settings)
-
     try:
-        out = log_activity_sets(
+        result = athlete_changes.log_activity_sets(
             conn,
             activity_id=args.activity_id,
             stations=args.stations,
             data_start_date=settings.data_start_date,
         )
-    except ValueError as exc:
+    finally:
         conn.close()
-        print(f"log-sets failed: {exc}")
+    if _report_change_error(
+        "log-sets", result, f"activity {args.activity_id} on {result.data.get('date')}"
+    ):
         return 2
-
-    conn.close()
+    out = result.data
     drift = f" (not in the movement map: {', '.join(out['unmapped'])})" if out["unmapped"] else ""
     print(
         f"log-sets complete: activity {args.activity_id} stations={out['n_sets']}{drift}; "
@@ -481,49 +338,42 @@ def _list_events(conn: sqlite3.Connection) -> int:
     return 0
 
 
+def _format_block(row: dict[str, Any] | None) -> str:
+    """Render a computed current block and its anchor without inventing a missing one."""
+    return f"{row['block']} (anchor {row['race_date']})" if row is not None else "none"
+
+
 def _cmd_event(args: argparse.Namespace) -> int:
     settings = get_settings()
     conn = installation.open_database(settings)
-
     try:
+        if args.event_command not in {"add", "update"}:
+            return _list_events(conn)
+        fields = {
+            name: getattr(args, name)
+            for name in ("date", "type", "priority", "status", "date_precision", "target", "note")
+        }
         if args.event_command == "add":
-            _events.add_goal_event(
-                conn,
-                date=args.date,
-                type=args.type,
-                priority=args.priority,
-                status=args.status,
-                date_precision=args.date_precision,
-                target=args.target,
-                note=args.note,
+            result = athlete_changes.event_add(
+                conn, **fields, data_start_date=settings.data_start_date
             )
-            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
-            message = f"event add complete: {args.type} on {args.date} ({args.status})"
-        elif args.event_command == "update":
-            _events.update_goal_event(
-                conn,
-                args.event_id,
-                date=args.date,
-                type=args.type,
-                priority=args.priority,
-                status=args.status,
-                date_precision=args.date_precision,
-                target=args.target,
-                note=args.note,
-            )
-            features.rebuild_marts(conn, data_start_date=settings.data_start_date)
-            message = f"event update complete: id={args.event_id}"
         else:
-            exit_code = _list_events(conn)
-            conn.close()
-            return exit_code
-    except (ValueError, sqlite3.IntegrityError) as exc:
+            result = athlete_changes.event_update(
+                conn, event_id=args.event_id, **fields, data_start_date=settings.data_start_date
+            )
+    finally:
         conn.close()
-        print(f"event failed: {exc}")
+    row = result.data.get("event") or {}
+    identity = f"event {result.data.get('event_id')}"
+    if row.get("date") is not None:
+        identity += f" on {row['date']}"
+    if _report_change_error("event", result, identity):
         return 2
-
-    conn.close()
-    print(message)
+    print(f"event {args.event_command} complete: {_format_event(row)}")
+    print(
+        f"current block: {_format_block(result.data['block_before'])} -> "
+        f"{_format_block(result.data['block_after'])}"
+    )
     return 0
 
 

@@ -149,47 +149,6 @@ def test_parser_accepts_log_rpe_activity_mode():
     assert args.rpe == 8
 
 
-def _sila(conn, aid=1, date="2026-06-08"):
-    db.upsert_activity(
-        conn,
-        {
-            "activity_id": aid,
-            "start_local": f"{date} 18:00:00",
-            "date": date,
-            "gtype": "strength_training",
-            "discipline": "Siła",
-            "aero_te": 1.4,
-            "anaero_te": 0.3,
-            "training_load": 22.0,
-            "dur_s": 4200,
-        },
-    )
-
-
-def test_log_session_rpe_rejects_unknown_activity(conn):
-    with pytest.raises(ValueError, match="not found"):
-        cli.log_session_rpe(conn, activity_id=999, rpe=8, data_start_date=DATA_START)
-
-
-def test_log_session_rpe_writes_and_recomputes_load(conn):
-    _sila(conn)
-
-    date = cli.log_session_rpe(conn, activity_id=1, rpe=9, data_start_date=DATA_START)
-
-    assert date == "2026-06-08"
-    assert conn.execute("SELECT rpe FROM session_rpe WHERE activity_id=1").fetchone()[0] == 9
-    load_strength = conn.execute(
-        "SELECT load_strength FROM daily_metrics WHERE date='2026-06-08'"
-    ).fetchone()[0]
-    assert abs(load_strength - 189.0) < 1e-6  # 0.3 * 9 * 70, recomputed by features
-
-
-def test_log_session_rpe_validates_rpe_range(conn):
-    _sila(conn)
-    with pytest.raises(ValueError, match="rpe"):
-        cli.log_session_rpe(conn, activity_id=1, rpe=11, data_start_date=DATA_START)
-
-
 def test_parser_accepts_log_rpe_niggle_mode():
     args = build_parser().parse_args(["log-rpe", "--niggle", "kolano", "--severity", "4"])
 
@@ -204,46 +163,7 @@ def test_parser_rejects_both_activity_and_niggle():
         )
 
 
-def test_log_niggle_writes_row(conn):
-    day = cli.log_niggle(conn, body_part="kolano", severity=4, date="2026-06-14")
-
-    assert day == "2026-06-14"
-    row = conn.execute(
-        "SELECT severity FROM niggle WHERE date='2026-06-14' AND body_part='kolano'"
-    ).fetchone()
-    assert row[0] == 4
-
-
-def test_log_niggle_validates_severity_range(conn):
-    with pytest.raises(ValueError, match="severity"):
-        cli.log_niggle(conn, body_part="kolano", severity=6, date="2026-06-14")
-
-
 # --- Issue #35: standalone recompute entry points still commit their work ---
-
-
-def test_log_session_rpe_survives_a_rollback_probe(conn):
-    """The rollups no longer commit, but this entry point still persists everything."""
-    _sila(conn)
-    cli.log_session_rpe(conn, activity_id=1, rpe=9, data_start_date=DATA_START)
-
-    conn.rollback()
-
-    assert conn.execute("SELECT rpe FROM session_rpe WHERE activity_id=1").fetchone()[0] == 9
-    row = conn.execute("SELECT load_strength FROM daily_metrics WHERE date='2026-06-08'").fetchone()
-    assert row is not None and row[0] is not None
-
-
-def test_log_niggle_survives_a_rollback_probe(conn):
-    """log_niggle owns its own transaction; the write must outlive a rollback."""
-    cli.log_niggle(conn, body_part="kolano", severity=4, date="2026-06-14")
-
-    conn.rollback()
-
-    row = conn.execute(
-        "SELECT severity FROM niggle WHERE date='2026-06-14' AND body_part='kolano'"
-    ).fetchone()
-    assert row[0] == 4
 
 
 # --- `event` command (Phase 9): record what the athlete is training for ---
@@ -521,37 +441,6 @@ def test_parser_plan_import_defaults_to_all_weeks():
 # --- Issue #60: log-sets writes the manual set overlay for a circuit ---------------
 
 
-def _hyrox(conn, aid=1, date="2026-07-28"):
-    db.upsert_activity(
-        conn,
-        {
-            "activity_id": aid,
-            "start_local": f"{date} 19:30:00",
-            "date": date,
-            "gtype": "hiit",
-            "discipline": "Hyrox/HIIT",
-            "training_load": 149.0,
-            "dur_s": 3706,
-        },
-    )
-    db.replace_activity_sets(
-        conn,
-        aid,
-        [
-            {
-                "activity_id": aid,
-                "set_idx": 0,
-                "category": "UNKNOWN",
-                "subcategory": "UNKNOWN",
-                "reps": 4,
-                "sets": None,
-                "duration_s": 3706.0,
-                "max_weight": None,
-            }
-        ],
-    )
-
-
 def test_parser_accepts_log_sets_with_a_station_list():
     args = build_parser().parse_args(
         ["log-sets", "--activity", "23767493130", "SLED_PULL", "SANDBAG_CARRY"]
@@ -560,107 +449,6 @@ def test_parser_accepts_log_sets_with_a_station_list():
     assert args.command == "log-sets"
     assert args.activity_id == 23767493130
     assert args.stations == ["SLED_PULL", "SANDBAG_CARRY"]
-
-
-def test_log_activity_sets_rejects_unknown_activity(conn):
-    with pytest.raises(ValueError, match="not found"):
-        cli.log_activity_sets(
-            conn, activity_id=999, stations=["SLED_PULL"], data_start_date=DATA_START
-        )
-
-
-def test_log_activity_sets_writes_one_row_per_station_and_recomputes(conn):
-    _hyrox(conn)
-
-    out = cli.log_activity_sets(
-        conn,
-        activity_id=1,
-        stations=["SLED_PULL", "SANDBAG_CARRY", "PUSH_PRESS"],
-        data_start_date=DATA_START,
-    )
-
-    assert out == {"date": "2026-07-28", "n_sets": 3, "unmapped": []}
-    rows = conn.execute(
-        "SELECT set_idx, subcategory FROM manual_activity_sets WHERE activity_id=1 ORDER BY 1"
-    ).fetchall()
-    assert rows == [(0, "SLED_PULL"), (1, "SANDBAG_CARRY"), (2, "PUSH_PRESS")]
-    # the captured round is untouched, the mart now reads the stations
-    assert conn.execute("SELECT COUNT(*) FROM activity_sets").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM movement_sets").fetchone()[0] == 3
-    # features ran from the activity's date
-    assert conn.execute("SELECT 1 FROM daily_metrics WHERE date='2026-07-28'").fetchone()
-
-
-def test_log_activity_sets_normalizes_names_and_reports_the_unmapped_ones(conn):
-    _hyrox(conn)
-
-    out = cli.log_activity_sets(
-        conn,
-        activity_id=1,
-        stations=["sled pull", " Sandbag-Carry ", "wall_walk"],
-        data_start_date=DATA_START,
-    )
-
-    names = [
-        r[0] for r in conn.execute("SELECT subcategory FROM manual_activity_sets ORDER BY set_idx")
-    ]
-    assert names == ["SLED_PULL", "SANDBAG_CARRY", "WALL_WALK"]
-    assert out["unmapped"] == ["WALL_WALK"]  # logged, but not yet in exercise_pattern
-
-
-def test_log_activity_sets_accepts_station_details(conn):
-    _hyrox(conn)
-
-    cli.log_activity_sets(
-        conn,
-        activity_id=1,
-        stations=[{"subcategory": "SLED_PULL", "reps": 4, "duration_s": 160.0}, "V_UP"],
-        data_start_date=DATA_START,
-    )
-
-    rows = conn.execute(
-        "SELECT subcategory, reps, duration_s FROM manual_activity_sets ORDER BY set_idx"
-    ).fetchall()
-    assert rows == [("SLED_PULL", 4, 160.0), ("V_UP", None, None)]
-
-
-def test_log_activity_sets_re_log_replaces_the_prior_stations(conn):
-    _hyrox(conn)
-    cli.log_activity_sets(
-        conn, activity_id=1, stations=["SLED_PULL"] * 3, data_start_date=DATA_START
-    )
-
-    cli.log_activity_sets(conn, activity_id=1, stations=["V_UP"], data_start_date=DATA_START)
-
-    assert conn.execute("SELECT subcategory FROM manual_activity_sets").fetchall() == [("V_UP",)]
-
-
-@pytest.mark.parametrize(
-    "stations, message",
-    [
-        ([], "at least one station"),
-        (["SLED_PULL", ""], "empty"),
-        (["SLED PULL!"], "letters, digits"),
-        ([{"reps": 4}], "subcategory"),
-        ([{"subcategory": "SLED_PULL", "reps": -1}], "reps"),
-        ([{"subcategory": "SLED_PULL", "duration_s": "long"}], "duration_s"),
-        ([{"subcategory": "SLED_PULL", "rep": 4}], "unsupported field.*rep"),
-    ],
-)
-def test_log_activity_sets_rejects_malformed_input(conn, stations, message):
-    _hyrox(conn)
-    with pytest.raises(ValueError, match=message):
-        cli.log_activity_sets(conn, activity_id=1, stations=stations, data_start_date=DATA_START)
-
-
-def test_log_activity_sets_survives_a_rollback_probe(conn):
-    """log_activity_sets owns its own transaction; the write must outlive a rollback."""
-    _hyrox(conn)
-    cli.log_activity_sets(conn, activity_id=1, stations=["SLED_PULL"], data_start_date=DATA_START)
-
-    conn.rollback()
-
-    assert conn.execute("SELECT COUNT(*) FROM manual_activity_sets").fetchone()[0] == 1
 
 
 def test_cmd_log_sets_reports_a_failure_with_exit_code_2(tmp_path, monkeypatch, capsys):
@@ -807,3 +595,79 @@ def test_cli_author_refuses_a_non_object_request_as_a_plain_error(
 
     assert args.func(args) == 1
     assert "JSON object" in capsys.readouterr().out
+
+
+def test_event_command_shows_current_block_transition_and_anchor_date(
+    tmp_path, monkeypatch, capsys
+):
+    race = (_dt.date.today() + _dt.timedelta(days=28)).isoformat()
+    path = _seeded_db(tmp_path)
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
+    )
+    args = build_parser().parse_args(
+        [
+            "event",
+            "add",
+            "--date",
+            race,
+            "--type",
+            "hyrox",
+            "--priority",
+            "A",
+            "--status",
+            "confirmed",
+            "--date-precision",
+            "exact",
+        ]
+    )
+
+    assert args.func(args) == 0
+    output = capsys.readouterr().out
+    assert "current block: none ->" in output
+    assert f"anchor {race}" in output
+
+
+def test_event_command_reports_saved_record_and_recovery_after_failed_rebuild(athlete_home, capsys):
+    from garmin_coach.marts import features
+
+    (athlete_home / ".env").write_text(f"DB_PATH=t.db\nDATA_START_DATE={DATA_START}\n")
+    path = _seeded_db(athlete_home)
+    conn = db.connect(str(path))
+    features.features(conn, data_start_date=DATA_START)
+    conn.execute(
+        "CREATE TRIGGER fail_snapshot BEFORE INSERT ON athlete_status BEGIN SELECT RAISE(ABORT, 'late mart failure'); END"
+    )
+    conn.commit()
+    conn.close()
+    race = (_dt.date.today() + _dt.timedelta(days=28)).isoformat()
+
+    code = cli.main(
+        [
+            "--home",
+            str(athlete_home),
+            "event",
+            "add",
+            "--date",
+            race,
+            "--type",
+            "hyrox",
+            "--priority",
+            "A",
+            "--status",
+            "confirmed",
+            "--date-precision",
+            "exact",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert code == 2
+    assert "event partial: record saved; recomputation failed" in output
+    assert f"event 1 on {race}" in output
+    assert "garmin-coach features" in output
+    assert "current block:" not in output
+    with db.connect(str(path)) as reopened:
+        assert db.list_goal_events(reopened)[0]["date"] == race

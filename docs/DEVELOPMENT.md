@@ -54,7 +54,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `coach/` | Digest/signals/policy/recommendation over finished data; explicit report/chart generation. |
 | `workouts/` | Pure author/exercises/hardness, dated-workout lifecycle and the isolated account publisher. |
 | `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
-| `daily.py`, `plan_changes.py` | Complete nightly and plan-import outcomes, including their consequences. |
+| `daily.py`, `plan_changes.py`, `athlete_changes.py` | Complete nightly, plan-import and athlete-change outcomes, including their consequences. |
 | `onboarding.py`, `project.py` | Terminal setup/adoption; guarded source launch and synthetic fixtures. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
 | `distribution.py`, `lifecycle.py` | Standalone bootstrap/scheduling, runtime ownership and recoverable maintenance. |
@@ -102,6 +102,13 @@ accepted weeks, the first file error, known conflicts and dated warnings for unr
 workout evidence, and immediate mart refresh. Unreadable evidence never means no conflict.
 Only `daily` defers that refresh until after sync, using its existing single complete
 mart pass. The core parser remains independent of marts and transport.
+
+`athlete_changes` owns session RPE, niggles, manual overlays and goal-event outcomes
+for both adapters. It commits core facts before a separately transactional mart pass;
+`saved` and `recomputed` describe independent results. A failed rebuild preserves facts
+and the old mart generation, names the saved record and offers offline `features` in
+the same installation. Event failures preserve pre-write block evidence and leave the
+post-write block unknown, avoiding an old-block/new-event-date join (ADR 0036).
 
 `workouts.push` alone reads/writes dated workout specs and push receipts. `publish`
 receives parsed evidence and owns account rules, without filesystem or database reads.
@@ -167,6 +174,10 @@ ones sparingly:
 - Test plan import consequences through CLI/MCP and `daily.run_daily`, with real
   SQLite and temporary plans/receipts. Partial imports retain accepted weeks, and
   nightly conflicts warn without another mart pass or an outbound account call.
+- Test athlete changes through `athlete_changes` with temporary SQLite and late-mart
+  failure triggers (`tests/test_athlete_changes.py`): committed facts after reopen,
+  preserved old marts, honest partial results, overlays, event collisions and offline
+  recovery. Keep CLI/MCP adapter tests for flags, exit codes, freshness and block output.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
 - Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --

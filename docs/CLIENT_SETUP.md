@@ -63,6 +63,8 @@ Use the checkout's existing Poetry environment with Python 3.13. Canonical skill
 symlinks are `.agents/skills/coach` for Codex and `.claude/skills/coach` for Claude Code.
 The guarded launcher finds the in-project environment or Poetry's interpreter;
 it never installs dependencies, logs into Garmin or migrates a database.
+Source `check` and `serve` use the same checkout selected by the launcher, even
+when its interpreter is shared with another checkout.
 
 ```sh
 COACH_SOURCE="$(pwd)"

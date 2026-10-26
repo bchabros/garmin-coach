@@ -46,12 +46,12 @@ def _prepare(root: pathlib.Path) -> None:
 
 
 async def _probe(root: pathlib.Path) -> dict[str, Any]:
+    # Keep the launcher-selected source path, matching the configured serve command.
     evidence = await probe.check(
         pathlib.Path(sys.executable),
         root,
         command=[
             sys.executable,
-            "-I",
             "-m",
             "garmin_coach.project",
             "serve",

@@ -127,14 +127,16 @@ def _runtime_import(root: pathlib.Path) -> dict[str, str]:
 
 
 def _protocol_check(
-    home: pathlib.Path, root: pathlib.Path, runtime: dict[str, str]
+    home: pathlib.Path, root: pathlib.Path, runtime: dict[str, str], settings: Settings
 ) -> dict[str, str]:
     if runtime["state"] != "ready":
         return _check("not_run", "Repair the verified runtime before a stdio probe.")
     from .mcp import probe
 
     try:
-        asyncio.run(probe.check(root / "current" / "venv" / "bin" / "python", home))
+        asyncio.run(
+            probe.check(root / "current" / "venv" / "bin" / "python", home, settings=settings)
+        )
     except Exception:
         return _check(
             "failed", "Run the selected installation's MCP server and inspect local setup."
@@ -306,7 +308,7 @@ def diagnose(home: pathlib.Path, root: pathlib.Path) -> dict[str, Any]:
         },
         "checks": {
             "runtime": runtime,
-            "protocol": _protocol_check(home, root, runtime),
+            "protocol": _protocol_check(home, root, runtime, settings),
             "database": _database(settings),
             "storage": _storage_check(home, root, settings),
             "login": _check(

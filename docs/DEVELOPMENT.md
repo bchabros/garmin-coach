@@ -117,7 +117,12 @@ when an authorized operation needs them. The `get_settings()` compatibility faca
 returns bound settings inside a run and loads configuration for standalone callers.
 Maintenance/client adapters reuse the same captured selection, including equivalent
 filesystem aliases; explicit saved-login diagnosis passes only its captured token path
-to the isolated child, withholding account credentials.
+to the isolated child, withholding account credentials. The doctor stdio probe also
+passes captured settings without credentials to the selected runtime, so its local
+storage and protocol checks inspect the same configuration after an `.env` edit.
+For pre-context releases only, the isolated probe binds their existing settings readers
+to the captured values and retains their guarded server entry point. An existing but
+broken context module or protocol failure never selects that compatibility path.
 
 `core.installation.inspect_database()` reports schema compatibility and independent
 mart/snapshot dates; workflow owners interpret that evidence. Setup's import-completion

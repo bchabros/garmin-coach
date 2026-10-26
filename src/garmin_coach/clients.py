@@ -16,6 +16,7 @@ from typing import Any, Iterator
 from contextlib import contextmanager
 
 from . import coach_resources, distribution
+from .program_receipt import ProgramReceipt
 from .core import installation
 
 
@@ -50,8 +51,8 @@ def _host(client: str) -> str:
 
 
 def _runtime_binding(home: pathlib.Path, runtime: pathlib.Path) -> None:
-    path = runtime / "install-state.json"
-    if not path.exists():
+    value = ProgramReceipt(runtime).read()
+    if not value:
         for root in (runtime / "integrations").glob("*"):
             receipt = _load(root)
             if (
@@ -62,9 +63,6 @@ def _runtime_binding(home: pathlib.Path, runtime: pathlib.Path) -> None:
                     "This runtime serves another athlete installation; use a separate runtime."
                 )
         return
-    value = json.loads(path.read_text())
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
-        raise ValueError("Unsupported runtime receipt; preserve it and repair the managed runtime.")
     selected = value.get("selected_home")
     if selected is not None and _canonical(pathlib.Path(selected)) != home:
         raise ValueError("This runtime serves another athlete installation; use its selected home.")
@@ -355,6 +353,17 @@ def _load(root: pathlib.Path) -> dict[str, Any]:
     if not isinstance(receipt, dict) or receipt.get("schema_version") != 1:
         raise ValueError("Unsupported integration receipt; restore it before setup.")
     return receipt
+
+
+def recorded_selection(home: pathlib.Path, runtime_root: pathlib.Path) -> list[str] | None:
+    """Read saved client choices without native probes; None means no registration receipt."""
+    receipt = _load(integration_root(home, runtime_root))
+    if not receipt:
+        return None
+    selected = receipt.get("selected_clients", [])
+    if not isinstance(selected, list) or any(not isinstance(name, str) for name in selected):
+        raise ValueError("Unsupported integration selection; preserve its receipt for recovery.")
+    return list(selected)
 
 
 def _save(root: pathlib.Path, receipt: dict[str, Any]) -> None:

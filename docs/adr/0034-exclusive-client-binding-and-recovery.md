@@ -16,6 +16,9 @@ Native registrations are user-wide; interrupted commands and old private resourc
   and roll back only verified owned content. Unknown edits remain preserved.
 - Do not eagerly detach all clients or assume unique package names isolate hosts.
   Version update intent; legacy preparing state may already have detached a client.
+  The shared program-receipt owner preserves this v0.1.0 rule and v1 format (#102 T3);
+  unknown v1 phases remain potentially mutating, unsupported operation versions refuse.
+  The separate client owner exposes saved selection without a native status probe.
 - After interrupted native commands, reconcile inventory before replay: a lost
   acknowledgement is not evidence that the operation failed.
 - Removing obsolete resources requires ownership hashes and a deletion journal.

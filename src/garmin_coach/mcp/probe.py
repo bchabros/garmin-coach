@@ -16,6 +16,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from ..core import installation
+from ..core.config import Settings
 from ..synthetic import SYNTHETIC_DATE, create_installation
 
 PROBE_API_VERSION = 1
@@ -39,6 +40,7 @@ async def check(
     env: dict[str, str] | None = None,
     cwd: pathlib.Path | None = None,
     timeout: float = 15,
+    settings: Settings | None = None,
 ) -> ProbeEvidence:
     """Require inventory plus successful digest/snapshot reads over bounded real stdio.
 
@@ -49,6 +51,7 @@ async def check(
         env: Explicit child environment when the caller owns source launch policy.
         cwd: Explicit child working directory when required.
         timeout: Maximum duration of the complete protocol conversation.
+        settings: Validated configuration captured by diagnosis; cannot accompany a custom command.
 
     Returns:
         Inventory and independent evidence dates, never a client-acceptance verdict.
@@ -61,6 +64,10 @@ async def check(
         "--home",
         str(home),
     ]
+    if settings is not None:
+        if command is not None:
+            raise ValueError("Captured settings cannot accompany a custom server command.")
+        selected = _captured_command(python, home, settings)
     parameters = StdioServerParameters(
         command=selected[0],
         args=selected[1:],
@@ -77,6 +84,34 @@ async def check(
                         raise ValueError("Coach digest/snapshot tools missing.")
                     values = await _read_tools(session)
     return _evidence(tools, values)
+
+
+def _captured_command(python: pathlib.Path, home: pathlib.Path, settings: Settings) -> list[str]:
+    # Run the selected runtime's server with validated choices, without reloading .env.
+    # Credentials are unnecessary for the two local reads and never cross this boundary.
+    values = settings.model_dump(exclude={"garmin_email", "garmin_password"})
+    script = """
+import json, os, pathlib, sys
+from importlib.util import find_spec
+from garmin_coach.core import installation
+from garmin_coach.core.config import Settings
+from garmin_coach.mcp import server
+home, values = json.loads(sys.argv[1])
+os.environ[installation.HOME_VARIABLE] = home
+settings = Settings(_env_file=None, garmin_email='', garmin_password=None, **values)
+if find_spec('garmin_coach.runtime') is None:
+    # Pre-context releases retain settings-reader bindings in these two adapters.
+    server.get_settings = lambda: settings
+    server.tools.get_settings = lambda: settings
+    installation.activate = lambda _home=None: settings
+    server.main(existing_db_only=True, argv=['--home', home])
+else:
+    from garmin_coach.runtime import InstallationContext
+    context = InstallationContext(pathlib.Path(home), settings, existing_db_only=True)
+    with context.use():
+        server.server.run()
+"""
+    return [str(python), "-I", "-c", script, json.dumps([str(home), values])]
 
 
 async def _read_tools(session: ClientSession) -> dict[str, Any]:

@@ -15,7 +15,7 @@ One conversational surface needs finished-DB reads, local logs and guarded refre
   reads (#102 T1). The original Hyrox success/error mismatch and chat-only reuse showed
   why moving account calls alone did not establish parity; publisher remains account
   policy, without artifact reads. Athlete writes share a complete application flow
-  (#102 T2, ADR 0036); MCP no longer imports CLI. T3–T6 track the remaining work.
+  (#102 T2, ADR 0036); MCP no longer imports CLI.
 - Local writes and explicit transport operations coexist, but metric computation
   never reads Garmin live. Refresh reuses ETL, stays partial and never advances
   watermarks; freshness accompanies all reads. Nightly owns alerts.

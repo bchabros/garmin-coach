@@ -226,3 +226,20 @@ def test_malformed_spec_metadata_is_refused_before_login(conn, tmp_path, field, 
     with pytest.raises(push.PushRefused, match=field):
         push.push_for_date(conn, date=DATE, connect=connect, reports_dir=tmp_path, confirm=True)
     assert (day / "workout.json").read_bytes() == original
+
+
+@pytest.mark.parametrize("pace_field", ["fast_s_per_km", "slow_s_per_km"])
+def test_zero_saved_pace_refuses_push_before_login(conn, tmp_path, pace_field):
+    spec = run_spec(date=DATE)
+    spec["steps"][1]["target"][pace_field] = 0
+    day = _file_spec(tmp_path, spec)
+    before = (day / "workout.json").read_bytes()
+
+    def connect():
+        pytest.fail("zero saved pace must be refused before account connection")
+
+    with pytest.raises(push.PushRefused, match="workout.json"):
+        push.push_for_date(conn, date=DATE, connect=connect, reports_dir=tmp_path, confirm=True)
+
+    assert (day / "workout.json").read_bytes() == before
+    assert not (day / "push.json").exists()

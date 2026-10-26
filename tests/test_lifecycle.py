@@ -197,8 +197,12 @@ def test_explicit_live_auth_hides_transport_output_and_does_not_sync(
     assert "sync(" not in calls[0][0][-2]
 
 
-def test_doctor_probes_real_stdio_without_importing_a_shadow_package(tmp_path, monkeypatch, capsys):
-    from garmin_coach import distribution, lifecycle
+@pytest.mark.parametrize("edit_configuration", [False, True])
+def test_doctor_probes_captured_configuration_without_importing_a_shadow_package(
+    tmp_path, monkeypatch, capsys, edit_configuration
+):
+    from garmin_coach import cli, distribution
+    from garmin_coach.runtime import InstallationContext
 
     home = make_home(tmp_path / "athlete")
     root, old, _ = managed_program(tmp_path)
@@ -228,12 +232,26 @@ def test_doctor_probes_real_stdio_without_importing_a_shadow_package(tmp_path, m
     monkeypatch.setenv("PYTHONPATH", str(start))
     before = (home / "data/garmin.db").read_bytes()
 
-    assert lifecycle.main(["--home", str(home), "doctor", "--runtime-root", str(root)]) == 0
+    def select(selected_home):
+        context = InstallationContext.select(selected_home)
+        if edit_configuration:
+            (home / ".env").write_text("DB_PATH=./missing.sqlite\n")
+        return context
+
+    assert (
+        cli.main(
+            ["--home", str(home), "doctor", "--runtime-root", str(root)],
+            context_factory=select,
+        )
+        == 0
+    )
 
     result = json.loads(capsys.readouterr().out)
     assert result["checks"]["runtime"]["state"] == "ready"
+    assert result["checks"]["database"]["state"] == "ready"
     assert result["checks"]["protocol"]["state"] == "ready"
     assert (home / "data/garmin.db").read_bytes() == before
+    assert not (home / "missing.sqlite").exists()
     assert not marker.exists()
 
 

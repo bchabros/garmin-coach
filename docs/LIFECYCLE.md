@@ -22,7 +22,7 @@ garmin-coach --home "$HOME/GarminCoach" program remove --confirm
 Local diagnosis reads the existing database without migrating it, checks the runtime,
 reports program and Python versions, verifies skill/client artifacts and examines the
 owned daily job. A bounded stdio probe initializes the verified server, lists its tools
-and reads the selected installation's digest without migrations or writes. It never imports
+and reads the selected installation's digest and snapshot without migrations or writes. It never imports
 training or contacts Garmin. A SQLite read-only connection may create WAL/SHM coordination
 files beside a WAL database; it does not alter its records or migrate its schema. It reports client
 registration state and recovery actions independently for each selected assistant.
@@ -30,6 +30,13 @@ An interrupted `preparing` registration remains incomplete even when another cli
 is prepared. Registration history remains separate from actual activation: `client_acceptance: not_run`
 means no fresh client conversation has been accepted. Client command output and
 credentials are withheld.
+
+Database checks share schema compatibility and independent mart/snapshot dates with the
+other installation flows. Diagnosis requires both dates to be present, without adding
+an age or date-equality threshold. Candidate checks run the selected release's packaged
+probe in its isolated interpreter; older supported releases retain their own probe and
+validated read-only opener. A failed import, unsupported probe version or protocol error
+refuses activation rather than falling back to an older check.
 
 `--live-auth` explicitly attempts to resume the selected installation's saved Garmin
 login. It does not perform sync or a workout operation and never prompts for account

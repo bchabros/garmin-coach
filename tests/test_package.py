@@ -204,3 +204,49 @@ def test_both_installed_commands_run_against_an_installation_from_an_unrelated_f
     assert digest["freshness"]["data_through"] == "2026-07-03"
     assert list(elsewhere.iterdir()) == []
     assert _program_files(environment) == before
+
+
+def test_packaged_synthetic_probe_runs_without_checkout(environment, tmp_path):
+    root = tmp_path / "synthetic athlete"
+    result = subprocess.run(
+        [
+            str(environment / "bin/python"),
+            "-I",
+            "-m",
+            "garmin_coach.mcp.probe",
+            "synthetic",
+            "--home",
+            str(root),
+        ],
+        cwd=tmp_path,
+        env=_clean_environment(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (root / "data/garmin.db").is_file()
+    assert "client_acceptance: not_run" in result.stdout
+    evidence = subprocess.run(
+        [
+            str(environment / "bin/python"),
+            "-I",
+            "-m",
+            "garmin_coach.mcp.probe",
+            "evidence",
+            "--home",
+            str(root),
+        ],
+        cwd=tmp_path,
+        env=_clean_environment(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert evidence.returncode == 0, evidence.stderr
+    observed = json.loads(evidence.stdout)
+    assert observed == {
+        "schema": "compatible",
+        "data_through": "2026-07-03",
+        "snapshot_computed_at": "2026-07-03",
+    }

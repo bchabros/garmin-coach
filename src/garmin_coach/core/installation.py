@@ -14,7 +14,8 @@ import os
 import pathlib
 import sqlite3
 from contextlib import closing
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from pydantic_settings import DotEnvSettingsSource
 
@@ -34,6 +35,28 @@ IDENTITY_SETTINGS = ("garmin_email",)
 
 class InstallationError(ValueError):
     """No usable installation was selected, or the selection contradicts itself."""
+
+
+@dataclass(frozen=True)
+class InstallationEvidence:
+    """Schema and available dates, interpreted separately by each installation workflow."""
+
+    schema: Literal["missing", "incompatible", "compatible"]
+    data_through: str | None = None
+    snapshot_computed_at: str | None = None
+
+
+def inspect_database(settings: Settings) -> InstallationEvidence:
+    """Observe schema and data availability without creating or migrating history."""
+    if not pathlib.Path(settings.db_path).is_file():
+        return InstallationEvidence("missing")
+    try:
+        with closing(read_database(settings)) as conn:
+            horizon = conn.execute("SELECT MAX(date) FROM daily_metrics").fetchone()[0]
+            snapshot = conn.execute("SELECT computed_at FROM athlete_status WHERE id=1").fetchone()
+    except (sqlite3.Error, OSError, InstallationError):
+        return InstallationEvidence("incompatible")
+    return InstallationEvidence("compatible", horizon, snapshot[0] if snapshot else None)
 
 
 def add_home_argument(parser: argparse.ArgumentParser) -> None:
@@ -175,10 +198,27 @@ def read_database(settings: Settings) -> sqlite3.Connection:
         InstallationError: The selected database does not exist.
         sqlite3.DatabaseError: Its schema needs an explicit migration first.
     """
+    return open_existing_database(settings)
+
+
+def open_existing_database(settings: Settings, *, writable: bool = False) -> sqlite3.Connection:
+    """Open validated existing storage without bootstrap, seeding or migration.
+
+    Args:
+        settings: Resolved selected-installation settings.
+        writable: Permit explicit local operations, retaining foreign-key enforcement.
+
+    Raises:
+        InstallationError: The selected database is missing.
+        sqlite3.Error: Storage is unavailable or its schema is incompatible.
+    """
     require_database(settings)
-    uri = pathlib.Path(settings.db_path).as_uri() + "?mode=ro"
+    mode = "rw" if writable else "ro"
+    uri = pathlib.Path(settings.db_path).expanduser().resolve().as_uri() + f"?mode={mode}"
     conn = sqlite3.connect(uri, uri=True)
     try:
+        if writable:
+            conn.execute("PRAGMA foreign_keys = ON")
         db.validate_schema(conn)
     except BaseException:
         conn.close()

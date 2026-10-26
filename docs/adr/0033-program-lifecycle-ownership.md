@@ -13,6 +13,10 @@ Installation maintenance must preserve personal state and recover from partial r
 - Diagnose through read-only schema/storage checks and a bounded stdio read. SQLite
   may create WAL/SHM auxiliaries without changing records/schema. Saved-login testing
   is separately explicit and isolates imports from cwd/PYTHONPATH.
+- Share typed schema/date evidence across installation flows (#102 T4), while keeping
+  each flow's policy: completed empty onboarding is possible, diagnosis requires mart
+  and snapshot dates, and neither imposes a new age or date-equality rule. Existing-only
+  guarded writable connections validate without bootstrap and enforce foreign keys.
 - Before candidate storage checks, back up SQLite consistently (including WAL),
   configuration and integrations. Stage an immutable sibling release, retain previous,
   and refuse incompatible schema. Never migrate or auto-restore an older database.

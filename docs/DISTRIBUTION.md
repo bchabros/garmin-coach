@@ -94,6 +94,11 @@ Poetry export plugin; the workflow provisions pinned Poetry 2.2.1 and
    actual bundle with a private standalone Python, and call digest/snapshot through
    the packaged real stdio server. The same synthetic digest/snapshot probe must pass
    before a candidate is marked ready or activated. No developer dependencies are borrowed.
+   The candidate's packaged `garmin_coach.mcp.probe` owns synthetic settings/data and
+   the bounded inventory/digest/snapshot conversation. Its versioned capability is
+   selected in the candidate interpreter; a failed or unknown capability refuses
+   activation. Only absence permits an older release's own supported probe, preserving
+   rollback without importing the current checkout into the candidate.
 4. Review the native results, then run the workflow with publication enabled to
    publish that tested tag as a prerelease. It uploads architecture-specific runtime
    bundles, manifests, installer scripts and SHA-256 lists.
@@ -152,6 +157,12 @@ Before changing the active runtime, the candidate also validates any existing at
 database through its read-only schema boundary. It neither migrates nor creates that
 database. Setup checks the client status command after registration and preserves each
 selected client's state and required actions, including missing apps and failed registration.
+
+Schema compatibility and available mart/snapshot dates are shared evidence, interpreted
+by each stage. Setup's readiness keeps its existing daily-data requirement; a completed
+empty import remains an honest onboarding result with missing observations. Guarded
+launch and local diagnosis additionally require a saved snapshot. No stage requires the
+dates to match or invents a new age threshold.
 
 Setup records actual stages in the program root's `install-state.json`, including
 versions, selected installation, client preparation and scheduler ownership. This

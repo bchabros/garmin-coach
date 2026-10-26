@@ -199,8 +199,7 @@ def test_cache_installed_plugin_reads_the_selected_database_from_an_unrelated_fo
     athlete_home,
     tmp_path,
 ):
-    from mcp import ClientSession
-    from mcp.client.stdio import StdioServerParameters, stdio_client
+    from garmin_coach.mcp import probe
     from garmin_coach.core import db
     from garmin_coach.marts import snapshot
 
@@ -221,25 +220,18 @@ def test_cache_installed_plugin_reads_the_selected_database_from_an_unrelated_fo
     shutil.copytree(pathlib.Path(output["integration_root"]) / "plugin", cache)
     config = json.loads((cache / ".mcp.json").read_text())["mcpServers"]["coach"]
 
-    async def read():
-        environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
-        environment.pop("GARMIN_COACH_HOME", None)
-        parameters = StdioServerParameters(
-            command=config["command"],
-            args=config["args"],
-            cwd=str(cache),
+    environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    environment.pop("GARMIN_COACH_HOME", None)
+    evidence = asyncio.run(
+        probe.check(
+            pathlib.Path(PYTHON),
+            athlete_home,
+            command=[config["command"], *config["args"]],
+            cwd=cache,
             env=environment,
         )
-        async with stdio_client(parameters) as (incoming, outgoing):
-            async with ClientSession(incoming, outgoing) as session:
-                await session.initialize()
-                digest = await session.call_tool("get_digest", {})
-                standing = await session.call_tool("get_snapshot", {})
-                assert not digest.isError and not standing.isError
-                return digest.structuredContent
-
-    digest = asyncio.run(read())
-    assert digest["freshness"]["data_through"] == "2026-07-03"
+    )
+    assert evidence.data_through == "2026-07-03"
     assert not (cache / "data").exists()
 
 

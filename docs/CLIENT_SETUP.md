@@ -63,6 +63,8 @@ Use the checkout's existing Poetry environment with Python 3.13. Canonical skill
 symlinks are `.agents/skills/coach` for Codex and `.claude/skills/coach` for Claude Code.
 The guarded launcher finds the in-project environment or Poetry's interpreter;
 it never installs dependencies, logs into Garmin or migrates a database.
+Source `check` and `serve` use the same checkout selected by the launcher, even
+when its interpreter is shared with another checkout.
 
 ```sh
 COACH_SOURCE="$(pwd)"
@@ -105,6 +107,11 @@ python3 "$COACH_SOURCE/scripts/coach_project.py" config --project "$COACH_FIXTUR
 Use that folder as primary and its generated configuration. The fixture has sparse
 synthetic observations through **2026-07-03**, complete guidance/coach resources and
 an explicitly synthetic dated profile. It is not a realistic personal history.
+The shared packaged builder owns the settings and observations; source setup adds guidance
+and manifest-selected public coach resources, excluding private context. An existing
+nonempty destination is refused. The same bounded inventory/digest/snapshot probe serves
+source checks, diagnosis and candidate checks; its result still leaves fresh-client
+acceptance pending.
 Send this in a fresh conversation in **each** selected client:
 
 > This is a synthetic installation. Read the project guide, coach router, reporting

@@ -55,7 +55,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `workouts/` | Pure author/exercises/hardness, dated-workout lifecycle and the isolated account publisher. |
 | `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
 | `daily.py`, `plan_changes.py`, `athlete_changes.py` | Complete nightly, plan-import and athlete-change outcomes, including their consequences. |
-| `onboarding.py`, `project.py` | Terminal setup/adoption; guarded source launch and synthetic fixtures. |
+| `onboarding.py`, `project.py`, `synthetic.py` | Terminal setup/adoption; guarded source launch; explicit synthetic installations. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
 | `distribution.py`, `lifecycle.py`, `program_receipt.py` | Bootstrap/scheduling and maintenance, sharing program-state and ownership operations. |
 | `retention.py` | Explicit report-file retention without DB/transport access. |
@@ -106,6 +106,20 @@ The guarded launch rejects conflicting database/plan environment paths and uses
 columns, primary keys, index/view/trigger definitions and required policy keys with
 the packaged schema in memory; installed policy values remain authoritative. It never migrates
 the installation; recovery uses the explicit offline `garmin-coach features` command.
+
+`core.installation.inspect_database()` reports schema compatibility and independent
+mart/snapshot dates; workflow owners interpret that evidence. Setup's import-completion
+checkpoint can honestly describe an empty import, while guarded source launch and local
+diagnosis require both saved dates. Neither adds an age or date-equality threshold.
+`open_existing_database()` validates read-only or guarded writable connections without
+bootstrap; the writable mode retains foreign-key enforcement.
+
+`synthetic.create_installation()` owns synthetic settings and observations in an explicit
+new or empty destination. Source fixtures add guidance and only manifest-selected public
+coach resources. `mcp.probe` owns bounded inventory/digest/snapshot stdio checks and the
+packaged `evidence`/`synthetic` commands. Release checks invoke the candidate's isolated
+interpreter and versioned probe capability; older releases use their own supported probe
+and validated storage opener only when the capability is absent, never after a failure.
 
 `plan_changes.import_plans()` owns the plan import outcome and its consequences:
 accepted weeks, the first file error, known conflicts and dated warnings for unreadable
@@ -165,6 +179,11 @@ ones sparingly:
   updates and preview/confirmed removal. Native subprocesses are faked; the doctor stdio
   test reads a temporary database through a real isolated server without login.
 - Test persistence through `core/db.py` helpers and observable SQLite state.
+- Test shared installation evidence and existing-only openers with temporary missing,
+  older, empty, partial and extended schemas (`tests/core/test_installation_evidence.py`);
+  test candidate probe capability/refusal through isolated fake packages and real
+  subprocesses (`tests/test_runtime_probe.py`). Installed-wheel tests execute the
+  packaged synthetic builder and stdio probe without the source checkout.
 - Test project setup through `scripts/coach_project.py` and real stdio MCP on
   temporary installations (`tests/test_coach_project.py`): selected configuration,
   environment-path conflicts, schema compatibility and preservation, client config

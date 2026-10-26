@@ -16,6 +16,10 @@ A consumer Mac needs a private reproducible runtime without developer dependenci
 - Bootstrap and installed maintenance share canonical stdlib program-receipt operations
   (#102 T3). Build one standalone Python archive from those sources; isolated bootstrap
   must work before application dependencies exist and preserve failure exit codes.
+- Bootstrap, maintenance and nested client operations share stdlib command transport
+  (#102 T6), bundled from the canonical source into that archive. Keep per-call options
+  and recovery ownership unchanged; scoped test injection replaces global subprocess
+  patches without adding retry, default deadlines or candidate-side dependencies.
 - Prepare a versioned inventory before atomic activation. Receipts contain no tokens,
   profile or athlete metrics. Verify owned files/directories/symlink hashes before
   destructive work; preserve unknown/edited/incomplete resources. Only inventoried

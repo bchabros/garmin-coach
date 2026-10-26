@@ -110,10 +110,13 @@ Poetry export plugin; the workflow provisions pinned Poetry 2.2.1 and
    Do not use a moving branch or latest release URL as if it were an immutable version.
 
 Release tooling builds `bootstrap.py` as one executable Python archive containing the
-canonical standard-library installer and program-receipt modules. It runs with isolated
+canonical standard-library installer, program-receipt and command-runner modules. It runs with isolated
 Python before the application package or its dependencies are installed; it propagates
 installer failures as nonzero exits. This keeps program-state rules shared with the
 installed maintenance code without requiring an installed package during bootstrap.
+The shared runner preserves each operation's existing subprocess options; production
+still runs the same commands, while tests inject transport without replacing unrelated
+subprocesses or changing the candidate's own checks.
 
 The installer verifies Python, bundle and manifest hashes before execution. Runtime
 requirements come from the Poetry lock, are binary wheels only, and are installed with

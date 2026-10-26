@@ -21,6 +21,7 @@ import uuid
 from typing import Any
 
 
+from . import system_commands
 from .program_receipt import (
     SCHEMA_VERSION,
     ProgramReceipt,
@@ -81,7 +82,7 @@ def validate_release_platform(metadata: dict[str, Any]) -> None:
     if platform.system() != "Darwin" or platform.machine() != metadata["architecture"]:
         raise ValueError("Release does not match this macOS architecture.")
     if platform.machine() == "x86_64":
-        translated = subprocess.run(
+        translated = system_commands.run(
             ["/usr/sbin/sysctl", "-in", "sysctl.proc_translated"],
             capture_output=True,
             text=True,
@@ -100,8 +101,8 @@ def validate_release_platform(metadata: dict[str, Any]) -> None:
 
 def _install_environment(release: pathlib.Path) -> None:
     python = release / "python" / "bin" / "python3"
-    subprocess.run([str(python), "-I", "-m", "venv", str(release / "venv")], check=True)
-    subprocess.run(
+    system_commands.run([str(python), "-I", "-m", "venv", str(release / "venv")], check=True)
+    system_commands.run(
         [
             str(release / "venv" / "bin" / "python"),
             "-I",
@@ -290,7 +291,7 @@ def _run_packaged_probe(
     capture: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="coach-runtime-probe-") as temporary:
-        return subprocess.run(
+        return system_commands.run(
             [str(python), "-I", "-c", _PROBE_BRIDGE, json.dumps(request)],
             cwd=temporary,
             env={**_probe_environment(), "HOME": temporary},
@@ -371,7 +372,7 @@ def _runtime_check(release: pathlib.Path, metadata: dict[str, Any]) -> None:
         "assert files('garmin_coach.core').joinpath('schema.sql').is_file()"
     )
     with tempfile.TemporaryDirectory(prefix="coach-import-probe-") as temporary:
-        subprocess.run(
+        system_commands.run(
             [str(release / "venv" / "bin" / "python"), "-I", "-c", script],
             env={**_probe_environment(), "HOME": temporary},
             check=True,
@@ -426,7 +427,7 @@ def activate_release(release: pathlib.Path, root: pathlib.Path) -> None:
 
 
 def _execute(arguments: list[str]) -> None:
-    subprocess.run(arguments, check=True)
+    system_commands.run(arguments, check=True)
 
 
 def _schedule_observation(previous: dict[str, Any], path: pathlib.Path) -> dict[str, Any]:
@@ -539,7 +540,7 @@ def _printed_schedule_time(record: dict[str, Any], output: str) -> bool:
 
 
 def _owned_schedule_is_loaded(record: dict[str, Any]) -> bool:
-    result = subprocess.run(
+    result = system_commands.run(
         ["/bin/launchctl", "print", f"gui/{os.getuid()}/{record['label']}"],
         check=False,
         capture_output=True,
@@ -628,7 +629,7 @@ def _legacy_schedule(agents: pathlib.Path, *, inspect_loaded: bool) -> list[str]
     present = legacy.exists() or legacy.is_symlink()
     if not present and inspect_loaded:
         try:
-            result = subprocess.run(
+            result = system_commands.run(
                 ["/bin/launchctl", "print", f"gui/{os.getuid()}/com.garmincoach.daily"],
                 check=False,
                 capture_output=True,
@@ -697,7 +698,7 @@ def configure_schedule(
 
 
 def _run_stage(arguments: list[str]) -> int:
-    return subprocess.run(arguments, check=False).returncode
+    return system_commands.run(arguments, check=False).returncode
 
 
 def _readiness(home: pathlib.Path) -> str:
@@ -758,7 +759,7 @@ def _client_result(
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"status": "incomplete", "exit_code": code, "by_client": {}}
     try:
-        observed = subprocess.run(
+        observed = system_commands.run(
             command + ["clients", "status", "--runtime-root", str(root)],
             check=True,
             capture_output=True,

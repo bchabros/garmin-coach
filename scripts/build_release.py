@@ -170,7 +170,7 @@ def build_bootstrap(target: pathlib.Path) -> None:
         package = pathlib.Path(temporary) / "garmin_coach"
         package.mkdir()
         (package / "__init__.py").write_text("")
-        for name in ("distribution.py", "program_receipt.py"):
+        for name in ("distribution.py", "program_receipt.py", "system_commands.py"):
             shutil.copyfile(ROOT / "src" / "garmin_coach" / name, package / name)
         (pathlib.Path(temporary) / "__main__.py").write_text(
             "from garmin_coach.distribution import main\nraise SystemExit(main())\n"

@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 from . import coach_resources, distribution
 from .program_receipt import ProgramReceipt
+from . import system_commands
 from .core import installation
 from .runtime import InstallationContext, settings_for
 
@@ -94,7 +95,7 @@ def _native_inventory(
 ) -> list[dict[str, Any]] | None:
     arguments = [executable, "plugin", *(["marketplace"] if marketplaces else []), "list", "--json"]
     try:
-        result = subprocess.run(
+        result = system_commands.run(
             arguments, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False
         )
         if result.returncode:
@@ -373,7 +374,7 @@ def _save(root: pathlib.Path, receipt: dict[str, Any]) -> None:
 
 def _command(arguments: list[str]) -> bool:
     try:
-        result = subprocess.run(
+        result = system_commands.run(
             arguments, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False
         )
     except (OSError, subprocess.TimeoutExpired):

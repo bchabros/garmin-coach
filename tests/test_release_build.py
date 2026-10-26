@@ -167,7 +167,12 @@ def test_release_bundle_excludes_even_tracked_private_skill_resources(
         shutil.copyfile(source / "skills/coach" / name, target)
     private = checkout / "skills/coach/references/context.md"
     private.write_text("Synthetic private athlete facts")
-    for name in ("distribution.py", "program_receipt.py", "coach_resources.json"):
+    for name in (
+        "distribution.py",
+        "program_receipt.py",
+        "system_commands.py",
+        "coach_resources.json",
+    ):
         target = checkout / "src/garmin_coach" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / "src/garmin_coach" / name, target)

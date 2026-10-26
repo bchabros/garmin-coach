@@ -499,3 +499,31 @@ Use [client setup](CLIENT_SETUP.md) for managed plugins, guarded source configur
 synthetic acceptance and recovery. A missing supported runtime is an operator repair
 step; a coaching conversation does not install substitute global dependencies.
 Keep registration, protocol and fresh-conversation acceptance separate.
+
+## Captured laps and interval history
+
+`activity-laps ACTIVITY_ID` reads one saved activity's captured laps and descriptive
+interval summary, or an explicit unavailable reason, without Garmin transport.
+CLI and the `get_activity_laps` coach tool share the saved-data read and freshness
+envelope. A captured lap is not automatically a repetition. See
+[ADR 0037](adr/0037-captured-interval-evidence.md) for the verified evidence boundary.
+
+An operator upgrading an existing installation first stops its writers and uses the
+new program's offline `features` command to add the packaged schema and rebuild marts.
+A guarded source client must be restarted only after this explicit offline step.
+To import missing historical laps, use the supported selected-home invocation from
+the source checkout (managed installations use their stable launcher):
+
+```bash
+poetry run garmin-coach --home /absolute/path/to/athlete features
+poetry run garmin-coach --home /absolute/path/to/athlete backfill --from 2026-06-08 --to YYYY-MM-DD
+poetry run garmin-coach --home /absolute/path/to/athlete features
+```
+
+The original installation's first real history is 2026-06-08; another installation
+uses its own configured data start. Backfill imports raw/core without rebuilding
+marts, so the final offline `features` is required. Same-day refresh already uses
+the shared enrichment path and remains partial, without advancing watermarks.
+Both lap endpoints must complete before replacing the captured set; a failed or
+absent response retains the prior set, and a valid empty capture clears it.
+This historical transport is an operator operation, never a coach-side live read.

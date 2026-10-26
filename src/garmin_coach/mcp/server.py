@@ -87,6 +87,16 @@ def get_recent_activities(n: int = 10) -> dict[str, Any]:
 
 
 @server.tool(annotations=_READS_DB)
+def get_activity_laps(activity_id: int) -> dict[str, Any]:
+    """Saved activity laps and descriptive interval facts, with provenance and coverage."""
+    conn = _open()
+    try:
+        return tools.get_activity_laps(conn, activity_id)
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""
     conn = _open()

@@ -284,7 +284,16 @@ def _upsert(conn: sqlite3.Connection, table: str, row: dict[str, Any], pk: str) 
 
 def upsert_activity(conn: sqlite3.Connection, row: dict[str, Any]) -> None:
     """Upsert an `activities` row by activity ID."""
+    previous = conn.execute(
+        "SELECT date, gtype FROM activities WHERE activity_id=?", (row["activity_id"],)
+    ).fetchone()
     _upsert(conn, "activities", row, pk="activity_id")
+    if previous and any(
+        key in row and row[key] != value for key, value in zip(("date", "gtype"), previous)
+    ):
+        conn.execute(
+            "DELETE FROM activity_interval_summaries WHERE activity_id=?", (row["activity_id"],)
+        )
 
 
 def replace_activity_sets(

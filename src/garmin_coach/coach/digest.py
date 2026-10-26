@@ -307,6 +307,9 @@ def _weekly_section(
     section["plan_vs_actual"] = _weekly.plan_vs_actual(
         conn, latest["week_start"], thr["hard_te_load"]
     )
+    from . import activity
+
+    section["interval_sessions"] = activity.weekly(conn, latest["week_start"])
     return section
 
 

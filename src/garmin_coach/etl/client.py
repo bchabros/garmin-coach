@@ -265,6 +265,14 @@ class GarminTransport:
         """Fetch per-activity exercise sets (strength/Hyrox work only)."""
         return self._api.get_activity_exercise_sets(str(activity_id))
 
+    def get_activity_splits(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch captured laps; Garmin reports seconds, metres and metres/second."""
+        return self._api.get_activity_splits(str(activity_id))
+
+    def get_activity_typed_splits(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch typed groups, including explicit lap membership where available."""
+        return self._api.get_activity_typed_splits(str(activity_id))
+
     def get_lactate_threshold(
         self, start_date: str | None = None, end_date: str | None = None
     ) -> dict[str, Any] | None:

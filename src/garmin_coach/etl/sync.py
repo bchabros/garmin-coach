@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
-from ..core import db, models
+from ..core import db, laps, models
 from ..core.config import DEFAULT_RECHECK_DAYS
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class SyncResult:
     attempted_streams: set[str] = field(default_factory=set)
     progressed_streams: set[str] = field(default_factory=set)
     warnings: list[str] = field(default_factory=list)
-    # Per-activity enrichment failures (weather, exercise sets). Deliberately not
+    # Per-activity enrichment failures (weather, captured laps, exercise sets). Deliberately not
     # warnings: a missing enrichment is partial success (ADR 0001), not a stream
     # outage, so it is reported without degrading the run's status.
     enrichment_misses: list[str] = field(default_factory=list)
@@ -83,6 +83,14 @@ class GarminClient(Protocol):
 
     def get_activity_exercise_sets(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch per-activity exercise sets for one activity."""
+        ...
+
+    def get_activity_splits(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch captured chronological laps for one activity."""
+        ...
+
+    def get_activity_typed_splits(self, activity_id: int) -> dict[str, Any] | None:
+        """Fetch typed execution groups and their explicit lap references."""
         ...
 
     def get_lactate_threshold(
@@ -232,8 +240,8 @@ def _store_activities(
     """Store activity range payload raw-first, then upsert each core activity.
 
     When ``client`` is given, each activity is enriched with its weather
-    (``temp_c``) and its exercise sets; both raw payloads are appended for
-    reprocessing, filed under the activity's own day rather than the requested
+    (``temp_c``), captured laps/groups and exercise sets. Their raw payloads are
+    appended for reprocessing, filed under the activity's own day rather than the requested
     range start, so reprocessing by date finds them. Each enrichment is
     best-effort unless the caller supplies a matching stop-on-error predicate.
     """
@@ -248,9 +256,43 @@ def _store_activities(
             )
         db.upsert_activity(conn, models.normalize_activity(act, weather))
         if client is not None and activity_id is not None:
+            _store_laps(conn, day, activity_id, client, misses, stop_on_error=stop_on_error)
             _store_exercise_sets(
                 conn, day, activity_id, client, misses, stop_on_error=stop_on_error
             )
+
+
+def _store_laps(
+    conn: sqlite3.Connection,
+    ref_date: str,
+    activity_id: int,
+    client: GarminClient,
+    misses: list[str] | None,
+    *,
+    stop_on_error: Callable[[Exception], bool] | None = None,
+) -> None:
+    """Capture both source payloads raw-first, replacing only a complete capture."""
+    payloads = []
+    for method, key in (
+        ("get_activity_splits", "lapDTOs"),
+        ("get_activity_typed_splits", "splits"),
+    ):
+
+        def fetch() -> dict[str, Any] | None:
+            payload = getattr(client, method)(activity_id)
+            if payload is not None:
+                db.insert_raw(conn, method, ref_date, json.dumps(payload))
+                if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
+                    raise ValueError("malformed captured-lap payload")
+                if payload.get("activityId") not in (None, activity_id):
+                    raise ValueError("captured-lap activity identity mismatch")
+            return payload
+
+        payload = _fetch_enrichment(fetch, method, activity_id, misses, stop_on_error)
+        if payload is None:
+            return
+        payloads.append(payload)
+    laps.replace(conn, activity_id, payloads[0], payloads[1])
 
 
 def _store_weather(
@@ -357,7 +399,7 @@ def backfill(
         on_day_complete: Optional checkpoint callback, called only after a whole
             day's streams have committed. It never changes sync watermarks.
         stop_on_enrichment_error: Optional transport-neutral failure predicate. Matching
-            weather, sets or LTHR failures abort before daily checkpoints; other
+            weather, laps, sets or LTHR failures abort before daily checkpoints; other
             optional endpoint errors keep the established best-effort behavior.
     """
     start = dt.date.fromisoformat(from_date)

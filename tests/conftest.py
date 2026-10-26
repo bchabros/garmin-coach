@@ -178,6 +178,12 @@ class FakeGarminClient:
             raise payload
         return payload
 
+    def get_activity_splits(self, activity_id: int):
+        return None
+
+    def get_activity_typed_splits(self, activity_id: int):
+        return None
+
     def get_lactate_threshold(self, start_date=None, end_date=None):
         if start_date is None:
             self.calls.append(("lactate", "latest"))

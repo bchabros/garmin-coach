@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
 from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
-from .coach import report
+from .coach import activity, freshness, report
 from .core import db, events as _events, installation
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -71,6 +71,22 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     if result.total_outage:
         return 1
     return 0
+
+
+def _cmd_activity_laps(args: argparse.Namespace) -> int:
+    context = current()
+    conn = context.open_database()
+    try:
+        data = activity.read(conn, args.activity_id)
+        print(
+            json.dumps(
+                freshness.wrap(conn, data, recheck_days=context.settings.sync_recheck_days),
+                indent=2,
+            )
+        )
+        return 0 if data["activity"] is not None else 1
+    finally:
+        conn.close()
 
 
 def _cmd_features(args: argparse.Namespace) -> int:
@@ -465,6 +481,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
     )
     rf.set_defaults(func=_cmd_refresh_today)
+
+    al = sub.add_parser(
+        "activity-laps", help="Read saved laps and descriptive repetition facts (no network)."
+    )
+    al.add_argument("activity_id", type=int, help="Stored Garmin activity ID.")
+    al.set_defaults(func=_cmd_activity_laps)
 
     ft = sub.add_parser("features", help="Recompute the daily_metrics mart from core data.")
     ft.add_argument(

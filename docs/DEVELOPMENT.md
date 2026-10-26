@@ -167,6 +167,14 @@ receives parsed evidence and owns account rules, without filesystem or database 
 Status must separate the push event from current reconciliation; failed evidence reads
 never rewrite the artifact or establish absence.
 
+`core.laps` owns captured lap/group normalization and atomic complete-set replacement.
+`marts.intervals` verifies execution evidence and materializes descriptive summaries
+inside `features`; `coach.activity` is the shared stored-activity/complete-week read.
+CLI/MCP share `coach.freshness` for their evidence-date envelope. See ADR 0037 for
+why captured laps, explicit groups and overlapping RWD classifications stay separate.
+Tests exercise the existing import, SQLite, features, saved-read and adapter seams
+on temporary installations (`tests/test_activity_laps.py`).
+
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
 not initialize Matplotlib even when the CLI imports the report module.

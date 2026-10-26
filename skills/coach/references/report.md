@@ -19,6 +19,43 @@ required evidence is unavailable, state the prerequisite rather than constructin
 Answer the question using the profile rail, null handling and source rules; finish
 with the digest's disclaimer verbatim when a digest is available. Stop after the answer.
 
+## Stored interval evidence
+
+For a question about individual repetitions, use `get_recent_activities` to find the
+activity, then `get_activity_laps(activity_id)`. Its `data` contains captured laps,
+a descriptive `summary` or an `unavailable_reason`, source labels and `partial_today`.
+Keep the freshness envelope. `has_laps` and `has_interval_summary` are availability
+markers, not proof that every field is present. Without MCP, an operator can use the
+selected installation's `activity-laps <activity_id>` CLI read.
+
+A captured lap, an executed step and one work repetition are different concepts.
+Use the returned work groups and their references; a repetition can span several
+laps. A missing/ambiguous role or grouping remains unavailable. Session names, pace,
+HR, planned workouts and ACTIVE alone do not establish executed repetitions.
+
+- `hr_change_first_to_last_bpm` is the change in HR between the first and last
+  repetition, last minus first. Cite average/maximum HR inputs from `first_work` and
+  `last_work`. Fewer than two work repetitions gives null comparisons. This is a
+  descriptive change, not isolated physiological drift.
+- `work_recovery_difference` is an approximation: work maximum HR minus the immediately
+  following identified recovery's average HR, in bpm. Cite the pair references,
+  inputs, recovery duration/type, valid-pair count and total work count. Its session
+  mean uses available pairs only. Negative values are valid; null is unknown.
+  This compares lap aggregates, not measured end-to-end recovery, HRR60 or recovery
+  quality. Different recovery durations/modes do not establish improved recovery.
+- `outdoor_pace` reports captured fastest/slowest work pace and their spread in s/km,
+  with valid/total work coverage. Treadmill pace spread is unavailable. Captured
+  treadmill pace/distance has uncertain sensor provenance and accuracy; preserve
+  the actual time and HR evidence. Athlete-reported console settings are separate
+  evidence and cannot be saved by this read (follow-up #105).
+
+In a weekly report use only `weekly.interval_sessions`, already restricted to that
+block's latest complete week and report horizon. Summarize available descriptive
+facts briefly, without lap tables or new thresholds, signals or recommendations.
+Read today's activity separately; keep its partial status rather than inserting it
+into the previous week's block. If laps were never imported, name that prerequisite;
+historical import is an operator task, not a live Garmin query by the coach.
+
 ## Requested report artifacts
 
 Enter this procedure only when the athlete requests a saved report or charts, and

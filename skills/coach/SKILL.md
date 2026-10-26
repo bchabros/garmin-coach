@@ -18,7 +18,7 @@ A saved-context lookup can lead into reporting, planning or workout authoring.
 
 - Before you take in Garmin-derived numbers or calendar data - reading
   `reports/{today}/digest.json` or `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
-  / `get_recommendation` / `get_recent_activities` / `get_events`, whether you are
+  / `get_recommendation` / `get_recent_activities` / `get_activity_laps` / `get_events`, whether you are
   writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
   `references/report.md`. It carries what every field means and which may be null, and
   the fields are the same whichever way they arrive. The same file covers what to do

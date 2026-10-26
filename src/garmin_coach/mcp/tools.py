@@ -24,37 +24,13 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
-from ..coach import digest, thresholds as _thresholds
+from ..coach import activity, digest, freshness, thresholds as _thresholds
 from ..core import db, manual_sets, plan
 from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
 from ..marts import features, periodize, snapshot
 from ..workouts import publish, push
-
-# Mart fields that accumulate during the day; they are only final after the
-# nightly run. Morning-complete streams (sleep, HRV, readiness) never appear.
-PARTIAL_INTRADAY_FIELDS = (
-    "load_day",
-    "acute7",
-    "chronic28",
-    "acwr",
-    "load_low",
-    "load_high",
-    "load_anaerobic",
-    "load_strength",
-    "z1_min",
-    "z2_min",
-    "z3_min",
-    "z4_min",
-    "z5_min",
-    "rhr",
-    "rhr_delta",
-    "stress_avg",
-    "bb_min",
-    "bb_max",
-    "bb_recharge",
-)
 
 # Compact activity projection: enough for "what did I do?", no per-minute series.
 _ACTIVITY_COLUMNS = (
@@ -73,25 +49,8 @@ _ACTIVITY_COLUMNS = (
 )
 
 
-def _freshness(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Build the freshness envelope from the mart horizon vs the actual today.
-
-    ``unconfirmed_days`` rides along on every response, not only on the digest: the
-    weekly review that misread a not-yet-uploaded run as a rest day was written from
-    the weekly read (issue #72).
-    """
-    data_through = db.latest_mart_date(conn)
-    today_included = data_through == dt.date.today().isoformat()
-    return {
-        "data_through": data_through,
-        "today_included": today_included,
-        "partial_fields": list(PARTIAL_INTRADAY_FIELDS) if today_included else [],
-        "unconfirmed_days": plan.unconfirmed_days(conn, window_days=_recheck_days()),
-    }
-
-
 def _wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
-    return {"data": data, "freshness": _freshness(conn)}
+    return freshness.wrap(conn, data, recheck_days=_recheck_days())
 
 
 def wrap(conn: sqlite3.Connection, data: Any) -> dict[str, Any]:
@@ -145,9 +104,15 @@ def get_recent_activities(conn: sqlite3.Connection, n: int = 10) -> dict[str, An
     today = dt.date.today().isoformat()
     rows = _rows(cur)
     for row in rows:
+        row.update(activity.markers(conn, row["activity_id"]))
         if row.get("date") == today:
             row["partial_today"] = True
     return _wrap(conn, rows)
+
+
+def get_activity_laps(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
+    """Read saved laps and descriptive interval facts, without contacting Garmin."""
+    return _wrap(conn, activity.read(conn, activity_id))
 
 
 def get_weekly(conn: sqlite3.Connection, week_start: str | None = None) -> dict[str, Any]:

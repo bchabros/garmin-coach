@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import types
 
 import pytest
 
@@ -1112,9 +1111,11 @@ def test_get_pushed_workouts_lists_the_receipts_newest_first(conn, tmp_path):
     assert out["workouts"][0]["applied"] is True
 
 
-def test_the_digest_and_the_envelope_share_one_recheck_window(conn, monkeypatch):
+def test_the_digest_and_the_envelope_share_one_recheck_window(conn, athlete_home):
     """Two windows in one response would contradict each other (ADR 0026)."""
-    monkeypatch.setattr(tools, "get_settings", lambda: types.SimpleNamespace(sync_recheck_days=5))
+    from garmin_coach.runtime import InstallationContext
+
+    (athlete_home / ".env").write_text("SYNC_RECHECK_DAYS=5\n")
     today = dt.date.today()
     for back in range(1, 6):
         day = today - dt.timedelta(days=back)
@@ -1128,7 +1129,8 @@ def test_the_digest_and_the_envelope_share_one_recheck_window(conn, monkeypatch)
         )
     _seed_mart(conn, YESTERDAY, hrv=60, load_day=10)
 
-    out = tools.get_digest(conn)
+    with InstallationContext.select(athlete_home).use():
+        out = tools.get_digest(conn)
 
     assert len(out["freshness"]["unconfirmed_days"]) == 5
     assert out["data"]["window"]["unconfirmed_days"] == out["freshness"]["unconfirmed_days"]

@@ -54,6 +54,7 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 | `coach/` | Digest/signals/policy/recommendation over finished data; explicit report/chart generation. |
 | `workouts/` | Pure author/exercises/hardness, dated-workout lifecycle and the isolated account publisher. |
 | `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
+| `runtime.py` | Captured installation context, fresh database openers and separate lazy Garmin factories. |
 | `daily.py`, `plan_changes.py`, `athlete_changes.py` | Complete nightly, plan-import and athlete-change outcomes, including their consequences. |
 | `onboarding.py`, `project.py`, `synthetic.py` | Terminal setup/adoption; guarded source launch; explicit synthetic installations. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
@@ -106,6 +107,22 @@ The guarded launch rejects conflicting database/plan environment paths and uses
 columns, primary keys, index/view/trigger definitions and required policy keys with
 the packaged schema in memory; installed policy values remain authoritative. It never migrates
 the installation; recovery uses the explicit offline `garmin-coach features` command.
+
+`runtime.InstallationContext` captures selection and configuration at command/server
+startup. Adapters and tool freshness use that context; `.env` edits take effect on the
+next run/server restart. Context variables carry it through async tool tasks without
+retaining SQLite connections, observations or account sessions. Each operation opens
+its own connection; import and publisher factories receive the captured settings only
+when an authorized operation needs them. The `get_settings()` compatibility facade
+returns bound settings inside a run and loads configuration for standalone callers.
+Maintenance/client adapters reuse the same captured selection, including equivalent
+filesystem aliases; explicit saved-login diagnosis passes only its captured token path
+to the isolated child, withholding account credentials. The doctor stdio probe also
+passes captured settings without credentials to the selected runtime, so its local
+storage and protocol checks inspect the same configuration after an `.env` edit.
+For pre-context releases only, the isolated probe binds their existing settings readers
+to the captured values and retains their guarded server entry point. An existing but
+broken context module or protocol failure never selects that compatibility path.
 
 `core.installation.inspect_database()` reports schema compatibility and independent
 mart/snapshot dates; workflow owners interpret that evidence. Setup's import-completion
@@ -197,6 +214,10 @@ ones sparingly:
   Poetry). An autouse guard in `tests/conftest.py` scrubs the selection and path
   variables, isolates HOME/XDG directories and starts every test in an empty folder, so no test can fall back to the
   owner's checkout; a test that needs settings selects `athlete_home`.
+- Test captured configuration, fresh connections and lazy factories through the public
+  installation context and CLI (`tests/test_runtime.py`); real stdio verifies unchanged
+  running settings, live observations/plan files and adoption after restart. Adapter
+  tests bind a public temporary context rather than replacing settings readers.
 - Test orchestration through `etl/sync.py` with an injected fake Garmin client.
 - Test the complete dated-workout operations through `workouts.push` with real SQLite,
   temporary specs/receipts and a factory returning `FakePublisher` (`tests/workouts/`).

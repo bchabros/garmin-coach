@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from . import coach_resources, distribution
 from .program_receipt import ProgramReceipt
 from .core import installation
+from .runtime import InstallationContext, settings_for
 
 
 _PUBLIC_COACH_RESOURCES = coach_resources.public_names()
@@ -880,7 +881,7 @@ def _configure(
     if runtime_root.is_relative_to(home) or home.is_relative_to(runtime_root):
         raise ValueError("The program runtime and athlete installation must be separate folders.")
     _runtime_binding(home, runtime_root)
-    installation.activate(home)
+    settings_for(home)
     root = integration_root(home, runtime_root)
     previous = _load(root)
     selected = list(dict.fromkeys([*previous.get("selected_clients", []), *selected]))
@@ -930,7 +931,7 @@ def configure(
         raise ValueError("The program runtime and athlete installation must be separate folders.")
     if not selected or any(client not in ("work", "codex", "claude-code") for client in selected):
         raise ValueError("Select work, codex, claude-code, or a combination.")
-    installation.activate(home)
+    settings_for(home)
     previous = _load(integration_root(home, runtime_root))
     combined = list(dict.fromkeys([*previous.get("selected_clients", []), *selected]))
     with _binding_registry() as (path, registry):
@@ -1082,7 +1083,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--clients", default="")
     parser.add_argument("--confirm", action="store_true")
     args = parser.parse_args(argv)
-    return _handle_cli(args)
+    try:
+        with InstallationContext.select(args.home).use():
+            return _handle_cli(args)
+    except installation.InstallationError as exc:
+        print(f"clients: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

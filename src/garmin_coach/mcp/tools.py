@@ -26,7 +26,7 @@ from typing import Any
 from .. import athlete_changes, daily, plan_changes
 from ..coach import digest, thresholds as _thresholds
 from ..core import db, manual_sets, plan
-from ..core.config import get_settings
+from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
 from ..marts import features, periodize, snapshot
@@ -114,7 +114,7 @@ def _digest_for(conn: sqlite3.Connection, to_date: str | None = None) -> dict[st
 
 def _recheck_days() -> int:
     """The re-check window the nightly sync uses - one source for every response."""
-    return get_settings().sync_recheck_days
+    return current().settings.sync_recheck_days
 
 
 def _day_before(date: str) -> str:

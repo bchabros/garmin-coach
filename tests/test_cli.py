@@ -5,13 +5,13 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
-import types
 
 import pytest
 
 from garmin_coach import cli
 from garmin_coach.core import db, plan
 from garmin_coach.cli import build_parser
+from garmin_coach.runtime import InstallationContext
 from garmin_coach.workouts import publish, push
 from tests.conftest import FakePublisher, run_spec
 
@@ -29,6 +29,17 @@ def _existing_db(tmp_path) -> str:
     return str(path)
 
 
+@pytest.fixture(autouse=True)
+def selected_context(athlete_home, tmp_path):
+    """Direct adapter calls use the same public context as command entry points."""
+    path = _existing_db(tmp_path)
+    (athlete_home / ".env").write_text(
+        f"DB_PATH={path}\nLOG_PATH={tmp_path / 'daily.log'}\nLOG_BACKUP_COUNT=1\n"
+    )
+    with InstallationContext.select(athlete_home).use():
+        yield
+
+
 # --- push: the CLI resolves the account the same way the MCP path does (#40) --
 
 PUSH_DATE = "2026-07-17"
@@ -39,10 +50,7 @@ def _run_cli_push(tmp_path, monkeypatch, pub, spec, *, replace=False):
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir(exist_ok=True)
     (day_dir / "workout.json").write_text(json.dumps(spec))
-    monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
-    )
-    monkeypatch.setattr(cli.publish, "connect_publisher", lambda settings: pub)
+    monkeypatch.setattr(publish, "connect_publisher", lambda settings: pub)
     args = argparse.Namespace(
         date=PUSH_DATE, reports_dir=str(tmp_path), confirm=True, replace=replace
     )
@@ -113,9 +121,6 @@ def test_cli_push_refuses_a_different_date_before_login(
     day_dir = tmp_path / PUSH_DATE
     day_dir.mkdir()
     (day_dir / "workout.json").write_text(json.dumps(run_spec(date="2026-07-18")))
-    monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
-    )
     connections = []
     pub = FakePublisher()
 
@@ -255,11 +260,6 @@ def _seeded_db(tmp_path, dates=("2026-07-13",)):
 def test_cmd_event_add_rebuilds_the_block_calendar(tmp_path, monkeypatch, capsys):
     """A race recorded from the terminal dates the periodization at once (#72)."""
     path = _seeded_db(tmp_path)
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
-    )
     args = argparse.Namespace(
         event_command="add",
         date="2026-10-10",
@@ -282,11 +282,6 @@ def test_cmd_event_add_rebuilds_the_block_calendar(tmp_path, monkeypatch, capsys
 def test_cmd_event_update_rebuilds_the_block_calendar(tmp_path, monkeypatch):
     """Pinning the race date moves every week's block without a second command (#72)."""
     path = _seeded_db(tmp_path)
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
-    )
     add = argparse.Namespace(
         event_command="add",
         date="2026-10-17",
@@ -338,11 +333,6 @@ def test_cmd_plan_import_rebuilds_plan_versus_actual(tmp_path, monkeypatch, caps
         _week_file(["easy", "quality", "rest", "quality", "easy", "rest", "quality"]),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
-    )
     args = argparse.Namespace(
         week=None, plans_dir=str(plans_dir), reports_dir=str(tmp_path / "reports")
     )
@@ -375,11 +365,6 @@ def test_plan_import_reports_a_pushed_workout_the_new_plan_invalidates(
             {"workout_id": 1000, "session_type": "quality", "pushed_at": "2026-07-15T17:28:00"}
         )
     )
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date=DATA_START),
-    )
     args = argparse.Namespace(week=None, plans_dir=str(plans_dir), reports_dir=str(reports_dir))
 
     code = cli._cmd_plan(args)
@@ -398,11 +383,6 @@ def test_cli_partial_plan_import_names_the_saved_week_and_rebuilds_it(
     plans.mkdir()
     (plans / "2026-07-13_week.md").write_text(_week_file(["easy"] * 7), encoding="utf-8")
     (plans / "2026-07-20_week.md").write_text("invalid plan", encoding="utf-8")
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
-    )
 
     code = cli.main(
         ["plan", "import", "--plans-dir", str(plans), "--reports-dir", str(tmp_path / "reports")]
@@ -452,11 +432,6 @@ def test_parser_accepts_log_sets_with_a_station_list():
 
 
 def test_cmd_log_sets_reports_a_failure_with_exit_code_2(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path), data_start_date=DATA_START),
-    )
     args = argparse.Namespace(activity_id=999, stations=["SLED_PULL"])
 
     assert cli._cmd_log_sets(args) == 2
@@ -469,16 +444,6 @@ def test_cmd_log_sets_reports_a_failure_with_exit_code_2(tmp_path, monkeypatch, 
 def _run_cli_daily(tmp_path, monkeypatch, login_error):
     """Drive _cmd_daily with a login that raises, exercising the real wiring."""
     log_path = tmp_path / "daily.log"
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(
-            db_path=_existing_db(tmp_path),
-            log_path=str(log_path),
-            log_max_bytes=1_000_000,
-            log_backup_count=1,
-        ),
-    )
 
     def _login(_settings):
         raise login_error
@@ -511,9 +476,6 @@ def test_daily_keeps_the_traceback_for_any_other_login_failure(tmp_path, monkeyp
 def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
     tmp_path, monkeypatch, capsys, athlete_home
 ):
-    monkeypatch.setattr(
-        cli, "get_settings", lambda: types.SimpleNamespace(db_path=_existing_db(tmp_path))
-    )
 
     def _login(_settings):
         raise cli.client.LoginUnavailableError("no terminal is attached")
@@ -527,8 +489,6 @@ def test_a_terminal_command_prints_the_unanswerable_login_and_exits_non_zero(
 def test_cli_author_requires_a_hyrox_variant_without_reporting_success(
     tmp_path, monkeypatch, capsys
 ):
-    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
-    monkeypatch.setattr(cli, "get_settings", lambda: settings)
     request = tmp_path / "request.json"
     request.write_text(json.dumps({"sport": "run", "origin": "athlete", "session_type": "hyrox"}))
     args = build_parser().parse_args(
@@ -553,8 +513,7 @@ def test_cli_repeat_matches_conversation_and_preserves_the_saved_workout(
 ):
     from garmin_coach.mcp import tools
 
-    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
-    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    settings = InstallationContext.select().settings
     source, target = "2099-07-17", "2099-07-18"
     day = tmp_path / source
     day.mkdir()
@@ -587,8 +546,6 @@ def test_cli_repeat_matches_conversation_and_preserves_the_saved_workout(
 def test_cli_author_refuses_a_non_object_request_as_a_plain_error(
     tmp_path, monkeypatch, capsys, athlete_home
 ):
-    settings = types.SimpleNamespace(db_path=_existing_db(tmp_path), sync_recheck_days=3)
-    monkeypatch.setattr(cli, "get_settings", lambda: settings)
     request = tmp_path / "request.json"
     request.write_text("[]")
     args = build_parser().parse_args(["author", "--date", "2099-07-17", "--request", str(request)])
@@ -601,12 +558,7 @@ def test_event_command_shows_current_block_transition_and_anchor_date(
     tmp_path, monkeypatch, capsys
 ):
     race = (_dt.date.today() + _dt.timedelta(days=28)).isoformat()
-    path = _seeded_db(tmp_path)
-    monkeypatch.setattr(
-        cli,
-        "get_settings",
-        lambda: types.SimpleNamespace(db_path=str(path), data_start_date=DATA_START),
-    )
+    _seeded_db(tmp_path)
     args = build_parser().parse_args(
         [
             "event",

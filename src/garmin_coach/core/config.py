@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -47,12 +51,28 @@ class Settings(BaseSettings):
     log_backup_count: int = 5
 
 
+_RUN_SETTINGS: ContextVar[Settings | None] = ContextVar("installation_settings", default=None)
+
+
+@contextmanager
+def use_settings(settings: Settings) -> Iterator[None]:
+    """Bind captured settings to one entry-point run and its async tasks."""
+    token = _RUN_SETTINGS.set(settings)
+    try:
+        yield
+    finally:
+        _RUN_SETTINGS.reset(token)
+
+
 def get_settings() -> Settings:
-    """Load the selected installation's settings, with absolute paths (ADR 0031).
+    """Return captured run settings, or load an explicitly selected standalone caller.
 
     Raises:
         InstallationError: No usable installation is selected, or the selection conflicts.
     """
+    captured = _RUN_SETTINGS.get()
+    if captured is not None:
+        return captured
     from . import installation
 
     return installation.load(installation.select())

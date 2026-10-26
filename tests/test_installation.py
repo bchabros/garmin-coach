@@ -409,12 +409,13 @@ def test_a_report_lands_in_the_installation(tmp_path, elsewhere):
 def test_an_authored_workout_and_its_push_receipt_land_in_the_installation(
     tmp_path, elsewhere, monkeypatch
 ):
+    from garmin_coach.workouts import publish
     from tests.conftest import FakePublisher
 
     home = make_installation(tmp_path / "athlete")
     _plan_crossfit_week(home)
     account = FakePublisher()
-    monkeypatch.setattr(cli.publish, "connect_publisher", lambda settings: account)
+    monkeypatch.setattr(publish, "connect_publisher", lambda settings: account)
     request = FIXTURES / "hiit_request.json"
 
     assert (

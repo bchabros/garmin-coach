@@ -557,3 +557,17 @@ def test_unverified_rest_role_keeps_captured_laps_and_unavailable_reason(conn, f
     assert out["laps"][6]["intensity_type"] == "REST"
     assert out["summary"] is None
     assert out["unavailable_reason"] == "execution_roles_or_grouping_unavailable"
+
+
+def test_invalid_timestamp_keeps_execution_unavailable(conn, fixture):
+    from garmin_coach.coach import activity
+
+    for value in ("0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00", "invalid time"):
+        evidence = fixture("activity_laps_treadmill")
+        evidence["get_activity_splits"]["lapDTOs"][4]["startTimeGMT"] = value
+        sync.backfill(LapClient(evidence), conn, "2026-07-10", "2026-07-10")
+        _rebuild(conn)
+        out = activity.read(conn, 900104)
+        assert len(out["laps"]) == 25
+        assert out["summary"] is None
+        assert out["unavailable_reason"] == "execution_roles_or_grouping_unavailable"

@@ -38,7 +38,7 @@ def _start(row: dict[str, Any]) -> dt.datetime | None:
             if parsed.tzinfo is not None:
                 parsed = parsed.astimezone(dt.timezone.utc)
             return parsed.replace(tzinfo=None)
-        except ValueError:
+        except (ValueError, OverflowError):
             pass
     return None
 

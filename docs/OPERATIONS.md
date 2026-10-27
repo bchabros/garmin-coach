@@ -538,13 +538,14 @@ but yields an unavailable running summary (ADR 0037).
 For an offline check of these review fixes from the source checkout, run:
 
 ```bash
-poetry run pytest tests/test_activity_laps.py -v -k 'bounded_rebuild or equivalent_timestamps or equivalent_duplicate_timestamps or unverified_rest'
+poetry run pytest tests/test_activity_laps.py -v -k 'bounded_rebuild or equivalent_timestamps or equivalent_duplicate_timestamps or unverified_rest or invalid_timestamp'
 ```
 
-The five selected tests use temporary databases, anonymized fixtures and fake
+The six selected tests use temporary databases, anonymized fixtures and fake
 transport. They check that a later activity survives an earlier rebuild, only
 selected activity dates change, equivalent timestamp representations preserve
 execution, duplicate UTC instants stay unavailable, and unverified REST evidence is
-not guessed into recovery. No athlete installation or Garmin login is used. Run the
-whole activity-lap file for the original behavior checks, or `task check` for the full
+not guessed into recovery. Invalid timestamps, including UTC conversion overflow,
+keep captured laps without aborting the mart rebuild. No athlete installation or
+Garmin login is used. Run the whole activity-lap file for the original behavior checks, or `task check` for the full
 repository gate.

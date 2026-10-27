@@ -34,7 +34,12 @@ PARTIAL_INTRADAY_FIELDS = (
 
 
 def wrap(conn: sqlite3.Connection, data: Any, *, recheck_days: int) -> dict[str, Any]:
-    """Attach stored evidence dates, intraday limits and unconfirmed planned days."""
+    """Attach stored evidence dates, intraday limits and unconfirmed planned days.
+
+    Every response includes unconfirmed_days: a missing upload inside the re-check
+    window does not establish rest or a skipped session. Issue #72 arose when a
+    weekly read without that evidence incorrectly described a deload.
+    """
     data_through = db.latest_mart_date(conn)
     today_included = data_through == dt.date.today().isoformat()
     return {

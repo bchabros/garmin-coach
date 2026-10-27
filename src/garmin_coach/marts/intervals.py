@@ -34,7 +34,10 @@ def _start(row: dict[str, Any]) -> dt.datetime | None:
     value = row.get("start_gmt")
     if isinstance(value, str):
         try:
-            return dt.datetime.fromisoformat(value).replace(tzinfo=None)
+            parsed = dt.datetime.fromisoformat(value)
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(dt.timezone.utc)
+            return parsed.replace(tzinfo=None)
         except ValueError:
             pass
     return None
@@ -70,16 +73,15 @@ def _execution_groups(
     refs: list[dict[str, Any]],
 ) -> list[dict[str, Any]] | None:
     indices = [r["lap_index"] for r in captured]
-    starts = [_start(r) for r in captured]
-    if (
-        any(not isinstance(i, int) or i < 1 for i in indices)
-        or len(set(indices)) != len(indices)
-        or any(s is None for s in starts)
-    ):
+    if any(not isinstance(i, int) or i < 1 for i in indices) or len(set(indices)) != len(indices):
         return None
-    chronological = sorted(captured, key=lambda r: str(r["start_gmt"]))
-    if len(set(starts)) != len(starts):
-        return None
+    by_start: dict[dt.datetime, dict[str, Any]] = {}
+    for row in captured:
+        start = _start(row)
+        if start is None or start in by_start:
+            return None
+        by_start[start] = row
+    chronological = [by_start[start] for start in sorted(by_start)]
     execution = []
     used: list[int] = []
     for group in groups:
@@ -226,8 +228,16 @@ def _result(conn: sqlite3.Connection, activity_id: int, gtype: str) -> dict[str,
 
 
 def rollup(conn: sqlite3.Connection, *, data_start_date: str, through_date: str) -> None:
-    """Rebuild all eligible dated summaries without committing the features transaction."""
-    conn.execute("DELETE FROM activity_interval_summaries")
+    """Replace summaries within the inclusive activity-date window, without committing.
+
+    A historical rebuild preserves summaries outside that window. The features
+    transaction still owns both deletion and replacement of the selected rows.
+    """
+    conn.execute(
+        "DELETE FROM activity_interval_summaries WHERE activity_id IN "
+        "(SELECT activity_id FROM activities WHERE date BETWEEN ? AND ?)",
+        (data_start_date, through_date),
+    )
     for activity_id, gtype in conn.execute(
         "SELECT activity_id,gtype FROM activities WHERE date BETWEEN ? AND ?",
         (data_start_date, through_date),

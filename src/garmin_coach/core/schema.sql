@@ -116,6 +116,54 @@ CREATE TABLE IF NOT EXISTS activities (
 CREATE INDEX IF NOT EXISTS ix_activities_date ON activities(date);
 CREATE INDEX IF NOT EXISTS ix_activities_disc ON activities(discipline);
 
+-- Captured laps and typed execution groups are separate source observations.
+CREATE TABLE IF NOT EXISTS activity_laps (
+    activity_id INTEGER NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+    row_idx INTEGER NOT NULL,
+    lap_index INTEGER,
+    message_index INTEGER,
+    wkt_step_index INTEGER,
+    wkt_index INTEGER,
+    intensity_type TEXT,
+    start_gmt TEXT,
+    dur_s REAL,
+    moving_dur_s REAL,
+    elapsed_dur_s REAL,
+    distance_m REAL,
+    avg_speed_mps REAL,
+    avg_hr REAL,
+    max_hr REAL,
+    PRIMARY KEY (activity_id, row_idx)
+);
+CREATE TABLE IF NOT EXISTS activity_splits (
+    activity_id INTEGER NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+    row_idx INTEGER NOT NULL,
+    source_type TEXT,
+    message_index INTEGER,
+    start_gmt TEXT,
+    dur_s REAL,
+    moving_dur_s REAL,
+    elapsed_dur_s REAL,
+    distance_m REAL,
+    avg_speed_mps REAL,
+    avg_hr REAL,
+    max_hr REAL,
+    PRIMARY KEY (activity_id, row_idx)
+);
+CREATE TABLE IF NOT EXISTS activity_split_laps (
+    activity_id INTEGER NOT NULL,
+    split_idx INTEGER NOT NULL,
+    member_idx INTEGER NOT NULL,
+    lap_index INTEGER,
+    PRIMARY KEY (activity_id, split_idx, member_idx),
+    FOREIGN KEY (activity_id, split_idx)
+        REFERENCES activity_splits(activity_id, row_idx) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS activity_interval_summaries (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    summary_json TEXT NOT NULL
+);
+
 -- Per-set breakdown for HIIT/Hyrox/strength (summarizedExerciseSets).
 -- Gold for a Hyrox athlete: jump rope / box jump / row / reps / load per movement.
 CREATE TABLE IF NOT EXISTS activity_sets (

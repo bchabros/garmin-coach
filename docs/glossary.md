@@ -97,6 +97,22 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 - **span_days** - actual elapsed days supporting a trend, which may be shorter than
   the nominal lookback.
 
+## Captured intervals
+
+- **Captured lap** - a watch-recorded segment of an activity, distinct from a planned
+  step or one work repetition. Its trigger and sensor source may be unknown.
+- **Executed step group** - a source-reported execution segment with explicit captured
+  lap membership and a role; several laps can belong to one group.
+- **Observed work repetition** - one verified executed work group within a supported
+  structured running session, distinct from the planned repetition count.
+- **Change in HR between the first and last repetition** - the last work group's HR
+  minus the first's, in bpm. A descriptive comparison, not isolated physiological drift.
+- **Work/recovery aggregate difference** - work maximum HR minus the immediately
+  following identified recovery's average HR, in bpm; an approximation from segment
+  aggregates, not timed HR recovery or an assessment of recovery quality.
+- **Work pace spread** - slowest minus fastest captured outdoor work-group pace, in
+  seconds per kilometre, accompanied by its valid-repetition coverage.
+
 ## Coaching evidence
 
 - **router** - the coach entry guide that selects the applicable flow and evidence rules.

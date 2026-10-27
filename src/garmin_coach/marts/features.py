@@ -11,7 +11,7 @@ import datetime as _dt
 import sqlite3
 import statistics
 
-from . import load, overlap, periodize, snapshot, weekly, zones
+from . import intervals, load, overlap, periodize, snapshot, weekly, zones
 from ..coach import thresholds
 from ..core import db
 
@@ -159,7 +159,7 @@ def features(
     """Recompute every mart in one transaction and upsert it.
 
     This function owns both the materialization order and the transaction: the
-    daily mart and the five tail rollups either all land together or none of them
+    daily mart and dependent rollups either all land together or none of them
     do, so a reader never observes a mixed generation. The individual rollups do
     not commit - a caller that runs one standalone owns the commit itself.
 
@@ -204,7 +204,7 @@ def rebuild_marts(conn: sqlite3.Connection, *, data_start_date: str) -> None:
 def _tail_rollups(
     conn: sqlite3.Connection, *, data_start_date: str, to_date: str | None, end: str
 ) -> None:
-    """Run the five mart-from-mart rollups in dependency order (no commit)."""
+    """Run dependent mart rollups in dependency order (no commit)."""
     # Rebuild the block calendar first: it depends only on the goal events, and the
     # weekly rollup copies each week's block from it.
     periodize.rollup(conn, data_start_date=data_start_date)
@@ -217,6 +217,8 @@ def _tail_rollups(
 
     # Rebuild the movement-pattern overlap mart from per-set data.
     overlap.rollup(conn, through_date=end)
+
+    intervals.rollup(conn, data_start_date=data_start_date, through_date=end)
 
     # Compose the current standing last, so it copies the fresh weekly + zones rows.
     snapshot.rollup(conn, through_date=end)

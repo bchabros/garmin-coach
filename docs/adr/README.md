@@ -43,6 +43,7 @@ in GitHub issues and PRs; earlier phase documents remain in Git history.
 | 0034 | [Exclusive client bindings and resumable owned generations](0034-exclusive-client-binding-and-recovery.md) |
 | 0035 | [Public coach context and consistent resource exports](0035-public-coach-context-and-resource-exports.md) |
 | 0036 | [Athlete facts survive derived rebuild failures](0036-athlete-facts-survive-rebuild-failure.md) |
+| 0037 | [Captured laps and verified executed interval groups](0037-captured-interval-evidence.md) |
 
 Key amendments: 0006/0017 bound historical reporting and transactions; 0010/0027
 replace original load bucketing; 0015 allows optional templates after #84; 0019/0021

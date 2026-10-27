@@ -36,13 +36,26 @@ ACTIVE nor activity type alone proves running interval repetitions.
   boundaries and stay captured-only. Unknown roles, missing memberships or ambiguous
   identities also stay readable with an unavailable-summary reason. Do not classify
   stations or infer roles from names, HR, pace, lap count or planned workout steps.
+- Verified execution roles are WARMUP, ACTIVE, RECOVERY and COOLDOWN. The developer
+  fixtures do not verify REST / INTERVAL_REST. Such an unknown role preserves captured
+  laps but makes the running summary unavailable; it is not silently treated as
+  RECOVERY. RECOVERY is a source role, not proof of jogging or standing. Planned
+  rest steps sent to the watch do not establish the executed endpoint's JSON contract;
+  actual captured REST evidence is required before adding that mapping.
+- Order and duplicate detection use the same parsed UTC instants. A timezone-free
+  startTimeGMT is UTC; equivalent text separators or explicit offsets preserve its
+  execution order. The original captured timestamp text remains unchanged.
 - Preserve typed-group time, distance and HR as source aggregates. Do not reconstruct
   a group HR average from rounded lap averages. Captured sums have small duration
   differences and up to 2.08 m distance difference in these examples; elapsed times
   are not additive. Source timestamps establish order, not exact end-to-start timing.
   Fixtures do not establish manual versus auto-lap triggers or a treadmill sensor.
-- Materialize descriptive summaries inside the existing features transaction. Read
-  adapters share one saved-data flow and freshness envelope. A changed capture cannot
+- Materialize descriptive summaries inside the existing features transaction.
+  Replace only summaries whose activity dates are inside the inclusive data-start /
+  report-cutoff window; summaries outside it remain intact. A historical rebuild
+  previously removed later summaries by clearing the whole table. These are dated
+  activity results, not a current-standing singleton. Read adapters share one
+  saved-data flow and freshness envelope. A changed capture cannot
   return its older summary before recomputation. Complete-week entries select only
   their own week's activities; current partial detail remains a separate read.
 - The two HR comparisons and outdoor pace spread describe recorded groups and coverage.

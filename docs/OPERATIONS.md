@@ -527,3 +527,25 @@ the shared enrichment path and remains partial, without advancing watermarks.
 Both lap endpoints must complete before replacing the captured set; a failed or
 absent response retains the prior set, and a valid empty capture clears it.
 This historical transport is an operator operation, never a coach-side live read.
+
+A bounded `features --to YYYY-MM-DD` recomputes interval summaries only through that
+activity date and preserves saved summaries after the cutoff. Historical digest
+entries still use only their own complete week. Equivalent GMT timestamp formats
+and explicit offsets are compared as UTC instants; duplicate instants remain
+ambiguous. The currently unverified `INTERVAL_REST` role keeps captured laps readable
+but yields an unavailable running summary (ADR 0037).
+
+For an offline check of these review fixes from the source checkout, run:
+
+```bash
+poetry run pytest tests/test_activity_laps.py -v -k 'bounded_rebuild or equivalent_timestamps or equivalent_duplicate_timestamps or unverified_rest or invalid_timestamp'
+```
+
+The six selected tests use temporary databases, anonymized fixtures and fake
+transport. They check that a later activity survives an earlier rebuild, only
+selected activity dates change, equivalent timestamp representations preserve
+execution, duplicate UTC instants stay unavailable, and unverified REST evidence is
+not guessed into recovery. Invalid timestamps, including UTC conversion overflow,
+keep captured laps without aborting the mart rebuild. No athlete installation or
+Garmin login is used. Run the whole activity-lap file for the original behavior checks, or `task check` for the full
+repository gate.

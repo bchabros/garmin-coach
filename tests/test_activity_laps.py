@@ -441,3 +441,133 @@ def test_changed_activity_type_cannot_reuse_old_summary_after_fetch_failure(conn
     sync.refresh_day(client, conn, "2026-07-10")
     assert activity.read(conn, 900104)["summary"] is None
     assert len(activity.read(conn, 900104)["laps"]) == 22
+
+
+def test_bounded_rebuild_preserves_later_interval_summary(conn, fixture):
+    from garmin_coach.coach import activity, digest
+    from garmin_coach.marts import features
+
+    client = LapClient(fixture("activity_laps_treadmill"))
+    sync.backfill(client, conn, "2026-07-10", "2026-07-10")
+    client.activities[0].update(activityId=900105, startTimeLocal="2026-07-17 08:00:00")
+    for endpoint in ("get_activity_splits", "get_activity_typed_splits"):
+        client.evidence[endpoint]["activityId"] = 900105
+    sync.backfill(client, conn, "2026-07-17", "2026-07-17")
+    features.features(conn, data_start_date="2026-07-06", to_date="2026-07-19")
+    before = activity.read(conn, 900105)
+    assert before["summary"]["work_count"] == 6
+
+    features.features(conn, data_start_date="2026-07-06", to_date="2026-07-12")
+
+    assert activity.read(conn, 900105) == before
+    assert activity.read(conn, 900104)["summary"]["work_count"] == 6
+    historical = digest.build_digest(conn, to_date="2026-07-12")
+    assert [s["activity_id"] for s in historical["weekly"]["interval_sessions"]] == [900104]
+
+
+def test_equivalent_timestamps_preserve_interval_summary(conn, fixture):
+    import datetime as dt
+    from garmin_coach.coach import activity
+
+    evidence = fixture("activity_laps_treadmill")
+    client = LapClient(evidence)
+    sync.backfill(client, conn, "2026-07-10", "2026-07-10")
+    _rebuild(conn)
+    before = activity.read(conn, 900104)["summary"]
+    assert before["work_count"] == 6
+    stamp = evidence["get_activity_splits"]["lapDTOs"][4]["startTimeGMT"]
+    utc = dt.datetime.fromisoformat(stamp).replace(tzinfo=dt.timezone.utc)
+    equivalent = (
+        stamp.replace("T", " "),
+        utc.isoformat(),
+        utc.astimezone(dt.timezone(dt.timedelta(hours=-2))).isoformat(),
+    )
+    for representation in equivalent:
+        evidence["get_activity_splits"]["lapDTOs"][4]["startTimeGMT"] = representation
+        sync.backfill(client, conn, "2026-07-10", "2026-07-10")
+        _rebuild(conn)
+        assert activity.read(conn, 900104)["summary"] == before, representation
+
+
+def test_bounded_rebuild_changes_only_selected_activity_dates(conn, fixture):
+    from garmin_coach.coach import activity
+    from garmin_coach.marts import features
+
+    client = LapClient(fixture("activity_laps_treadmill"))
+    for activity_id, date in (
+        (900103, "2026-07-09"),
+        (900104, "2026-07-10"),
+        (900105, "2026-07-17"),
+    ):
+        client.activities[0].update(activityId=activity_id, startTimeLocal=date + " 08:00:00")
+        for endpoint in ("get_activity_splits", "get_activity_typed_splits"):
+            client.evidence[endpoint]["activityId"] = activity_id
+        sync.backfill(client, conn, date, date)
+    features.features(conn, data_start_date="2026-07-06", to_date="2026-07-19")
+    outside = {activity_id: activity.read(conn, activity_id) for activity_id in (900103, 900105)}
+
+    client.activities[0].update(activityId=900104, startTimeLocal="2026-07-10 08:00:00")
+    for endpoint in ("get_activity_splits", "get_activity_typed_splits"):
+        client.evidence[endpoint]["activityId"] = 900104
+    first_work = next(
+        g
+        for g in client.evidence["get_activity_typed_splits"]["splits"]
+        if g["type"] == "INTERVAL_ACTIVE"
+    )
+    first_work["averageHR"] = 160
+    sync.backfill(client, conn, "2026-07-10", "2026-07-10")
+    assert activity.read(conn, 900104)["summary"] is None
+
+    features.features(conn, data_start_date="2026-07-10", to_date="2026-07-10")
+
+    assert activity.read(conn, 900104)["summary"]["hr_change_first_to_last_bpm"]["average"] == 20
+    assert {activity_id: activity.read(conn, activity_id) for activity_id in outside} == outside
+
+
+def test_equivalent_duplicate_timestamps_keep_execution_unavailable(conn, fixture):
+    import datetime as dt
+    from garmin_coach.coach import activity
+
+    evidence = fixture("activity_laps_treadmill")
+    captured = evidence["get_activity_splits"]["lapDTOs"]
+    first = dt.datetime.fromisoformat(captured[0]["startTimeGMT"]).replace(tzinfo=dt.timezone.utc)
+    captured[1]["startTimeGMT"] = first.astimezone(dt.timezone(dt.timedelta(hours=2))).isoformat()
+    sync.backfill(LapClient(evidence), conn, "2026-07-10", "2026-07-10")
+    _rebuild(conn)
+    out = activity.read(conn, 900104)
+    assert len(out["laps"]) == 25
+    assert out["summary"] is None
+    assert out["unavailable_reason"] == "execution_roles_or_grouping_unavailable"
+
+
+def test_unverified_rest_role_keeps_captured_laps_and_unavailable_reason(conn, fixture):
+    from garmin_coach.coach import activity
+
+    evidence = fixture("activity_laps_treadmill")
+    for row in evidence["get_activity_splits"]["lapDTOs"]:
+        if row.get("intensityType") == "RECOVERY":
+            row["intensityType"] = "REST"
+    for group in evidence["get_activity_typed_splits"]["splits"]:
+        if group["type"] == "INTERVAL_RECOVERY":
+            group["type"] = "INTERVAL_REST"
+    sync.backfill(LapClient(evidence), conn, "2026-07-10", "2026-07-10")
+    _rebuild(conn)
+    out = activity.read(conn, 900104)
+    assert len(out["laps"]) == 25
+    assert out["laps"][6]["intensity_type"] == "REST"
+    assert out["summary"] is None
+    assert out["unavailable_reason"] == "execution_roles_or_grouping_unavailable"
+
+
+def test_invalid_timestamp_keeps_execution_unavailable(conn, fixture):
+    from garmin_coach.coach import activity
+
+    for value in ("0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00", "invalid time"):
+        evidence = fixture("activity_laps_treadmill")
+        evidence["get_activity_splits"]["lapDTOs"][4]["startTimeGMT"] = value
+        sync.backfill(LapClient(evidence), conn, "2026-07-10", "2026-07-10")
+        _rebuild(conn)
+        out = activity.read(conn, 900104)
+        assert len(out["laps"]) == 25
+        assert out["summary"] is None
+        assert out["unavailable_reason"] == "execution_roles_or_grouping_unavailable"

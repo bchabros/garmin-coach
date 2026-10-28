@@ -480,3 +480,69 @@ def test_schema_upgrade_keeps_existing_capture_and_repeated_reports(conn, fixtur
     db.validate_schema(conn)
     assert activity.read(conn, AID)["reported_console"] == before
     assert activity.read(conn, AID)["laps"] == captured
+
+
+@pytest.mark.parametrize("view", ["activity", "week"])
+def test_read_keeps_one_generation_during_concurrent_capture_and_report_change(
+    tmp_path, fixture, view
+):
+    from garmin_coach import athlete_changes
+    from garmin_coach.core import db
+
+    path = tmp_path / "athlete.db"
+    conn = db.connect(str(path))
+    db.bootstrap(conn)
+    client = _import(conn, fixture)
+    binding = activity.read(conn, AID)["work_execution"]["binding"]
+    athlete_changes.log_treadmill_speed(
+        conn, activity_id=AID, binding=binding, speed_kmh=16.4, data_start_date=DAY
+    )
+    writer = db.connect(str(path))
+    outcomes = []
+
+    def change_during_read(statement):
+        if outcomes or "FROM treadmill_speed_sets" not in statement:
+            return
+        outcomes.append(None)  # Run the interleaving exactly once.
+        first = next(
+            g
+            for g in client.evidence["get_activity_typed_splits"]["splits"]
+            if g["type"] == "INTERVAL_ACTIVE"
+        )
+        first["duration"] = 226
+        sync.backfill(client, writer, DAY, DAY)
+        changed = activity.read(writer, AID)["work_execution"]["binding"]
+        outcomes[0] = athlete_changes.log_treadmill_speed(
+            writer, activity_id=AID, binding=changed, speed_kmh=15, data_start_date=DAY
+        )
+
+    conn.set_trace_callback(change_during_read)
+    try:
+        out = (
+            activity.read(conn, AID)
+            if view == "activity"
+            else activity.weekly(conn, "2026-07-06")[0]
+        )
+    finally:
+        conn.set_trace_callback(None)
+    assert outcomes and outcomes[0].saved
+    assert out["reported_console"]["state"] == "matched"
+    assert out["reported_console"]["applied_reports"][0]["speed_kmh"] == 16.4
+    assert conn.in_transaction is False
+    latest = activity.read(conn, AID)
+    assert latest["reported_console"]["state"] == "matched"
+    assert latest["reported_console"]["applied_reports"][0]["speed_kmh"] == 15
+    assert latest["work_execution"]["binding"] != binding
+    writer.close()
+    conn.close()
+
+
+def test_saved_reads_preserve_caller_owned_transaction(conn, fixture):
+    _import(conn, fixture)
+    conn.execute("UPDATE activities SET name='uncommitted title' WHERE activity_id=?", (AID,))
+    assert activity.read(conn, AID)["activity"]["name"] == "uncommitted title"
+    assert conn.in_transaction is True
+    assert activity.weekly(conn, "2026-07-06")[0]["activity_id"] == AID
+    assert conn.in_transaction is True
+    conn.rollback()
+    assert activity.read(conn, AID)["activity"]["name"] != "uncommitted title"

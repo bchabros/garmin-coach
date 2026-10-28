@@ -89,16 +89,17 @@ def clear(conn: sqlite3.Connection, activity_id: int) -> bool:
 
 def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any] | None:
     """Read the retained declaration independently of replaceable capture and mart rows."""
-    row = conn.execute(
-        "SELECT binding,work_count FROM treadmill_speed_sets WHERE activity_id=?", (activity_id,)
-    ).fetchone()
-    if row is None:
+    rows = conn.execute(
+        "SELECT h.binding,h.work_count,r.repetition,r.speed_kmh FROM treadmill_speed_sets h "
+        "LEFT JOIN treadmill_speed_reports r USING(activity_id) "
+        "WHERE h.activity_id=? ORDER BY r.repetition",
+        (activity_id,),
+    ).fetchall()
+    if not rows:
         return None
     reports = [
         {"repetition": number, "speed_kmh": value}
-        for number, value in conn.execute(
-            "SELECT repetition,speed_kmh FROM treadmill_speed_reports WHERE activity_id=? ORDER BY repetition",
-            (activity_id,),
-        )
+        for _, _, number, value in rows
+        if number is not None
     ]
-    return {"binding": row[0], "work_count": row[1], "reports": reports}
+    return {"binding": rows[0][0], "work_count": rows[0][1], "reports": reports}

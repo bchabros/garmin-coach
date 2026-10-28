@@ -172,7 +172,9 @@ never rewrite the artifact or establish absence.
 `marts.intervals`, saved reads and athlete-change validation; `marts.intervals` owns
 materialization inside `features`. `core.treadmill` owns manual console settings,
 `coach.console` reconciles them with current work independently of cached summaries,
-and `coach.activity` is the shared stored-activity/complete-week read.
+and `coach.activity` is the shared stored-activity/complete-week read. Each read holds
+one SQLite snapshot across captured, manual and cached data, preserving caller-owned
+transactions so concurrent import/re-log cannot mix declaration generations.
 CLI/MCP share `coach.freshness` for their evidence-date envelope. See ADR 0037 for
 why captured laps, explicit groups and overlapping RWD classifications stay separate.
 Tests exercise the existing import, SQLite, features, saved-read and adapter seams

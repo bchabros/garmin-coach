@@ -40,6 +40,11 @@ groups share one workout-step index. None of those indices is a durable identity
   Saved activity and complete-week reads reconcile manual core with current execution
   independently of cached HR summaries, so an old generation never substitutes an old
   reported speed after a save or clear. This adds no dirty-state ledger or retry queue.
+- Activity and complete-week reads hold one SQLite snapshot across captured execution,
+  the declaration and cached summaries. Review reproduced a concurrent import/re-log
+  mixing an older binding with newer speeds; snapshot ownership closes that race while
+  preserving caller-owned transactions. The declaration header and its values also
+  load through one query.
 - Read conversion is 3600 / reported km/h in s/km, explicitly athlete-reported evidence.
   Captured speed, distance, duration and HR remain unchanged. Coverage and missing work
   are explicit; retained stale reports are separate from applicable reports. Constant

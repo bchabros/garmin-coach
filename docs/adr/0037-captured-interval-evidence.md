@@ -61,7 +61,8 @@ ACTIVE nor activity type alone proves running interval repetitions.
 - The two HR comparisons and outdoor pace spread describe recorded groups and coverage.
   They add no physiological-drift claim, timed HRR, recovery-quality score, threshold,
   signal or recommendation. Treadmill pace spread and reported-console overlays are
-  outside this issue; the latter remains #105.
+  outside #104; reported console evidence is separately governed by
+  [ADR 0038](0038-reported-treadmill-speed-binding.md) for #105.
 
 ## Consequences
 

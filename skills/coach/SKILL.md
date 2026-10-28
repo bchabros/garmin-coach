@@ -23,7 +23,7 @@ A saved-context lookup can lead into reporting, planning or workout authoring.
   `references/report.md`. It carries what every field means and which may be null, and
   the fields are the same whichever way they arrive. The same file covers what to do
   when a read shows the data is wrong or missing: `event_add` / `event_update` (the race
-  calendar), `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day).
+  calendar), `log_treadmill_speed` / `clear_treadmill_speed` (reported console settings), `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day).
 - Before you read, propose, preview, or write a training week - opening
   `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` /
   `plan_import` - you **MUST** read `references/planning.md`.

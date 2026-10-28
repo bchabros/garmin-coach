@@ -549,3 +549,46 @@ not guessed into recovery. Invalid timestamps, including UTC conversion overflow
 keep captured laps without aborting the mart rebuild. No athlete installation or
 Garmin login is used. Run the whole activity-lap file for the original behavior checks, or `task check` for the full
 repository gate.
+
+## Reported treadmill console settings
+
+Read `activity-laps ACTIVITY_ID` first. Its `data.work_execution.binding` identifies
+the reviewed work layout, and its one-based work references are not raw lap indices.
+Use the same selected athlete home for read, write, clear and offline recovery:
+
+```bash
+poetry run garmin-coach --home /absolute/path/to/athlete activity-laps ACTIVITY_ID
+poetry run garmin-coach --home /absolute/path/to/athlete log-treadmill-speed ACTIVITY_ID --binding BINDING_FROM_READ --speed-kmh 16.4
+poetry run garmin-coach --home /absolute/path/to/athlete log-treadmill-speed ACTIVITY_ID --binding BINDING_FROM_READ --repetitions-json '[{"repetition":1,"speed_kmh":16.4},{"repetition":3,"speed_kmh":16.0}]'
+poetry run garmin-coach --home /absolute/path/to/athlete clear-treadmill-speed ACTIVITY_ID
+```
+
+Both local writes print the same JSON data/freshness shape as their MCP counterparts
+`log_treadmill_speed` and `clear_treadmill_speed`. Exit 0 means complete; exit 2 means
+refused/failed or saved-but-unrecomputed, distinguished by `saved` and `recomputed`.
+Malformed JSON/arguments also refuse before writing. A re-log replaces the complete
+reported set; an empty list refuses and explicit clear removes even stale reports.
+After a changed work layout, read it again and obtain the athlete's renewed confirmation
+before submitting a fresh complete declaration. Metadata/measurement-only changes keep
+a verified association. One speed for all work freezes that set, not future repetitions.
+
+Saved reads show retained `reports` separately from current `applied_reports`. The latter
+alone contributes reported coverage; a stale set remains saved but unapplied. Converted
+pace is athlete-reported console evidence, not a distance/duration correction or proof
+of measured consistency. A saved-but-unrecomputed declaration/clear stays visible through
+manual-core reconciliation; run offline `features` in the same home to recover metrics.
+See [ADR 0038](adr/0038-reported-treadmill-speed-binding.md).
+
+Existing installations add the two manual tables through the supported offline
+`features` bootstrap before a guarded client restarts. Development does not migrate or
+write real athlete data. To verify the feature safely from the source checkout:
+
+```bash
+poetry run pytest tests/test_treadmill_speeds.py -q
+```
+
+These tests use temporary installations, anonymous captured fixtures and fake transport;
+no Garmin login is needed. They exercise binding stability, full/partial reports,
+replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parity,
+late rebuild failures, database reopen and complete-week isolation. Fresh assistant
+activation/acceptance and any real reported-speed write remain separate operator steps.

@@ -168,12 +168,17 @@ Status must separate the push event from current reconciliation; failed evidence
 never rewrite the artifact or establish absence.
 
 `core.laps` owns captured lap/group normalization and atomic complete-set replacement.
-`marts.intervals` verifies execution evidence and materializes descriptive summaries
-inside `features`; `coach.activity` is the shared stored-activity/complete-week read.
+`execution` shares verified stored-work interpretation and versioned bindings between
+`marts.intervals`, saved reads and athlete-change validation; `marts.intervals` owns
+materialization inside `features`. `core.treadmill` owns manual console settings,
+`coach.console` reconciles them with current work independently of cached summaries,
+and `coach.activity` is the shared stored-activity/complete-week read.
 CLI/MCP share `coach.freshness` for their evidence-date envelope. See ADR 0037 for
 why captured laps, explicit groups and overlapping RWD classifications stay separate.
 Tests exercise the existing import, SQLite, features, saved-read and adapter seams
-on temporary installations (`tests/test_activity_laps.py`).
+on temporary installations (`tests/test_activity_laps.py`, `tests/test_treadmill_speeds.py`).
+Reported-console writes reuse `athlete_changes` and its saved/recomputed contract;
+ADR 0038 records binding identity, ownership and partial-rebuild behavior.
 
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does

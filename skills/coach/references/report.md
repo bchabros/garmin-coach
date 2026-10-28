@@ -47,7 +47,7 @@ HR, planned workouts and ACTIVE alone do not establish executed repetitions.
   with valid/total work coverage. Treadmill pace spread is unavailable. Captured
   treadmill pace/distance has uncertain sensor provenance and accuracy; preserve
   the actual time and HR evidence. Athlete-reported console settings are separate
-  evidence and cannot be saved by this read (follow-up #105).
+  evidence saved through the reported-console flow below.
 
 In a weekly report use only `weekly.interval_sessions`, already restricted to that
 block's latest complete week and report horizon. Summarize available descriptive
@@ -55,6 +55,43 @@ facts briefly, without lap tables or new thresholds, signals or recommendations.
 Read today's activity separately; keep its partial status rather than inserting it
 into the previous week's block. If laps were never imported, name that prerequisite;
 historical import is an operator task, not a live Garmin query by the coach.
+
+### Reported treadmill console settings
+
+When the athlete explicitly reports console speed, read `get_activity_laps` first.
+Use `data.work_execution`: its ordered one-based `work_repetitions` identify actual
+work, and its `binding` describes the reviewed layout. A missing binding means the
+prerequisite is unavailable; explain that gap rather than guessing repetition roles.
+
+Call `log_treadmill_speed(activity_id, binding, speed_kmh=...)` for one setting on all
+reviewed work, or pass `repetitions=[{repetition: 1, speed_kmh: ...}, ...]` for individual
+reports. Exactly one mode is allowed. Each save replaces the entire set; when amending
+one item, first read the current declaration and preserve only the other values the
+athlete still intends to retain. Partial input leaves other work explicitly unreported.
+A refused old binding requires reading current work again and renewing confirmation
+for the changed layout. Never automatically transfer old speeds to changed/new work.
+`clear_treadmill_speed(activity_id)` explicitly removes the declaration, including stale
+ones; an empty report list does not clear. Both operations are local, without Garmin.
+
+`data.reported_console` distinguishes `none`, `matched` and `stale`. `reports` retains
+saved evidence; use only `applied_reports` for current repetitions. `reported_count`
+counts applicable reports against `current_work_count`; `missing_repetitions` names
+uncovered current work and is null when its layout cannot be verified. A stale set
+requires renewed confirmation and contributes zero applicable coverage. Saved work
+count and binding belong to the earlier declaration, not to newly observed work.
+
+Always name the source: athlete-reported console km/h and the converted pace in s/km,
+not captured watch pace or calibrated belt speed. Preserve recorded time, distance
+and HR. Constant settings do not prove measured pace consistency, and captured and
+reported values do not form one pace-spread statistic. Ask for missing console settings
+when they are relevant to the athlete's question; do not invent them.
+
+Save/clear results use `saved`, `recomputed`, `error` and the same offline recovery
+contract as other local writes. After a saved-but-unrecomputed outcome, the next read
+still shows the current manual fact (or its explicit clearing), while cached metrics
+may be older. A failed rebuild is not a failed save and is not a reason to log again.
+Weekly `reported_console` entries retain their own complete-week scope and source;
+use the detailed activity read for retained stale reports and binding information.
 
 ## Requested report artifacts
 

@@ -7,24 +7,22 @@ import json
 import sqlite3
 from typing import Any
 
+from .. import execution
 from ..core import laps
+from . import console
 
 
 def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
     """Return captured laps and a separately rebuilt descriptive summary, without transport."""
-    cur = conn.execute(
-        "SELECT activity_id, date, gtype, discipline, name FROM activities WHERE activity_id=?",
-        (activity_id,),
-    )
-    row = cur.fetchone()
-    if row is None:
+    observed = execution.read(conn, activity_id)
+    info = observed.activity
+    if info is None:
         return {
             "activity": None,
             "laps": [],
             "summary": None,
             "unavailable_reason": "activity_not_found",
         }
-    info = dict(zip([c[0] for c in cur.description], row))
     saved = conn.execute(
         "SELECT summary_json FROM activity_interval_summaries WHERE activity_id=?", (activity_id,)
     ).fetchone()
@@ -33,6 +31,8 @@ def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
     )
     return {
         "activity": info,
+        "work_execution": observed.as_data(),
+        "reported_console": console.read(conn, observed),
         "partial_today": info["date"] == dt.date.today().isoformat(),
         "captured_source": "Garmin get_activity_splits",
         "group_source": "Garmin get_activity_typed_splits",
@@ -65,17 +65,16 @@ def markers(conn: sqlite3.Connection, activity_id: int) -> dict[str, bool]:
 
 def weekly(conn: sqlite3.Connection, week_start: str) -> list[dict[str, Any]]:
     """Read compact eligible sessions in exactly one already selected complete week."""
-    from ..marts.intervals import RUNNING_TYPES
-
     end = (dt.date.fromisoformat(week_start) + dt.timedelta(days=6)).isoformat()
     entries = []
-    for activity_id, date, gtype, saved in conn.execute(
-        "SELECT a.activity_id,a.date,a.gtype,s.summary_json FROM activities a "
+    for activity_id, date, gtype, saved, has_report in conn.execute(
+        "SELECT a.activity_id,a.date,a.gtype,s.summary_json,h.activity_id FROM activities a "
         "LEFT JOIN activity_interval_summaries s USING(activity_id) "
+        "LEFT JOIN treadmill_speed_sets h USING(activity_id) "
         "WHERE a.date BETWEEN ? AND ? ORDER BY a.start_local,a.activity_id",
         (week_start, end),
     ):
-        if gtype not in RUNNING_TYPES:
+        if gtype not in execution.RUNNING_TYPES:
             continue
         result: dict[str, Any] = (
             json.loads(saved)
@@ -83,10 +82,28 @@ def weekly(conn: sqlite3.Connection, week_start: str) -> list[dict[str, Any]]:
             else {"summary": None, "unavailable_reason": "not_recomputed"}
         )
         summary = result["summary"]
+        reported = (
+            console.read(conn, execution.read(conn, activity_id))
+            if gtype == "treadmill_running" or has_report
+            else None
+        )
         entries.append(
             {
                 "activity_id": activity_id,
                 "date": date,
+                "reported_console": {
+                    k: reported[k]
+                    for k in (
+                        "state",
+                        "source",
+                        "current_work_count",
+                        "reported_count",
+                        "missing_repetitions",
+                        "applied_reports",
+                    )
+                }
+                if reported
+                else None,
                 "unavailable_reason": result["unavailable_reason"],
                 "work_count": summary["work_count"] if summary else None,
                 "hr_change_first_to_last_bpm": summary["hr_change_first_to_last_bpm"]

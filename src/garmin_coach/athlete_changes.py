@@ -13,7 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .core import db, events, manual_sets
+from .core import db, events, manual_sets, treadmill
+from . import execution
 from .marts import features, periodize
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,86 @@ def _write_session_rpe(
         },
     )
     return {"activity_id": activity_id, "rpe": rpe, "date": activity_date}
+
+
+def log_treadmill_speed(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    binding: str,
+    speed_kmh: float | None = None,
+    repetitions: list[treadmill.SpeedReport] | None = None,
+    data_start_date: str,
+) -> ChangeResult:
+    """Replace reported console settings for the reviewed work, then refresh derived facts."""
+    return _record(
+        conn,
+        lambda: _write_treadmill_speed(conn, activity_id, binding, speed_kmh, repetitions),
+        lambda data: features.features(
+            conn, data_start_date=data_start_date, from_date=data["date"]
+        ),
+    )
+
+
+def _write_treadmill_speed(
+    conn: sqlite3.Connection,
+    activity_id: int,
+    binding: str,
+    speed_kmh: float | None,
+    repetitions: list[treadmill.SpeedReport] | None,
+) -> dict[str, Any]:
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        observed = execution.read(conn, activity_id)
+        if observed.activity is None:
+            raise ValueError("activity not found")
+        if observed.activity["gtype"] != "treadmill_running":
+            raise ValueError("console reports require a treadmill_running activity")
+        if not observed.binding or binding != observed.binding:
+            raise ValueError(
+                "reviewed execution is unavailable or changed; read activity-laps again"
+            )
+        reports = treadmill.normalize(
+            len(observed.work), speed_kmh=speed_kmh, repetitions=repetitions
+        )
+        treadmill.replace(conn, activity_id, binding, len(observed.work), reports)
+        return {
+            "activity_id": activity_id,
+            "date": observed.activity["date"],
+            "binding": binding,
+            "reported_count": len(reports),
+        }
+    except ValueError:
+        if started:
+            conn.rollback()
+        raise
+
+
+def clear_treadmill_speed(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    data_start_date: str,
+) -> ChangeResult:
+    """Explicitly clear current or stale reports and refresh their derived consequences."""
+
+    def write() -> dict[str, Any]:
+        date = _activity_date(conn, activity_id)
+        return {
+            "activity_id": activity_id,
+            "date": date,
+            "cleared": treadmill.clear(conn, activity_id),
+        }
+
+    return _record(
+        conn,
+        write,
+        lambda data: features.features(
+            conn, data_start_date=data_start_date, from_date=data["date"]
+        ),
+    )
 
 
 def log_niggle(

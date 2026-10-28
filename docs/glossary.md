@@ -105,6 +105,14 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   lap membership and a role; several laps can belong to one group.
 - **Observed work repetition** - one verified executed work group within a supported
   structured running session, distinct from the planned repetition count.
+- **Reported console speed** - the athlete's reported treadmill setting in km/h for
+  an observed work repetition, distinct from calibrated belt speed or captured pace.
+- **Reported-speed set** - the athlete's complete current collection of console-speed
+  reports for one activity; uncovered repetitions remain explicitly unreported.
+- **Reported-speed binding** - the association between a reported-speed set and the
+  verified work execution it describes, independent of updated HR, speed or distance.
+- **Stale reported-speed set** - a retained report whose binding to the current work
+  execution can no longer be verified and therefore requires renewed confirmation.
 - **Change in HR between the first and last repetition** - the last work group's HR
   minus the first's, in bpm. A descriptive comparison, not isolated physiological drift.
 - **Work/recovery aggregate difference** - work maximum HR minus the immediately

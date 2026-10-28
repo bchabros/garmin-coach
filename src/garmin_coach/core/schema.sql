@@ -164,6 +164,19 @@ CREATE TABLE IF NOT EXISTS activity_interval_summaries (
     summary_json TEXT NOT NULL
 );
 
+-- Manual console reports belong to activities, never replaceable captured rows.
+CREATE TABLE IF NOT EXISTS treadmill_speed_sets (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    binding TEXT NOT NULL,
+    work_count INTEGER NOT NULL CHECK (work_count > 0)
+);
+CREATE TABLE IF NOT EXISTS treadmill_speed_reports (
+    activity_id INTEGER NOT NULL REFERENCES treadmill_speed_sets(activity_id) ON DELETE CASCADE,
+    repetition INTEGER NOT NULL CHECK (repetition > 0),
+    speed_kmh REAL NOT NULL CHECK (speed_kmh > 0),
+    PRIMARY KEY (activity_id, repetition)
+);
+
 -- Per-set breakdown for HIIT/Hyrox/strength (summarizedExerciseSets).
 -- Gold for a Hyrox athlete: jump rope / box jump / row / reps / load per movement.
 CREATE TABLE IF NOT EXISTS activity_sets (

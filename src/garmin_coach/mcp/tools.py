@@ -25,7 +25,7 @@ from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
 from ..coach import activity, digest, freshness, thresholds as _thresholds
-from ..core import db, manual_sets, plan
+from ..core import db, manual_sets, plan, treadmill
 from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
@@ -259,6 +259,46 @@ def log_sets(
             conn,
             activity_id=activity_id,
             stations=stations,
+            data_start_date=data_start_date,
+        ).as_data(),
+    )
+
+
+def log_treadmill_speed(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    binding: str,
+    speed_kmh: float | None = None,
+    repetitions: list[treadmill.SpeedReport] | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Save a complete reported-speed set for reviewed work, with its refresh outcome."""
+    return _wrap(
+        conn,
+        athlete_changes.log_treadmill_speed(
+            conn,
+            activity_id=activity_id,
+            binding=binding,
+            speed_kmh=speed_kmh,
+            repetitions=repetitions,
+            data_start_date=data_start_date,
+        ).as_data(),
+    )
+
+
+def clear_treadmill_speed(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Remove the manual console report without requiring a still-valid work binding."""
+    return _wrap(
+        conn,
+        athlete_changes.clear_treadmill_speed(
+            conn,
+            activity_id=activity_id,
             data_start_date=data_start_date,
         ).as_data(),
     )

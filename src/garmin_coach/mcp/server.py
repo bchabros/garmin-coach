@@ -23,7 +23,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from . import tools
-from ..core import installation, manual_sets
+from ..core import installation, manual_sets, treadmill
+from pydantic import StrictFloat
 from ..runtime import InstallationContext, current
 
 server = FastMCP("coach")
@@ -385,6 +386,47 @@ def log_sets(
             activity_id=activity_id,
             stations=stations,
             data_start_date=settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_WRITES_LOCAL)
+def log_treadmill_speed(
+    activity_id: int,
+    binding: str,
+    speed_kmh: StrictFloat | None = None,
+    repetitions: list[treadmill.SpeedReport] | None = None,
+) -> dict[str, Any]:
+    """Replace reported console speeds for reviewed treadmill work, without Garmin.
+
+    Read get_activity_laps first and pass work_execution.binding. Supply either one
+    speed_kmh for all observed work or a complete list of numbered repetition reports.
+    A re-log replaces the entire set; partial coverage remains explicit.
+    """
+    conn = _open()
+    try:
+        return tools.log_treadmill_speed(
+            conn,
+            activity_id=activity_id,
+            binding=binding,
+            speed_kmh=speed_kmh,
+            repetitions=repetitions,
+            data_start_date=current().settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_WRITES_LOCAL)
+def clear_treadmill_speed(activity_id: int) -> dict[str, Any]:
+    """Explicitly clear console reports, including stale/unmatched ones, without Garmin."""
+    conn = _open()
+    try:
+        return tools.clear_treadmill_speed(
+            conn,
+            activity_id=activity_id,
+            data_start_date=current().settings.data_start_date,
         )
     finally:
         conn.close()

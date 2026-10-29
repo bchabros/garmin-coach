@@ -2,21 +2,13 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import math
 import sqlite3
 from typing import Any
 
-from ..core import laps
-
-RUNNING_TYPES = frozenset(("running", "trail_running", "treadmill_running"))
-_ROLES = {
-    "INTERVAL_ACTIVE": "ACTIVE",
-    "INTERVAL_RECOVERY": "RECOVERY",
-    "INTERVAL_WARMUP": "WARMUP",
-    "INTERVAL_COOLDOWN": "COOLDOWN",
-}
+from .. import execution
+from ..execution import RUNNING_TYPES as RUNNING_TYPES
 
 
 def _number(value: Any) -> float | None:
@@ -28,89 +20,6 @@ def _number(value: Any) -> float | None:
     ):
         return float(value)
     return None
-
-
-def _start(row: dict[str, Any]) -> dt.datetime | None:
-    value = row.get("start_gmt")
-    if isinstance(value, str):
-        try:
-            parsed = dt.datetime.fromisoformat(value)
-            if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(dt.timezone.utc)
-            return parsed.replace(tzinfo=None)
-        except (ValueError, OverflowError):
-            pass
-    return None
-
-
-def _members(
-    group: dict[str, Any],
-    refs: list[dict[str, Any]],
-    captured: list[dict[str, Any]],
-) -> list[dict[str, Any]] | None:
-    indices = [r["lap_index"] for r in refs if r["split_idx"] == group["row_idx"]]
-    if not indices or len(set(indices)) != len(indices):
-        return None
-    result = [r for r in captured if r["lap_index"] in indices]
-    if len(result) != len(indices) or [r["lap_index"] for r in result] != indices:
-        return None
-    positions = [captured.index(r) for r in result]
-    if positions != list(range(positions[0], positions[-1] + 1)):
-        return None
-    role = _ROLES.get(group["source_type"])
-    if role is None or any(r["intensity_type"] != role for r in result):
-        return None
-    if role in ("ACTIVE", "RECOVERY"):
-        steps = {(r["wkt_index"], r["wkt_step_index"]) for r in result}
-        if len(steps) != 1 or any(not isinstance(v, int) or v < 0 for v in next(iter(steps))):
-            return None
-    return result
-
-
-def _execution_groups(
-    captured: list[dict[str, Any]],
-    groups: list[dict[str, Any]],
-    refs: list[dict[str, Any]],
-) -> list[dict[str, Any]] | None:
-    indices = [r["lap_index"] for r in captured]
-    if any(not isinstance(i, int) or i < 1 for i in indices) or len(set(indices)) != len(indices):
-        return None
-    by_start: dict[dt.datetime, dict[str, Any]] = {}
-    for row in captured:
-        start = _start(row)
-        if start is None or start in by_start:
-            return None
-        by_start[start] = row
-    chronological = [by_start[start] for start in sorted(by_start)]
-    execution = []
-    used: list[int] = []
-    for group in groups:
-        kind = group["source_type"]
-        if isinstance(kind, str) and kind.startswith("RWD_"):
-            continue  # Overlapping run/walk classifications are not execution steps.
-        members = _members(group, refs, chronological)
-        if members is None:
-            return None
-        member_indices = [r["lap_index"] for r in members]
-        used.extend(member_indices)
-        execution.append(
-            {
-                **group,
-                "lap_indices": member_indices,
-                "first_position": chronological.index(members[0]),
-            }
-        )
-    if sorted(used) != sorted(indices):
-        return None
-    execution.sort(key=lambda r: r["first_position"])
-    # All-ACTIVE captures also occur for lap-ended station sessions recorded as
-    # running. Their source does not establish work/recovery interval boundaries.
-    if not any(
-        g["source_type"] in ("INTERVAL_RECOVERY", "INTERVAL_WARMUP", "INTERVAL_COOLDOWN")
-        for g in execution
-    ):
-        return None
-    return execution
 
 
 def _difference(last: Any, first: Any) -> float | None:
@@ -204,27 +113,16 @@ def _summarize(execution: list[dict[str, Any]], gtype: str) -> dict[str, Any] | 
     }
 
 
-def _result(conn: sqlite3.Connection, activity_id: int, gtype: str) -> dict[str, Any]:
-    captured = laps.rows(conn, "activity_laps", activity_id)
-    reason = None
-    summary = None
-    if not captured:
-        reason = "no_captured_laps"
-    elif gtype not in RUNNING_TYPES:
-        reason = "activity_type_not_supported_for_running_summary"
-    else:
-        execution = _execution_groups(
-            captured,
-            laps.rows(conn, "activity_splits", activity_id),
-            laps.rows(conn, "activity_split_laps", activity_id),
-        )
-        if execution is None:
-            reason = "execution_roles_or_grouping_unavailable"
-        else:
-            summary = _summarize(execution, gtype)
-            if summary is None:
-                reason = "no_observed_work_repetitions"
-    return {"summary": summary, "unavailable_reason": reason}
+def _result(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
+    observed = execution.read(conn, activity_id)
+    summary = (
+        _summarize(observed.groups, observed.activity["gtype"])
+        if observed.groups is not None
+        and observed.activity is not None
+        and observed.unavailable_reason is None
+        else None
+    )
+    return {"summary": summary, "unavailable_reason": observed.unavailable_reason}
 
 
 def rollup(conn: sqlite3.Connection, *, data_start_date: str, through_date: str) -> None:
@@ -238,11 +136,11 @@ def rollup(conn: sqlite3.Connection, *, data_start_date: str, through_date: str)
         "(SELECT activity_id FROM activities WHERE date BETWEEN ? AND ?)",
         (data_start_date, through_date),
     )
-    for activity_id, gtype in conn.execute(
-        "SELECT activity_id,gtype FROM activities WHERE date BETWEEN ? AND ?",
+    for (activity_id,) in conn.execute(
+        "SELECT activity_id FROM activities WHERE date BETWEEN ? AND ?",
         (data_start_date, through_date),
     ).fetchall():
         conn.execute(
             "INSERT INTO activity_interval_summaries VALUES (?,?)",
-            (activity_id, json.dumps(_result(conn, activity_id, gtype))),
+            (activity_id, json.dumps(_result(conn, activity_id))),
         )

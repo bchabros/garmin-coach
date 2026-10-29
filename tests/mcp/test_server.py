@@ -55,6 +55,8 @@ EXPECTED_TOOLS = {
     "log_rpe",
     "log_niggle",
     "log_sets",
+    "log_treadmill_speed",
+    "clear_treadmill_speed",
     # plan of record (preview -> confirm writes plans/<monday>_week.md)
     "plan_preview",
     "plan_confirm",

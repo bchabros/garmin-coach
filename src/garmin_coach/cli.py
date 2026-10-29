@@ -89,6 +89,38 @@ def _cmd_activity_laps(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _cmd_treadmill_speed(args: argparse.Namespace) -> int:
+    context = current()
+    conn = context.open_database()
+    try:
+        if args.command == "clear-treadmill-speed":
+            result = athlete_changes.clear_treadmill_speed(
+                conn,
+                activity_id=args.activity_id,
+                data_start_date=context.settings.data_start_date,
+            )
+        else:
+            result = athlete_changes.log_treadmill_speed(
+                conn,
+                activity_id=args.activity_id,
+                binding=args.binding,
+                speed_kmh=args.speed_kmh,
+                repetitions=args.repetitions_json,
+                data_start_date=context.settings.data_start_date,
+            )
+        print(
+            json.dumps(
+                freshness.wrap(
+                    conn, result.as_data(), recheck_days=context.settings.sync_recheck_days
+                ),
+                indent=2,
+            )
+        )
+        return 0 if result.error is None else 2
+    finally:
+        conn.close()
+
+
 def _cmd_features(args: argparse.Namespace) -> int:
     settings = current().settings
     conn = current().open_database()
@@ -487,6 +519,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     al.add_argument("activity_id", type=int, help="Stored Garmin activity ID.")
     al.set_defaults(func=_cmd_activity_laps)
+
+    ts = sub.add_parser(
+        "log-treadmill-speed", help="Replace athlete-reported console speeds (local only)."
+    )
+    ts.add_argument("activity_id", type=int)
+    ts.add_argument(
+        "--binding", required=True, help="Reviewed work_execution.binding from activity-laps."
+    )
+    ts.add_argument("--speed-kmh", type=float, help="One setting for all current work repetitions.")
+    ts.add_argument(
+        "--repetitions-json",
+        type=json.loads,
+        help='Complete report list: [{"repetition":1,"speed_kmh":16.4}].',
+    )
+    ts.set_defaults(func=_cmd_treadmill_speed)
+    tc = sub.add_parser(
+        "clear-treadmill-speed", help="Explicitly remove console reports, including stale ones."
+    )
+    tc.add_argument("activity_id", type=int)
+    tc.set_defaults(func=_cmd_treadmill_speed)
 
     ft = sub.add_parser("features", help="Recompute the daily_metrics mart from core data.")
     ft.add_argument(

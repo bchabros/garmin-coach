@@ -366,6 +366,42 @@ def log_niggle(
 
 
 @server.tool(annotations=_WRITES_LOCAL)
+def map_exercise(
+    name: str, pattern: str | None, muscle_group: str | None, expected_current: str | None = None
+) -> dict[str, Any]:
+    """Save an athlete-approved local exercise classification, then refresh historical uses.
+
+    Read get_exercise_mappings and show the proposed assignment before asking for
+    approval. Null dimensions mean a deliberate exclusion, not an unknown exercise.
+    This changes local classification only; it does not edit Garmin exercise sets.
+    To replace an existing assignment, pass its reviewed binding as expected_current;
+    a stale binding refuses. Repeating the same assignment is a no-op.
+    """
+    conn = _open()
+    try:
+        return tools.map_exercise(
+            conn,
+            name=name,
+            pattern=pattern,
+            muscle_group=muscle_group,
+            expected_current=expected_current,
+            data_start_date=current().settings.data_start_date,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_READS_DB)
+def get_exercise_mappings(name: str | None = None, local_only: bool = False) -> dict[str, Any]:
+    """Read installed exercise assignments and local differences from packaged defaults."""
+    conn = _open()
+    try:
+        return tools.get_exercise_mappings(conn, name=name, local_only=local_only)
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_WRITES_LOCAL)
 def log_sets(
     activity_id: int, stations: list[str | manual_sets.ManualStationDetails]
 ) -> dict[str, Any]:

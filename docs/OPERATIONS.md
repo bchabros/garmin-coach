@@ -232,20 +232,22 @@ scripts/daily.sh [--to YYYY-MM-DD]                    # thin wrapper for cron / 
   the stations (Garmin names, in order; any case, spaces or hyphens tolerated) to the
   core overlay `manual_activity_sets` and recomputes the marts from that day (ADR 0022).
   A re-log replaces the list; the ETL never touches these rows. Names the movement map
-  does not know are printed as drift, not refused - add them to `exercise_pattern`.
+  does not know are printed as drift, not refused - resolve named exercises through
+  the exercise-mapping operation below.
   Same shape as `log-rpe --activity <id> --rpe N`, the other transport-free writer.
 - Scheduling is documented, not auto-installed: see
   `scripts/com.garmincoach.daily.plist.example` for a launchd template.
 
 ## Local athlete changes and failed recomputation
 
-RPE, manual circuit stations and goal-event changes save the athlete's core fact before
+RPE, manual circuit stations, exercise mappings and goal-event changes save the athlete's core fact before
 recomputing derived data. Niggles need no mart pass. Successful CLI writes exit 0;
 refused/failed writes and saved-but-unrefreshed results exit 2. Partial results name the
 saved activity/event and print recovery instructions; repeating event add is unnecessary.
 MCP exposes `saved`, `recomputed` and `error` alongside the existing evidence/freshness.
 `saved=true, recomputed=false` means the fact survived but the old mart generation remains.
-`recomputed=null` is normal for niggles. A saved goal event is reported separately from
+`recomputed=null` is normal for niggles, identical mapping retries and mappings without
+affected history. A saved goal event is reported separately from
 the old block; its `block_after` stays unknown until recomputation succeeds.
 
 After correcting the reported failure, run the existing offline command for the
@@ -258,6 +260,35 @@ garmin-coach --home /absolute/path/to/athlete features
 Then repeat the cached read. This does not contact Garmin. There is no automatic retry
 queue in the local-write flow. Event add/update also displays the current block before
 and after a successful rebuild, with its anchor race date; missing blocks stay explicit.
+
+### Exercise mappings
+
+The packaged reference map classifies exact Garmin/manual exercise names into movement
+patterns and muscle groups. It includes the fourteen assignments agreed in #118.
+An existing installation missing new reference keys needs the supported explicit offline
+`garmin-coach --home /absolute/path/to/athlete features` run before restarting a guarded
+client. This bootstraps missing defaults and rebuilds metrics; it preserves installed
+assignments and never contacts Garmin. Read-only/guarded clients do not migrate storage.
+
+Inspect an assignment or local additions/overrides:
+
+```sh
+garmin-coach --home /absolute/path/to/athlete exercise-map list --name BENCH_PRESS
+garmin-coach --home /absolute/path/to/athlete exercise-map list --local-only
+```
+
+After reviewing an intended assignment, save it with `exercise-map set NAME --pattern
+pull --muscle-group back`. Use `none` for an intentionally empty dimension. Replacing
+an existing different assignment additionally requires `--expected-current BINDING`
+from the reviewed list result; stale bindings refuse. An identical retry is a no-op.
+Results are JSON and distinguish saved classifications from refreshed metrics.
+
+The sanctioned coach equivalents are `get_exercise_mappings` and `map_exercise`.
+Both are offline. A mapping applies to selected manual-or-captured historical sets;
+it does not rename session sets or update Garmin Connect/personal records. Local
+choices survive updates with the retained database. Fresh empty databases receive
+packaged defaults; later local additions require deliberate upstream inclusion to
+appear there. Export/import and dated mapping history are separate capabilities.
 
 ## Exit-code contract
 

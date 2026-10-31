@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .core import db, events, manual_sets, treadmill
+from .core import db, events, exercise_mappings, manual_sets, treadmill
 from . import execution
 from .marts import features, periodize
 
@@ -256,6 +256,72 @@ def _write_niggle(
         conn, {"date": day, "body_part": body_part, "severity": severity, "note": note}
     )
     return {"body_part": body_part, "severity": severity, "date": day}
+
+
+def map_exercise(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    pattern: str | None,
+    muscle_group: str | None,
+    expected_current: str | None = None,
+    data_start_date: str,
+) -> ChangeResult:
+    """Save an exercise classification and refresh its selected historical evidence."""
+    result = _record(
+        conn,
+        lambda: _write_exercise_mapping(
+            conn, name, pattern, muscle_group, expected_current, data_start_date
+        ),
+        lambda data: (
+            features.features(conn, data_start_date=data_start_date, from_date=data["date"])
+            if data["date"] is not None
+            else None
+        ),
+    )
+    if result.saved and result.data["date"] is None:
+        return replace(result, recomputed=None)
+    return result
+
+
+def _write_exercise_mapping(
+    conn: sqlite3.Connection,
+    name: str,
+    pattern: str | None,
+    muscle_group: str | None,
+    expected_current: str | None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        data = exercise_mappings.assign(
+            conn,
+            name=name,
+            pattern=pattern,
+            muscle_group=muscle_group,
+            expected_current=expected_current,
+        )
+        activities = (
+            exercise_mappings.affected_activities(
+                conn, data["name"], data_start_date=data_start_date
+            )
+            if data["changed"]
+            else []
+        )
+        count = sum(activity["sets"] for activity in activities)
+        return {
+            **data,
+            "activities": activities,
+            "affected_sets": count,
+            "newly_mapped_sets": count if data["previous"] is None else 0,
+            "date": activities[0]["date"] if activities else None,
+        }
+    except ValueError:
+        if started:
+            conn.rollback()
+        raise
 
 
 def log_activity_sets(

@@ -160,6 +160,12 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 - **movement pattern** - push, pull, hinge, squat or carry.
 - **muscle group** - the separately tracked anatomical load grouping; grip is a muscle
   dimension rather than another movement pattern.
+- **exercise mapping** - an agreed association of a named exercise with a movement
+  pattern, a muscle group, both or explicitly neither.
+- **local exercise mapping** - an athlete installation's addition to the shared
+  exercise mappings or a replacement of a shared assignment.
+- **strength personal record (PR)** - the athlete's best recorded result for a
+  particular strength exercise under comparable conditions.
 - **pattern_load** - the session's blended load allocated by mapped-set share,
   rather than tonnage or number of rounds.
 - **pattern overlap** - the minimum of consecutive days' movement loads when both

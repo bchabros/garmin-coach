@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS goal_event (
 
 -- Movement-pattern map: Garmin exercise subcategory -> movement pattern + muscle
 -- group. Hand-curated core reference data (not Garmin-written, not a mart), seeded
--- here and extended by hand as new exercises appear. 'grip' lives on the muscle
+-- here and extended through approved local mappings. 'grip' lives on the muscle
 -- axis (carries and pulls both tax it), not as a sixth movement pattern. Phase 8.
 CREATE TABLE IF NOT EXISTS exercise_pattern (
   subcategory   TEXT PRIMARY KEY,           -- Garmin exercise name, e.g. BARBELL_DEADLIFT
@@ -316,6 +316,22 @@ INSERT OR IGNORE INTO exercise_pattern(subcategory, pattern, muscle_group) VALUE
  ('SKI_ERG',                  'hinge', 'posterior'),
  ('BATTLE_ROPE',              NULL,    'shoulders'),
  ('V_UP',                     NULL,    'core'),
+ -- Recorded names and local reference judgments agreed in issue #118. These
+ -- aliases are exact captured names, not replacements for Garmin recognition.
+ ('BACK_SQUAT',               'squat', 'quads'),
+ ('BENCH_PRESS',              'push',  'chest'),
+ ('BOX_JUMP',                 'squat', 'quads'),
+ ('DUMBBELL_BICEPS_CURL',      'pull',  'grip'),
+ ('INDOOR_ROW',               'hinge', 'posterior'),
+ ('JUMPING_JACKS',            NULL,    NULL),
+ ('ROW',                     'hinge', 'posterior'),
+ ('SIT_UP',                  NULL,    'core'),
+ ('SQUAT',                    'squat', 'quads'),
+ ('DEADLIFT',                 'hinge', 'posterior'),
+ ('DUMBBELL_REVERSE_LUNGE',    'squat', 'quads'),
+ ('DUMBBELL_LATERAL_RAISE',    'push',  'shoulders'),
+ ('JUMP_ROPE',                NULL,    NULL),
+ ('BURPEE',                  NULL,    'core'),
  -- known non-movement: a Garmin CARDIO pseudo-set (e.g. a Hyrox run leg) is a
  -- real ACTIVE set with no exercise name. Mapped to no pattern/muscle so it is
  -- excluded from the overlap load-split, yet stays out of the unmapped drift fact.

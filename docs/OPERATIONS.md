@@ -429,6 +429,9 @@ to 14 finished days. It reimports all streams in that period, including these so
 without changing watermarks. `observation_warnings` and `complete: false` identify
 partial reads even when other data saved and features rebuilt. A failed mart rebuild
 preserves source facts and older marts; run `garmin-coach features` offline to recover.
+If another stream interrupts the range, `saved`, `progressed_streams` and
+`committed_days` identify retained progress; `complete` stays false. The repair still
+refreshes committed facts or names that offline recovery command.
 Terminal operators can use `backfill --from ... --to ...` followed by `features`;
 backfill prints observation warnings and exits 1 when these sources are incomplete.
 

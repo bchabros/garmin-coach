@@ -190,6 +190,9 @@ pass, and `coach.observations` shares coherent offline history/coverage reads be
 CLI and MCP. Legacy weight/forecast tables and snapshot columns remain untouched;
 the new snapshot block is persisted separately and carries only ingested evidence.
 Fixture provenance and synthetic failure variants are described beside the fixtures.
+The default mart cutoff includes actual weight/forecast observations within real
+history. Backfill can retain caller-owned committed progress across an exception;
+period repair rolls back unfinished writes and refreshes saved facts independently.
 
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does

@@ -348,6 +348,9 @@ saved and refreshed outcomes separately, including partial failures, and say wha
   `applied` and `features_ok` are true. Failed source reads retain prior evidence;
   a failed rebuild leaves saved source facts alongside older marts and names offline
   recovery. A changed observation invalidates the preview, requiring renewed consent.
+  If another stream interrupts the period, report `saved`, `committed_days` and
+  `progressed_streams` alongside the error. Saved partial data can still be recomputed;
+  keep `complete: false` distinct from `features_ok`.
 - **A wrong or missing race.** `get_events` lists them; `event_add(...)` records one and
   `event_update(event_id, ...)` corrects one (pin an approximate date, commit a tentative
   start). Both answer with the block calendar's row for this week **before and after** -

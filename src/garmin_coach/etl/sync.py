@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SyncResult:
-    """Observable outcome of one incremental sync run."""
+    """Committed progress and isolated failures of one import operation."""
 
     attempted_streams: set[str] = field(default_factory=set)
     progressed_streams: set[str] = field(default_factory=set)
@@ -407,6 +407,7 @@ def backfill(
     *,
     on_day_complete: Callable[[str], None] | None = None,
     stop_on_enrichment_error: Callable[[Exception], bool] | None = None,
+    progress: SyncResult | None = None,
 ) -> SyncResult:
     """Backfill the inclusive date range from `from_date` to `to_date`.
 
@@ -423,6 +424,8 @@ def backfill(
         stop_on_enrichment_error: Optional transport-neutral failure predicate. Matching
             weather, laps, sets, LTHR or observation failures abort before daily checkpoints; other
             optional endpoint errors keep the established best-effort behavior.
+        progress: Optional accumulator for this import's committed progress, retained
+            by the caller if a later stream raises. Original exception types are preserved.
 
     Returns:
         Import progress and isolated observation-source warnings. Existing daily
@@ -430,8 +433,9 @@ def backfill(
     """
     start = dt.date.fromisoformat(from_date)
     end = _default_end(to_date)
-    result = SyncResult(
-        attempted_streams={
+    result = progress if progress is not None else SyncResult()
+    result.attempted_streams.update(
+        {
             "activities",
             "weight",
             "race_forecasts",
@@ -442,8 +446,8 @@ def backfill(
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []
     _store_activities(conn, from_date, activities, client, stop_on_error=stop_on_enrichment_error)
-    result.progressed_streams.add("activities")
     conn.commit()
+    result.progressed_streams.add("activities")
 
     # LTHR anchor: backfill the detection history via the ranged form.
     _sync_lactate(
@@ -459,7 +463,8 @@ def backfill(
         date = d.isoformat()
         for stream in _DAY_STREAMS:
             stream.store(conn, date, stream.fetch(client, date))
-            result.progressed_streams.add(stream.name)
+        conn.commit()
+        result.progressed_streams.update(stream.name for stream in _DAY_STREAMS)
         for source in observation_sync.SOURCES:
             error = observation_sync.pull_day(
                 client, conn, source, date, stop_on_error=stop_on_enrichment_error

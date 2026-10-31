@@ -160,6 +160,58 @@ def test_backfill_weight_outage_does_not_stop_dated_forecasts(conn, fake_client,
     assert standing["race_forecasts"]["5k"]["value"] == 1092
 
 
+@pytest.mark.parametrize("mart_failure", [False, True])
+def test_interrupted_period_refresh_reports_and_rebuilds_committed_progress(
+    conn, fake_client, fixture, athlete_home, mart_failure
+):
+    from garmin_coach.marts import features
+
+    day = "2026-10-29"
+    original = fake_client(by_day={"weight": {day: _weight_day(day, [(1, 79, 12)])}})
+    sync.backfill(original, conn, day, day)
+    features.features(conn, data_start_date=day)
+    if mart_failure:
+        conn.execute(
+            "CREATE TRIGGER refuse_partial_mart BEFORE INSERT ON daily_metrics BEGIN SELECT RAISE(FAIL, 'synthetic mart failure'); END"
+        )
+        conn.commit()
+
+    class Interrupted(fake_client):
+        def get_sleep(self, date):
+            if date == "2026-10-30":
+                raise TimeoutError("synthetic interruption")
+            return super().get_sleep(date)
+
+    transport = Interrupted(
+        by_day={
+            "weight": {day: _weight_day(day, [(1, 80, 12)])},
+            "wellness": {day: fixture("wellness_day")},
+        }
+    )
+    with InstallationContext.select(athlete_home).use():
+        preview = tools.repair_preview(
+            conn, from_date=day, to_date="2026-10-30", data_start_date=day
+        )["data"]
+        result = tools.repair_confirm(
+            conn,
+            transport,
+            from_date=day,
+            to_date="2026-10-30",
+            confirm_token=preview["confirm_token"],
+            data_start_date=day,
+        )["data"]
+        source = tools.get_observation_history(conn, from_date=day, to_date=day)["data"]
+    assert result["applied"] and result["saved"]
+    assert result["complete"] is False
+    assert "weight" in result["progressed_streams"]
+    assert result["committed_days"] == [day]
+    assert result["features_ok"] is not mart_failure
+    assert source["weight"][0]["weight_kg"] == 80
+    assert snapshot.read(conn)["weight"]["value"] == (79 if mart_failure else 80)
+    if mart_failure:
+        assert result["recovery_command"] == "garmin-coach features"
+
+
 def test_seven_nightly_runs_find_old_app_edits_without_duplicate_day_reads(conn, fake_client):
     old = "2026-06-04"
     # Synthetic dated forecast change exercises the same history cycle as weight.
@@ -554,3 +606,26 @@ def test_pre_cutoff_observations_are_retained_but_excluded_from_standing(
     assert status["weight"] is None
     assert status["race_forecasts"]["5k"] is None
     assert conn.execute("SELECT count(*) FROM weight_observations").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("stale_wellness", [False, True])
+def test_default_features_horizon_includes_new_observation_sources(
+    conn, fake_client, fixture, stale_wellness
+):
+    from garmin_coach.marts import features
+
+    day = "2026-10-30"
+    client = fake_client(
+        by_day={
+            "weight": {day: _weight_day(day, [(1, 80, 12)])},
+            "race_forecasts": {day: [fixture("race_daily_recent")[-1]]},
+            "wellness": {"2026-10-29": fixture("wellness_day")} if stale_wellness else {},
+        }
+    )
+    sync.backfill(client, conn, "2026-10-29", day)
+    features.features(conn, data_start_date="2026-10-29")
+    standing = snapshot.read(conn)
+    assert standing is not None
+    assert standing["computed_at"] == day
+    assert standing["weight"]["value"] == 80
+    assert standing["race_forecasts"]["5k"]["value"] == 1092

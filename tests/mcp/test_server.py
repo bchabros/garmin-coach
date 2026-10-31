@@ -41,6 +41,7 @@ def _past(days: int) -> str:
 EXPECTED_TOOLS = {
     # read (local DB)
     "get_snapshot",
+    "get_observation_history",
     "get_digest",
     "get_recent_activities",
     "get_activity_laps",
@@ -200,6 +201,7 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existi
 # tool that says so can be allowed for good (issue #79).
 READ_ONLY_TOOLS = {
     "get_snapshot",
+    "get_observation_history",
     "get_digest",
     "get_recent_activities",
     "get_activity_laps",

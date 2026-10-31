@@ -623,9 +623,42 @@ CREATE TABLE IF NOT EXISTS athlete_zones (
   stale                    INTEGER           -- 1 when detection older than zones_stale_days
 );
 
--- Athlete snapshot (mart): the single current standing "where do I stand right now".
--- A same-run copy of finished marts + core, recomputed as the tail of `features`
--- after weekly + zones. Serialized to reports/{date}/snapshot.json. Phase 6b.
+-- Imported observations stay separate from retired, unsourced weight_log storage.
+CREATE TABLE IF NOT EXISTS weight_observations (
+  measurement_id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  measured_at_utc_ms INTEGER NOT NULL,
+  weight_kg REAL NOT NULL CHECK (weight_kg > 0),
+  source_type TEXT
+);
+CREATE INDEX IF NOT EXISTS weight_observations_day ON weight_observations(date);
+
+CREATE TABLE IF NOT EXISTS garmin_race_forecasts (
+  date TEXT PRIMARY KEY,
+  time_5k_s REAL,
+  time_10k_s REAL,
+  time_half_s REAL,
+  time_marathon_s REAL
+);
+
+-- Successful source observations and failed attempts are distinct from source edit dates.
+CREATE TABLE IF NOT EXISTS observation_checks (
+  stream TEXT NOT NULL CHECK (stream IN ('weight','race_forecasts')),
+  date TEXT NOT NULL,
+  checked_at TEXT,
+  last_attempt_at TEXT NOT NULL,
+  error_kind TEXT,
+  PRIMARY KEY (stream, date)
+);
+CREATE TABLE IF NOT EXISTS observation_scans (
+  stream TEXT PRIMARY KEY CHECK (stream IN ('weight','race_forecasts')),
+  successful_runs INTEGER NOT NULL,
+  last_successful_run TEXT NOT NULL,
+  cycle_completed_at TEXT
+);
+
+-- Athlete snapshot: same-run finished marts/core, materialized by features after weekly/zones.
+-- Serialized to reports/{date}/snapshot.json; source_observations_json excludes legacy values.
 CREATE TABLE IF NOT EXISTS athlete_status (
   id                       INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
   computed_at              TEXT,              -- as-of date; every latest read scoped to <= this
@@ -671,7 +704,8 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   taper_active             INTEGER,
   planned_intent_today     TEXT,              -- resolved plan intent for weekday(computed_at)
   planned_label_today      TEXT,
-  plan_source_today        TEXT               -- plan_week | plan_template
+  plan_source_today        TEXT,              -- plan_week | plan_template
+  source_observations_json TEXT               -- sourced weight/forecast standing, not legacy values
 );
 
 -- Periodization (mart): one row per week, the training block counted back from the

@@ -399,6 +399,39 @@ environment must agree with it):
 - **Onboarding gap.** Real data starts 2026-06-08 (`data_start`, defined in
   `docs/glossary.md`); earlier dates are explicit gaps, not zero training.
 
+## Weight observations and Garmin race forecasts
+
+The first incremental import fetches available source history from the configured
+`data_start`; source checks have their own progress. Nightly runs also re-read one
+seventh of older dates per source, completing a cycle after seven successful nightly
+cutoffs. Failures keep that bucket due; repeating the same cutoff cannot advance it
+twice. Other streams continue, and normal nightly orchestration runs features once.
+Older guarded installations need the new schema via the normal update or offline
+`garmin-coach features` in the same installation before restarting the coach server.
+New standing fields remain unavailable until source import and features succeed.
+
+Read saved observations and check coverage without Garmin:
+
+```bash
+garmin-coach observations --from 2026-06-08 --to 2026-10-30
+```
+
+The MCP equivalent is `get_observation_history(from_date, to_date)`. Omitted bounds
+mean configured `data_start` through today; today's coverage remains partial. `checks`
+reports successful, never-checked, failed and overdue days, plus nightly scan progress.
+Check times are source observations, not Garmin edit timestamps. Weight is kg;
+forecast values are seconds and remain Garmin estimates. `get_snapshot`/`snapshot.json`
+adds dated `weight` and `race_forecasts` blocks with supported 28-day changes and actual
+spans; a source date is not the date of the latest import.
+
+For an earlier re-read, use `repair_preview` then confirmed `repair_confirm` for up
+to 14 finished days. It reimports all streams in that period, including these sources,
+without changing watermarks. `observation_warnings` and `complete: false` identify
+partial reads even when other data saved and features rebuilt. A failed mart rebuild
+preserves source facts and older marts; run `garmin-coach features` offline to recover.
+Terminal operators can use `backfill --from ... --to ...` followed by `features`;
+backfill prints observation warnings and exits 1 when these sources are incomplete.
+
 ## Generating a coach report
 
 `garmin-coach report [--to YYYY-MM-DD]` builds the deterministic artifacts under

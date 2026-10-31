@@ -19,6 +19,30 @@ required evidence is unavailable, state the prerequisite rather than constructin
 Answer the question using the profile rail, null handling and source rules; finish
 with the digest's disclaimer verbatim when a digest is available. Stop after the answer.
 
+## Weight and Garmin race forecasts
+
+Use the snapshot's `weight` and `race_forecasts` blocks for current standing. Each
+available marker carries `value`, `unit`, `date`, `source`, `delta`, `span_days`,
+`baseline_date` and `points`. Keep the source date: a fresh import can contain an
+older measurement or estimate. Weight is kg; forecast values are seconds for `5k`,
+`10k`, `half_marathon` and `marathon`. Attribute forecasts to Garmin and keep them
+distinct from recorded race results and race-time scenarios.
+
+Changes use available observations within 28 days and the configured minimum span
+(seven days by default). State the actual `span_days`; null means unsupported change.
+Every weighing is retained, while the trend uses the last weighing per source day.
+Each forecast distance has its own dated history; partial distances do not establish
+a complete forecast set. These fields do not themselves prescribe weight goals or
+training changes.
+
+For history or missing/failed coverage, read `get_observation_history(from_date,
+to_date)` (terminal: `observations --from ... --to ...`). This is offline, with kg,
+seconds, individual observations and `checks` showing due/failed/never-checked dates.
+Scan/check dates describe our reads, not when Garmin edited history. A seven-night
+cycle depends on successful runs; an incomplete check is not proof of no data.
+Ordinary standing questions stay on the read-only route. For an explicit earlier
+re-read, use the confirmed repair flow below; it reimports all streams in that period.
+
 ## Stored interval evidence
 
 For a question about individual repetitions, use `get_recent_activities` to find the
@@ -158,6 +182,8 @@ report that prerequisite; source-checkout commands are not an installation fallb
      `zones_stale` when 1), and today's plan (`planned_label_today`, flagged as the
      fallback template when `plan_source_today` is `plan_template`). Skip any sub-item
      whose value is null. Skip the whole block when `snapshot.json` is absent.
+     Include available dated weight and Garmin race forecasts using the source and
+     comparison rules above; format forecast seconds as finish times.
    - **Nagłówek** - one line on the window and the headline numbers (ACWR + reliability,
      latest HRV vs baseline, 7-day load split). When the `zones` block is present, add
      the Z2 pace ceiling so the read is actionable: "trzymaj easy run pod X:XX/km"
@@ -304,10 +330,8 @@ offline; do not substitute a live Garmin refresh or claim the change was recompu
 
 ## When a read shows the data is wrong or missing
 
-The reads are only as good as what is in the DB, and three things can be fixed from the
-conversation instead of from a terminal (issue #72). Every one of them rebuilds the marts
-itself, so the next read is already current - and every one of them needs you to say what
-changed afterwards.
+The following flows can update saved evidence from the conversation. Report their
+saved and refreshed outcomes separately, including partial failures, and say what changed.
 
 - **A day the plan expected a session on, with nothing recorded.** Every response carries
   `freshness.unconfirmed_days` (the digest repeats it in `window`): each entry is a day
@@ -318,6 +342,12 @@ changed afterwards.
   the watch, then `repair_preview(from_date, to_date)` shows what each day of the range
   holds, you show that to the athlete, and `repair_confirm(from_date, to_date,
   confirm_token)` pulls it. At most 14 days, never today - today is `refresh_today`.
+- **Older weight or forecast data the athlete wants checked now.** The same repair
+  pair shows the period and per-source observation/check state, then reimports all
+  streams after approval. Check `observation_warnings` and `complete`, even when
+  `applied` and `features_ok` are true. Failed source reads retain prior evidence;
+  a failed rebuild leaves saved source facts alongside older marts and names offline
+  recovery. A changed observation invalidates the preview, requiring renewed consent.
 - **A wrong or missing race.** `get_events` lists them; `event_add(...)` records one and
   `event_update(event_id, ...)` corrects one (pin an approximate date, commit a tentative
   start). Both answer with the block calendar's row for this week **before and after** -

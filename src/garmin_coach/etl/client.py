@@ -257,6 +257,14 @@ class GarminTransport:
         """Fetch training status data for one date."""
         return self._api.get_training_status(date)
 
+    def get_weight(self, date: str) -> dict[str, Any]:
+        """Read all weighings for one source day, including manually entered ones."""
+        return self._api.get_daily_weigh_ins(date)
+
+    def get_race_forecasts(self, date: str) -> list[dict[str, Any]]:
+        """Read actual daily forecasts; never substitute the latest for missing history."""
+        return self._api.get_race_predictions(date, date, "daily")
+
     def get_activity_weather(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch per-activity weather (temperature is Fahrenheit in the payload)."""
         return self._api.get_activity_weather(str(activity_id))

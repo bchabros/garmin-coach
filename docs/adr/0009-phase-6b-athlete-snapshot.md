@@ -26,6 +26,12 @@ A current-standing answer needs one stable deterministic surface rather than rep
   their unused policy/schema requirements because no ETL supplies them. A future
   ingestion feature needs its own issue. Preserve extra legacy storage, while public
   snapshot reads explicitly project only supported fields.
+- Amendment approved in #106: restore these capabilities from newly ingested
+  observations, with source dates, units and supported 28-day changes. Keep retired
+  tables/columns intact and separate; their values are not evidence of ingestion.
+  Preserve every weighing and select each source day's last for its trend. Garmin
+  race forecasts remain attributed estimates, with each distance's own date and
+  history. Short or missing comparisons are null; report their actual span.
 
 ## Consequences
 

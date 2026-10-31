@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from ..core import db, laps, models
+from . import observation_sync
 from ..core.config import DEFAULT_RECHECK_DAYS
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,14 @@ class GarminClient(Protocol):
         """Fetch training status data for one date."""
         ...
 
+    def get_weight(self, date: str) -> dict[str, Any] | None:
+        """Fetch all recorded weighings for one source day."""
+        ...
+
+    def get_race_forecasts(self, date: str) -> list[dict[str, Any]] | None:
+        """Fetch dated Garmin running forecasts for one requested day."""
+        ...
+
     def get_activity_weather(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch per-activity weather (air temperature) for one activity."""
         ...
@@ -117,6 +126,19 @@ class SyncContext:
     def window_start(self) -> dt.date:
         """First day of the re-check window, the trailing days pulled again on every run."""
         return self.end - dt.timedelta(days=self.recheck_days - 1)
+
+    def retry(self, action: Callable[[], Any]) -> Any:
+        """Fetch through this run's configured retry budget."""
+        return _call_with_retry(action, self.max_attempts, self.retry_base_seconds)
+
+    def record_synced(self, stream: str, date: str) -> None:
+        """Commit source progress without finalizing days beyond the recent-window cap."""
+        final = min(date, self.window_start.isoformat())
+        current = db.get_sync_watermark(self.conn, stream)
+        if current is None or final > current:
+            db.set_sync_watermark(self.conn, stream, final)
+        self.result.progressed_streams.add(stream)
+        self.conn.commit()
 
 
 @dataclass(frozen=True)
@@ -385,7 +407,7 @@ def backfill(
     *,
     on_day_complete: Callable[[str], None] | None = None,
     stop_on_enrichment_error: Callable[[Exception], bool] | None = None,
-) -> None:
+) -> SyncResult:
     """Backfill the inclusive date range from `from_date` to `to_date`.
 
     to_date defaults to yesterday because today is incomplete; HRV and sleep
@@ -399,15 +421,28 @@ def backfill(
         on_day_complete: Optional checkpoint callback, called only after a whole
             day's streams have committed. It never changes sync watermarks.
         stop_on_enrichment_error: Optional transport-neutral failure predicate. Matching
-            weather, laps, sets or LTHR failures abort before daily checkpoints; other
+            weather, laps, sets, LTHR or observation failures abort before daily checkpoints; other
             optional endpoint errors keep the established best-effort behavior.
+
+    Returns:
+        Import progress and isolated observation-source warnings. Existing daily
+        stream failures still raise; successful source/core writes remain committed.
     """
     start = dt.date.fromisoformat(from_date)
     end = _default_end(to_date)
+    result = SyncResult(
+        attempted_streams={
+            "activities",
+            "weight",
+            "race_forecasts",
+            *(s.name for s in _DAY_STREAMS),
+        }
+    )
 
     # Activities come as one range call; store raw once, upsert each activity.
     activities = client.get_activities(from_date, end.isoformat()) or []
     _store_activities(conn, from_date, activities, client, stop_on_error=stop_on_enrichment_error)
+    result.progressed_streams.add("activities")
     conn.commit()
 
     # LTHR anchor: backfill the detection history via the ranged form.
@@ -424,9 +459,19 @@ def backfill(
         date = d.isoformat()
         for stream in _DAY_STREAMS:
             stream.store(conn, date, stream.fetch(client, date))
+            result.progressed_streams.add(stream.name)
+        for source in observation_sync.SOURCES:
+            error = observation_sync.pull_day(
+                client, conn, source, date, stop_on_error=stop_on_enrichment_error
+            )
+            if error:
+                result.warnings.append(f"{source.name} failed for {date}: {error}")
+            else:
+                result.progressed_streams.add(source.name)
         conn.commit()
         if on_day_complete is not None:
             on_day_complete(date)
+    return result
 
 
 def _stream_start(ctx: SyncContext, stream: str, core_table: str) -> dt.date:
@@ -443,22 +488,6 @@ def _stream_start(ctx: SyncContext, stream: str, core_table: str) -> dt.date:
         data_start_date=ctx.data_start.isoformat(),
     )
     return max(min(_next_date(watermark), ctx.window_start), ctx.data_start)
-
-
-def _record_synced(ctx: SyncContext, stream: str, date: str) -> None:
-    """Record that ``stream`` fetched and stored ``date``: watermark, progress, commit.
-
-    A day is pulled on every run while it is inside the re-check window and becomes
-    final on the last of those pulls, when it is the window's first day: the watermark
-    never passes that day. It never moves backwards either: a stored watermark ahead
-    of the cap stays put until the cap overtakes it.
-    """
-    final = min(date, ctx.window_start.isoformat())
-    current = db.get_sync_watermark(ctx.conn, stream)
-    if current is None or final > current:
-        db.set_sync_watermark(ctx.conn, stream, final)
-    ctx.result.progressed_streams.add(stream)
-    ctx.conn.commit()
 
 
 def _sync_activities(ctx: SyncContext, start: dt.date) -> None:
@@ -497,10 +526,10 @@ def _sync_activities(ctx: SyncContext, start: dt.date) -> None:
                 break
 
             _store_activities(ctx.conn, date, activities, ctx.client, ctx.result.enrichment_misses)
-            _record_synced(ctx, "activities", date)
+            ctx.record_synced("activities", date)
     else:
         _store_activities(ctx.conn, start_s, activities, ctx.client, ctx.result.enrichment_misses)
-        _record_synced(ctx, "activities", end_s)
+        ctx.record_synced("activities", end_s)
 
 
 def _log_window_days_without_activity(ctx: SyncContext) -> None:
@@ -555,7 +584,7 @@ def _sync_daily_stream(stream: SyncStream, ctx: SyncContext, start: dt.date) -> 
             break
 
         stream.store(ctx.conn, date, payload)
-        _record_synced(ctx, stream.name, date)
+        ctx.record_synced(stream.name, date)
 
 
 def refresh_day(client: GarminClient, conn: sqlite3.Connection, date: str) -> SyncResult:
@@ -597,6 +626,13 @@ def refresh_day(client: GarminClient, conn: sqlite3.Connection, date: str) -> Sy
             result.progressed_streams.add(stream.name)
         conn.commit()
 
+    for source in observation_sync.SOURCES:
+        result.attempted_streams.add(source.name)
+        error = observation_sync.pull_day(client, conn, source, date)
+        if error:
+            result.warnings.append(f"{source.name} failed for {date}: {error}")
+        else:
+            result.progressed_streams.add(source.name)
     return result
 
 
@@ -648,6 +684,7 @@ def sync_incremental(
 
         _sync_daily_stream(stream, ctx, start)
 
+    observation_sync.run(ctx)
     # LTHR anchor: one best-effort fetch per run, isolated from stream status.
     _sync_lactate(ctx.client, conn)
     conn.commit()

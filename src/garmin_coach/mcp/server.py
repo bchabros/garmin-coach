@@ -68,6 +68,18 @@ def get_snapshot() -> dict[str, Any]:
 
 
 @server.tool(annotations=_READS_DB)
+def get_observation_history(
+    from_date: str | None = None, to_date: str | None = None
+) -> dict[str, Any]:
+    """Saved weighings, dated Garmin forecasts and due/failed source checks; no live reads."""
+    conn = _open()
+    try:
+        return tools.get_observation_history(conn, from_date=from_date, to_date=to_date)
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_READS_DB)
 def get_digest(to_date: str | None = None) -> dict[str, Any]:
     """The cited coach digest (signals, weekly, zones, recommendation) for a horizon."""
     conn = _open()

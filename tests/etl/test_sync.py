@@ -427,7 +427,16 @@ def test_no_watermark_ever_passes_the_first_day_of_the_window(conn, fake_client,
     sync.sync_incremental(client, conn, data_start_date="2026-06-08", to_date="2026-06-20")
 
     watermarks = dict(conn.execute("SELECT stream, last_synced_date FROM sync_state"))
-    assert set(watermarks) == {"activities", "sleep", "hrv", "wellness", "readiness", "status"}
+    assert set(watermarks) == {
+        "activities",
+        "sleep",
+        "hrv",
+        "wellness",
+        "readiness",
+        "status",
+        "weight",
+        "race_forecasts",
+    }
     assert set(watermarks.values()) == {"2026-06-18"}
 
 

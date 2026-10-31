@@ -182,6 +182,18 @@ on temporary installations (`tests/test_activity_laps.py`, `tests/test_treadmill
 Reported-console writes reuse `athlete_changes` and its saved/recomputed contract;
 ADR 0038 records binding identity, ownership and partial-rebuild behavior.
 
+`core.observations` owns validated per-day source replacement, check evidence and
+scan progress. `etl.observation_sync` shares raw-first imports across backfill,
+same-day refresh and nightly history buckets; malformed reads preserve prior core.
+`marts.observations` derives dated 28-day comparisons inside the atomic features
+pass, and `coach.observations` shares coherent offline history/coverage reads between
+CLI and MCP. Legacy weight/forecast tables and snapshot columns remain untouched;
+the new snapshot block is persisted separately and carries only ingested evidence.
+Fixture provenance and synthetic failure variants are described beside the fixtures.
+The default mart cutoff includes actual weight/forecast observations within real
+history. Backfill can retain caller-owned committed progress across an exception;
+period repair rolls back unfinished writes and refreshes saved facts independently.
+
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
 not initialize Matplotlib even when the CLI imports the report module.
@@ -257,6 +269,10 @@ ones sparingly:
   failure triggers (`tests/test_athlete_changes.py`): committed facts after reopen,
   preserved old marts, honest partial results, overlays, event collisions and offline
   recovery. Keep CLI/MCP adapter tests for flags, exit codes, freshness and block output.
+- Test observations through injected sync/backfill/refresh, temporary SQLite,
+  snapshot/feature and public CLI/MCP seams (`tests/test_observations.py`): units,
+  dates, multiple weighings, sparse trends, legacy preservation, malformed/storage
+  failures, seven-night coverage, stale repair consent and late-mart recovery.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
 - Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --

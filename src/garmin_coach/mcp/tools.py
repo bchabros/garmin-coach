@@ -24,8 +24,8 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
-from ..coach import activity, digest, freshness, thresholds as _thresholds
-from ..core import db, manual_sets, plan, treadmill
+from ..coach import activity, digest, freshness, observations, thresholds as _thresholds
+from ..core import db, manual_sets, plan, treadmill, observations as recorded_observations
 from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
@@ -84,6 +84,21 @@ def _day_before(date: str) -> str:
 def get_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return the athlete_status snapshot row (None until features has run)."""
     return _wrap(conn, snapshot.read(conn))
+
+
+def get_observation_history(
+    conn: sqlite3.Connection, from_date: str | None = None, to_date: str | None = None
+) -> dict[str, Any]:
+    """Read imported weighings, Garmin forecasts and their source-check coverage offline."""
+    start = from_date or current().settings.data_start_date
+    end = to_date or dt.date.today().isoformat()
+    try:
+        data = observations.read(
+            conn, from_date=start, to_date=end, data_start_date=current().settings.data_start_date
+        )
+    except ValueError as exc:
+        data = {"error": str(exc)}
+    return _wrap(conn, data)
 
 
 def get_digest(conn: sqlite3.Connection, to_date: str | None = None) -> dict[str, Any]:
@@ -383,6 +398,7 @@ def _repair_day(conn: sqlite3.Connection, date: str) -> dict[str, Any]:
     }
     for stream in _REPAIR_STREAMS:
         day[stream] = db.has_daily_row(conn, db.DAILY_STREAM_TABLES[stream], date)
+    day["observations"] = recorded_observations.day_summary(conn, date)
     return day
 
 
@@ -471,25 +487,45 @@ def repair_confirm(
 
     days = _repair_dates(from_date, to_date)
     before = db.count_activities(conn, from_date, to_date)
+    imported = sync.SyncResult()
+    committed_days: list[str] = []
+    interrupted = None
     try:
-        sync.backfill(client, conn, from_date, to_date)
+        sync.backfill(
+            client,
+            conn,
+            from_date,
+            to_date,
+            progress=imported,
+            on_day_complete=committed_days.append,
+        )
     except Exception as exc:  # noqa: BLE001 - a tool reports; it never raises out of MCP
-        return _wrap(conn, {"applied": False, "error": f"repair failed: {exc}"})
+        conn.rollback()
+        if not imported.had_progress:
+            return _wrap(conn, {"applied": False, "error": f"repair failed: {exc}"})
+        interrupted = f"repair interrupted ({type(exc).__name__}); saved progress retained"
 
     data = {
         "applied": True,
+        "saved": True,
         "from_date": from_date,
         "to_date": to_date,
         "days": len(days),
         "activities_stored": db.count_activities(conn, from_date, to_date) - before,
         "features_ok": False,
-        "error": None,
+        "observation_warnings": imported.warnings,
+        "progressed_streams": sorted(imported.progressed_streams),
+        "committed_days": committed_days,
+        "complete": not imported.warnings and interrupted is None,
+        "error": interrupted
+        or ("some observation reads remain incomplete" if imported.warnings else None),
     }
     try:
         features.rebuild_marts(conn, data_start_date=data_start_date)
         data["features_ok"] = True
     except Exception as exc:  # noqa: BLE001 - the pull landed; say the rebuild did not
         data["error"] = f"data pulled, but the mart rebuild failed: {exc}"
+        data["recovery_command"] = "garmin-coach features"
     return _wrap(conn, data)
 
 

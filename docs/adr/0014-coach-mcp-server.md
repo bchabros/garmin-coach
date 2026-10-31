@@ -19,6 +19,9 @@ One conversational surface needs finished-DB reads, local logs and guarded refre
 - Local writes and explicit transport operations coexist, but metric computation
   never reads Garmin live. Refresh reuses ETL, stays partial and never advances
   watermarks; freshness accompanies all reads. Nightly owns alerts.
+- #106 adds offline observation-history reads. Its selected-period refresh reuses
+  the bounded repair preview/confirmation, including source/check bindings and
+  partial-read outcomes; it does not add another live metric read.
 - MCP push uses the separate confirmation token of ADRs 0019/0021; the original
   spec-hash handshake and initial fixed transport-tool count are superseded.
 - Workout status must reconcile the account on each read, without an opt-out.

@@ -1,0 +1,29 @@
+[
+  {
+    "fromCalendarDate": "2026-10-28",
+    "toCalendarDate": "2026-10-30",
+    "calendarDate": "2026-10-28",
+    "time5K": 1091,
+    "time10K": 2338,
+    "timeHalfMarathon": 5330,
+    "timeMarathon": 11942
+  },
+  {
+    "fromCalendarDate": "2026-10-28",
+    "toCalendarDate": "2026-10-30",
+    "calendarDate": "2026-10-29",
+    "time5K": 1091,
+    "time10K": 2339,
+    "timeHalfMarathon": 5334,
+    "timeMarathon": 11949
+  },
+  {
+    "fromCalendarDate": "2026-10-28",
+    "toCalendarDate": "2026-10-30",
+    "calendarDate": "2026-10-30",
+    "time5K": 1092,
+    "time10K": 2341,
+    "timeHalfMarathon": 5340,
+    "timeMarathon": 11964
+  }
+]

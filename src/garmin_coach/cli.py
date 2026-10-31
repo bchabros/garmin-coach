@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
 
 from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
-from .coach import activity, freshness, report
+from .coach import activity, freshness, observations, report
 from .core import db, events as _events, installation
 from .etl import client, sync
 from .marts import features, periodize, snapshot
@@ -43,10 +43,12 @@ def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
 
-    sync.backfill(transport, conn, from_date, args.to_date)
+    result = sync.backfill(transport, conn, from_date, args.to_date)
     conn.close()
     print(f"backfill complete: {from_date} .. {args.to_date or 'yesterday'}")
-    return 0
+    for warning in result.warnings:
+        print(f"warning: {warning}")
+    return 1 if result.warnings else 0
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
@@ -85,6 +87,30 @@ def _cmd_activity_laps(args: argparse.Namespace) -> int:
             )
         )
         return 0 if data["activity"] is not None else 1
+    finally:
+        conn.close()
+
+
+def _cmd_observations(args: argparse.Namespace) -> int:
+    context = current()
+    conn = context.open_database()
+    try:
+        try:
+            data = observations.read(
+                conn,
+                from_date=args.from_date or context.settings.data_start_date,
+                to_date=args.to_date or _dt.date.today().isoformat(),
+                data_start_date=context.settings.data_start_date,
+            )
+        except ValueError as exc:
+            data = {"error": str(exc)}
+        print(
+            json.dumps(
+                freshness.wrap(conn, data, recheck_days=context.settings.sync_recheck_days),
+                indent=2,
+            )
+        )
+        return 1 if data.get("error") else 0
     finally:
         conn.close()
 
@@ -629,6 +655,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Window end YYYY-MM-DD (default: latest mart day).",
     )
     rp.set_defaults(func=_cmd_report)
+
+    ob = sub.add_parser(
+        "observations", help="Read saved weighings, Garmin forecasts and check coverage offline."
+    )
+    ob.add_argument(
+        "--from", dest="from_date", default=None, help="First source day (default: data_start)."
+    )
+    ob.add_argument("--to", dest="to_date", default=None, help="Last source day (default: today).")
+    ob.set_defaults(func=_cmd_observations)
 
     sp = sub.add_parser(
         "snapshot", help="Write the current standing to reports/{date}/snapshot.json."

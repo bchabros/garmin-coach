@@ -1,6 +1,6 @@
 ---
 name: coach
-description: 'Coach the athlete using recorded training and race evidence. Use for a training report, coach read, weekly review, "how am I doing", or current form and fitness ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek", "zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka"); historical race results, comparisons or race time scenarios; and finding saved coaching context from earlier reports or decisions.'
+description: 'Coach the athlete using recorded training and race evidence. Use for a training report, coach read, weekly review, "how am I doing", or current form and fitness ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); weight history or Garmin race forecasts ("jak zmienia sie moja waga", "prognozy Garmina"); planning or re-planning a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek", "zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka"); historical race results, comparisons or race time scenarios; and finding saved coaching context from earlier reports or decisions.'
 ---
 
 # Coach
@@ -18,13 +18,14 @@ A saved-context lookup can lead into reporting, planning or workout authoring.
 
 - Before you take in Garmin-derived numbers or calendar data - reading
   `reports/{today}/digest.json` or `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
-  / `get_recommendation` / `get_recent_activities` / `get_activity_laps` / `get_events`, whether you are
+  / `get_recommendation` / `get_recent_activities` / `get_activity_laps` / `get_events`
+  / `get_observation_history`, whether you are
   writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
   `references/report.md`. It carries what every field means and which may be null, and
   the fields are the same whichever way they arrive. The same file covers what to do
   when a read shows the data is wrong or missing: `event_add` / `event_update` (the race
   calendar), `log_treadmill_speed` / `clear_treadmill_speed` (reported console settings),
-  `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day).
+  `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day or an explicitly requested observation re-read).
 - Before you read, propose, preview, or write a training week - opening
   `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` /
   `plan_import` - you **MUST** read `references/planning.md`.
@@ -99,7 +100,7 @@ request from the athlete.
   the command line call Garmin live, which the golden rule forbids from the coach layer -
   the operator runs those, never you. From chat you have exactly two: `refresh_today`
   (today, partial) and the `repair_preview` -> `repair_confirm` pair for a finished day
-  that is missing (ADR 0028). Everything else comes from the digest and the snapshot;
+  whose data need re-reading (ADR 0028, extended for observations in #106). Everything else comes from the digest and the snapshot;
   `plan_import`, `report`, and `features` rebuild those offline.
 - **A day inside the re-check window is not evidence.** Every response carries
   `freshness.unconfirmed_days`: days the plan expected a session on where no activity has

@@ -95,7 +95,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "weeks_to_event": "INTEGER",
     },
     # per-week plan overrides (issue #21): which source resolved today's intent
-    "athlete_status": {"plan_source_today": "TEXT"},
+    "athlete_status": {"plan_source_today": "TEXT", "source_observations_json": "TEXT"},
 }
 
 

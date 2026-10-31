@@ -34,13 +34,24 @@ def _mart_start(data_start_date: str, from_date: str | None) -> str:
     return max(data_start, week_start).isoformat()
 
 
-def _latest_core_date(conn: sqlite3.Connection) -> str | None:
+def _latest_core_date(conn: sqlite3.Connection, data_start_date: str) -> str | None:
     dates: list[str] = []
-    row = conn.execute("SELECT MAX(date(start_local)) FROM activities").fetchone()
+    row = conn.execute(
+        "SELECT MAX(date(start_local)) FROM activities WHERE date(start_local)>=?",
+        (data_start_date,),
+    ).fetchone()
     if row and row[0]:
         dates.append(row[0])
-    for table in ("hrv_nightly", "daily_wellness", "sleep"):
-        row = conn.execute(f"SELECT MAX(date) FROM {table}").fetchone()
+    for table in (
+        "hrv_nightly",
+        "daily_wellness",
+        "sleep",
+        "weight_observations",
+        "garmin_race_forecasts",
+    ):
+        row = conn.execute(
+            f"SELECT MAX(date) FROM {table} WHERE date>=?", (data_start_date,)
+        ).fetchone()
         if row and row[0]:
             dates.append(row[0])
     return max(dates) if dates else None
@@ -174,7 +185,7 @@ def features(
     Raises:
         Exception: Whatever a mart step raised, after rolling the whole pass back.
     """
-    end = to_date or _latest_core_date(conn)
+    end = to_date or _latest_core_date(conn, data_start_date)
     if end is None:
         return
     try:
@@ -221,7 +232,7 @@ def _tail_rollups(
     intervals.rollup(conn, data_start_date=data_start_date, through_date=end)
 
     # Compose the current standing last, so it copies the fresh weekly + zones rows.
-    snapshot.rollup(conn, through_date=end)
+    snapshot.rollup(conn, through_date=end, data_start_date=data_start_date)
 
 
 def _daily_mart(

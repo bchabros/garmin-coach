@@ -7,7 +7,7 @@ import json
 import sqlite3
 from typing import Any
 
-from . import db, manual_sets
+from . import db, exercise_names
 
 PATTERNS = ("push", "pull", "hinge", "squat", "carry")
 MUSCLE_GROUPS = ("chest", "back", "posterior", "quads", "shoulders", "grip", "core")
@@ -23,7 +23,7 @@ def read(
 ) -> dict[str, Any]:
     """Read installed assignments and their differences from packaged defaults."""
     defaults = db.reference_exercise_mappings()
-    selected = manual_sets.normalize(0, [name])[0]["subcategory"] if name is not None else None
+    selected = exercise_names.normalize(name) if name is not None else None
     rows = []
     for exercise, pattern, muscle in conn.execute(
         "SELECT subcategory, pattern, muscle_group FROM exercise_pattern ORDER BY subcategory"
@@ -60,7 +60,7 @@ def assign(
     """Stage an assignment; a different existing value requires its reviewed binding."""
     if not isinstance(name, str):
         raise ValueError("exercise name must be a string")
-    name = manual_sets.normalize(0, [name])[0]["subcategory"]
+    name = exercise_names.normalize(name)
     if name == "UNKNOWN":
         raise ValueError("UNKNOWN needs actual exercise names; log the session's stations")
     if pattern is not None and pattern not in PATTERNS:

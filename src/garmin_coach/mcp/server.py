@@ -377,7 +377,7 @@ def map_exercise(
     To replace an existing assignment, pass its reviewed binding as expected_current;
     a stale binding refuses. Repeating the same assignment is a no-op.
     """
-    conn = _open()
+    conn = current().open_existing_database(writable=True)
     try:
         return tools.map_exercise(
             conn,
@@ -394,7 +394,7 @@ def map_exercise(
 @server.tool(annotations=_READS_DB)
 def get_exercise_mappings(name: str | None = None, local_only: bool = False) -> dict[str, Any]:
     """Read installed exercise assignments and local differences from packaged defaults."""
-    conn = _open()
+    conn = current().open_existing_database()
     try:
         return tools.get_exercise_mappings(conn, name=name, local_only=local_only)
     finally:

@@ -339,7 +339,11 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
 
 def _cmd_exercise_map(args: argparse.Namespace) -> int:
     context = current()
-    conn = context.open_database()
+    try:
+        conn = context.open_existing_database(writable=args.map_command == "set")
+    except installation.InstallationError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
     try:
         if args.map_command == "list":
             data = exercise_mappings.read(conn, name=args.name, local_only=args.local_only)

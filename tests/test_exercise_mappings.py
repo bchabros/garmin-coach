@@ -343,3 +343,49 @@ def test_registered_mapping_tools_use_selected_storage_without_transport(athlete
     assert replaced["data"]["saved"] is True
     assert after["pattern"] is None
     assert after["muscle_group"] == "core"
+
+
+@pytest.mark.parametrize("surface", ["cli_read", "cli_write", "mcp_read", "mcp_write"])
+def test_mapping_adapters_require_explicit_migration_of_older_storage(
+    athlete_home, capsys, surface
+):
+    import pathlib
+
+    from garmin_coach import cli
+    from garmin_coach.core import installation
+    from garmin_coach.mcp import server
+    from garmin_coach.runtime import InstallationContext
+
+    context = InstallationContext.select(athlete_home)
+    conn = context.open_database(create=True)
+    conn.execute("DELETE FROM exercise_pattern WHERE subcategory='BENCH_PRESS'")
+    _session(conn, 1, "2026-06-12", ["BENCH_PRESS"])
+    _session(conn, 2, "2026-06-13", ["BENCH_PRESS"])
+    features.features(conn, data_start_date="2026-06-08")
+    conn.close()
+    path = pathlib.Path(context.settings.db_path)
+    before = path.read_bytes()
+
+    if surface.startswith("cli"):
+        command = (
+            ["list", "--name", "BENCH_PRESS"]
+            if surface == "cli_read"
+            else ["set", "BENCH_PRESS", "--pattern", "push", "--muscle-group", "chest"]
+        )
+        assert cli.main(["--home", str(athlete_home), "exercise-map", *command]) == 2
+        assert "features" in capsys.readouterr().out
+    else:
+        with context.use(), pytest.raises(installation.InstallationError, match="features"):
+            if surface == "mcp_read":
+                server.get_exercise_mappings("BENCH_PRESS")
+            else:
+                server.map_exercise("BENCH_PRESS", "push", "chest")
+    assert path.read_bytes() == before
+    if surface == "cli_read":
+        assert cli.main(["--home", str(athlete_home), "features"]) == 0
+        with db.connect(str(path)) as migrated:
+            assert overlap.coverage(migrated)["sets_unmapped"] == 0
+            assert migrated.execute(
+                "SELECT overlap FROM pattern_overlap WHERE dim='pattern' AND key='push'"
+            ).fetchall() == [(147.0,)]
+        assert cli.main(["--home", str(athlete_home), "exercise-map", "list"]) == 0

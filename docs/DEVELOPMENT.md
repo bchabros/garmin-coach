@@ -155,12 +155,16 @@ workout evidence, and immediate mart refresh. Unreadable evidence never means no
 Only `daily` defers that refresh until after sync, using its existing single complete
 mart pass. The core parser remains independent of marts and transport.
 
-`athlete_changes` owns session RPE, niggles, manual overlays and goal-event outcomes
+`athlete_changes` owns session RPE, niggles, manual overlays, exercise mappings and goal-event outcomes
 for both adapters. It commits core facts before a separately transactional mart pass;
 `saved` and `recomputed` describe independent results. A failed rebuild preserves facts
 and the old mart generation, names the saved record and offers offline `features` in
 the same installation. Event failures preserve pre-write block evidence and leave the
 post-write block unknown, avoiding an old-block/new-event-date join (ADR 0036).
+`core.exercise_mappings` owns classification validation, selected-set evidence and
+comparison with packaged defaults. Mapping replacements bind to the reviewed current
+assignment under the application's write transaction. The packaged schema remains the
+single reference source; local overrides are compared with an isolated in-memory copy.
 
 `workouts.push` alone reads/writes dated workout specs and push receipts. `publish`
 receives parsed evidence and owns account rules, without filesystem or database reads.
@@ -257,6 +261,10 @@ ones sparingly:
   failure triggers (`tests/test_athlete_changes.py`): committed facts after reopen,
   preserved old marts, honest partial results, overlays, event collisions and offline
   recovery. Keep CLI/MCP adapter tests for flags, exit codes, freshness and block output.
+- Test exercise mappings at the same athlete-change, bootstrap and thin-adapter seams
+  (`tests/test_exercise_mappings.py`): fresh/migrated reference coverage, reviewed
+  replacement, local differences, selected-set counts, historical overlap and saved
+  mappings after a failed refresh. Rejecting transport factories keeps those flows offline.
 - Test the mart builders (`marts/features.py`, `marts/weekly.py`, `marts/zones.py`)
   and the digest builder (`build_digest`/`coach/digest.py`) at the DB boundary.
 - Keep real Garmin transport (the endpoint map in `etl/client.py`) outside unit tests --

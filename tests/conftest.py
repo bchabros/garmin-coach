@@ -164,6 +164,22 @@ class FakeGarminClient:
     def get_status(self, date: str):
         return self._day("status", date)
 
+    def get_weight(self, date: str):
+        payload = self._day("weight", date)
+        if isinstance(payload, Exception):
+            raise payload
+        return (
+            payload
+            if payload is not None
+            else {"startDate": date, "endDate": date, "dateWeightList": []}
+        )
+
+    def get_race_forecasts(self, date: str):
+        payload = self._day("race_forecasts", date)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload if payload is not None else []
+
     def get_activity_weather(self, activity_id: int):
         self.calls.append(("weather", str(activity_id)))
         payload = self.weather_by_id.get(activity_id)

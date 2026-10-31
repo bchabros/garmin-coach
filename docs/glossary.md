@@ -52,6 +52,8 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   accumulating observations remain partial and whose watermarks do not advance.
 - **gap repair** - a previewed and confirmed re-import of finished missing days,
   followed by recomputation, without changing sync finality.
+- **historical observation recheck** - a later read of previously imported source
+  history, distinct from evidence of when the athlete or Garmin changed it.
 
 ## Metrics and training
 
@@ -90,7 +92,11 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 - **deload advised (prospective)** - load-history evidence supporting a future reduction,
   requiring enough weeks, rising loads and high ACWR or monotony.
 - **athlete snapshot** - the current deterministic standing composed from recorded
-  VO2max, HRV, load, readiness, zones and plan context.
+  VO2max, HRV, load, readiness, weight, Garmin race forecasts, zones and plan context.
+- **weight observation** - one recorded weighing, with its own measurement time and
+  source day; several observations can belong to the same day.
+- **Garmin race forecast** - Garmin's estimated finish time for a standard running
+  distance on a stated source day, distinct from a recorded race result.
 - **computed_at (snapshot)** - the standing's evidence cutoff, not a wall-clock claim.
 - **trend delta** - signed change over available observations within the chosen lookback;
   insufficient span means no supported delta.

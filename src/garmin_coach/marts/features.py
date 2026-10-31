@@ -221,7 +221,7 @@ def _tail_rollups(
     intervals.rollup(conn, data_start_date=data_start_date, through_date=end)
 
     # Compose the current standing last, so it copies the fresh weekly + zones rows.
-    snapshot.rollup(conn, through_date=end)
+    snapshot.rollup(conn, through_date=end, data_start_date=data_start_date)
 
 
 def _daily_mart(

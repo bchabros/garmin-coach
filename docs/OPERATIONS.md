@@ -268,7 +268,9 @@ patterns and muscle groups. It includes the fourteen assignments agreed in #118.
 An existing installation missing new reference keys needs the supported explicit offline
 `garmin-coach --home /absolute/path/to/athlete features` run before restarting a guarded
 client. This bootstraps missing defaults and rebuilds metrics; it preserves installed
-assignments and never contacts Garmin. Read-only/guarded clients do not migrate storage.
+assignments and never contacts Garmin. Ordinary MCP tools and CLI reads (including
+snapshot/report output) validate existing storage without migrating it. Older installations refuse with the offline recovery
+instruction until that explicit migration and rebuild completes.
 
 Inspect an assignment or local additions/overrides:
 

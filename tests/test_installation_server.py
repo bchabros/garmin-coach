@@ -263,3 +263,54 @@ def test_the_server_refuses_to_start_without_an_installation(tmp_path, elsewhere
     assert result.stdout == ""
     assert list(folder.iterdir()) == []
     assert list(elsewhere.iterdir()) == []
+
+
+@pytest.mark.parametrize("tool", ["get_snapshot", "get_digest"])
+def test_default_server_requires_explicit_mapping_migration(tmp_path, elsewhere, tool):
+    """Ordinary stdio reads must not seed defaults while leaving old overlap cached."""
+    from garmin_coach import cli
+    from garmin_coach.marts import features
+
+    home = make_installation(tmp_path / "athlete")
+    path = home / "data" / "garmin.db"
+    with contextlib.closing(db.connect(str(path))) as conn:
+        conn.execute("DELETE FROM exercise_pattern WHERE subcategory='BENCH_PRESS'")
+        for aid, day in [(1, "2026-06-12"), (2, "2026-06-13")]:
+            db.upsert_activity(
+                conn,
+                {
+                    "activity_id": aid,
+                    "date": day,
+                    "start_local": f"{day} 17:00:00",
+                    "gtype": "strength_training",
+                    "discipline": "Siła",
+                    "dur_s": 4200,
+                },
+            )
+            db.replace_activity_sets(
+                conn, aid, [{"activity_id": aid, "set_idx": 0, "subcategory": "BENCH_PRESS"}]
+            )
+        conn.commit()
+        features.features(conn, data_start_date="2026-06-08")
+        assert conn.execute("SELECT * FROM pattern_overlap").fetchall() == []
+    before = path.read_bytes()
+
+    async def refused_read():
+        async with coach_server(elsewhere, home) as session:
+            result = await session.call_tool(tool, {})
+            assert result.isError
+            assert "features" in str(result.content)
+
+    run(refused_read())
+    assert path.read_bytes() == before
+    assert cli.main(["--home", str(home), "features"]) == 0
+    with contextlib.closing(db.connect(str(path))) as conn:
+        assert conn.execute(
+            "SELECT overlap FROM pattern_overlap WHERE dim='pattern' AND key='push'"
+        ).fetchall() == [(147.0,)]
+
+    async def migrated_read():
+        async with coach_server(elsewhere, home) as session:
+            return await call(session, tool)
+
+    assert run(migrated_read())["data"] is not None

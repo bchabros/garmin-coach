@@ -161,6 +161,9 @@ for both adapters. It commits core facts before a separately transactional mart 
 and the old mart generation, names the saved record and offers offline `features` in
 the same installation. Event failures preserve pre-write block evidence and leave the
 post-write block unknown, avoiding an old-block/new-event-date join (ADR 0036).
+Ordinary MCP tools validate existing storage even outside the guarded project launcher;
+CLI reads use the same non-migrating opener. Explicit offline `features` remains the
+recovery route for missing packaged mapping keys and their historical consequences.
 `core.exercise_mappings` owns classification validation, selected-set evidence and
 comparison with packaged defaults. Mapping replacements bind to the reviewed current
 assignment under the application's write transaction. The packaged schema remains the

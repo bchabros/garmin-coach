@@ -75,7 +75,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_activity_laps(args: argparse.Namespace) -> int:
     context = current()
-    conn = context.open_database()
+    conn = context.open_existing_database()
     try:
         data = activity.read(conn, args.activity_id)
         print(
@@ -140,7 +140,7 @@ def _cmd_features(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     settings = current().settings
-    conn = current().open_database()
+    conn = current().open_existing_database()
 
     out = report.generate_report(
         conn,
@@ -228,7 +228,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
-    conn = current().open_database()
+    conn = current().open_existing_database()
 
     status = snapshot.read(conn)
     conn.close()
@@ -445,7 +445,11 @@ def _format_block(row: dict[str, Any] | None) -> str:
 
 def _cmd_event(args: argparse.Namespace) -> int:
     settings = current().settings
-    conn = current().open_database()
+    conn = (
+        current().open_existing_database()
+        if args.event_command == "list"
+        else current().open_database()
+    )
     try:
         if args.event_command not in {"add", "update"}:
             return _list_events(conn)

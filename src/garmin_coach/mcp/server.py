@@ -53,8 +53,8 @@ def _plans_dir() -> str:
 
 
 def _open() -> sqlite3.Connection:
-    """Open the configured DB, preserving the guarded project launch policy."""
-    return current().open_database()
+    """Validate existing storage without silently migrating cached coach evidence."""
+    return current().open_existing_database(writable=True)
 
 
 @server.tool(annotations=_READS_DB)

@@ -345,7 +345,21 @@ def test_registered_mapping_tools_use_selected_storage_without_transport(athlete
     assert after["muscle_group"] == "core"
 
 
-@pytest.mark.parametrize("surface", ["cli_read", "cli_write", "mcp_read", "mcp_write"])
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "cli_read",
+        "cli_write",
+        "mcp_read",
+        "mcp_write",
+        "mcp_snapshot",
+        "mcp_digest",
+        "cli_snapshot",
+        "cli_report",
+        "cli_activity",
+        "cli_events",
+    ],
+)
 def test_mapping_adapters_require_explicit_migration_of_older_storage(
     athlete_home, capsys, surface
 ):
@@ -367,19 +381,35 @@ def test_mapping_adapters_require_explicit_migration_of_older_storage(
     before = path.read_bytes()
 
     if surface.startswith("cli"):
-        command = (
-            ["list", "--name", "BENCH_PRESS"]
-            if surface == "cli_read"
-            else ["set", "BENCH_PRESS", "--pattern", "push", "--muscle-group", "chest"]
-        )
-        assert cli.main(["--home", str(athlete_home), "exercise-map", *command]) == 2
-        assert "features" in capsys.readouterr().out
+        commands = {
+            "cli_read": ["exercise-map", "list", "--name", "BENCH_PRESS"],
+            "cli_write": [
+                "exercise-map",
+                "set",
+                "BENCH_PRESS",
+                "--pattern",
+                "push",
+                "--muscle-group",
+                "chest",
+            ],
+            "cli_snapshot": ["snapshot"],
+            "cli_report": ["report"],
+            "cli_activity": ["activity-laps", "1"],
+            "cli_events": ["event", "list"],
+        }
+        assert cli.main(["--home", str(athlete_home), *commands[surface]]) == 2
+        captured = capsys.readouterr()
+        assert "features" in captured.out + captured.err
     else:
         with context.use(), pytest.raises(installation.InstallationError, match="features"):
             if surface == "mcp_read":
                 server.get_exercise_mappings("BENCH_PRESS")
-            else:
+            elif surface == "mcp_write":
                 server.map_exercise("BENCH_PRESS", "push", "chest")
+            elif surface == "mcp_snapshot":
+                server.get_snapshot()
+            else:
+                server.get_digest()
     assert path.read_bytes() == before
     if surface == "cli_read":
         assert cli.main(["--home", str(athlete_home), "features"]) == 0

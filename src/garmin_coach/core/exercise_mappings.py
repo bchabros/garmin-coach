@@ -81,7 +81,7 @@ def assign(
         return data
     current_binding = _binding(name, *previous) if previous else None
     if expected_current != current_binding:
-        raise ValueError("assignment changed or was not reviewed; read get_exercise_mappings again")
+        raise ValueError("assignment changed or was not reviewed; re-read the current mapping")
     conn.execute(
         "INSERT INTO exercise_pattern(subcategory, pattern, muscle_group) VALUES (?, ?, ?) "
         "ON CONFLICT(subcategory) DO UPDATE SET pattern=excluded.pattern, "

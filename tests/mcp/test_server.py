@@ -49,12 +49,14 @@ EXPECTED_TOOLS = {
     "get_plan",
     "get_recommendation",
     "get_events",
+    "get_exercise_mappings",
     "get_workout_status",
     "get_pushed_workouts",
     # local writes
     "log_rpe",
     "log_niggle",
     "log_sets",
+    "map_exercise",
     "log_treadmill_speed",
     "clear_treadmill_speed",
     # plan of record (preview -> confirm writes plans/<monday>_week.md)
@@ -199,6 +201,7 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existi
 # only read. Claude Desktop asks before every call unless the tool says so, and only a
 # tool that says so can be allowed for good (issue #79).
 READ_ONLY_TOOLS = {
+    "get_exercise_mappings",
     "get_snapshot",
     "get_digest",
     "get_recent_activities",

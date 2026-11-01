@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from typing import Any, NotRequired, TypedDict
 
 from pydantic import ConfigDict, with_config
+
+from . import exercise_names
 
 
 @with_config(ConfigDict(extra="forbid"))
@@ -19,22 +20,6 @@ class ManualStationDetails(TypedDict):
     sets: NotRequired[int | None]
     duration_s: NotRequired[int | float | None]
     max_weight: NotRequired[int | float | None]
-
-
-# A station name in Garmin's vocabulary (SCREAMING_SNAKE_CASE), after normalization.
-_STATION_NAME = re.compile(r"^[A-Z0-9_]+$")
-
-
-def _station_name(raw: Any, idx: int) -> str:
-    """Normalize one station name to Garmin's vocabulary (``sled pull`` -> ``SLED_PULL``)."""
-    name = re.sub(r"[\s\-]+", "_", str(raw).strip().upper())
-    if not name:
-        raise ValueError(f"station {idx}: empty name")
-    if not _STATION_NAME.match(name):
-        raise ValueError(
-            f"station {idx}: a name may use letters, digits and underscores only (got {raw!r})"
-        )
-    return name
 
 
 def _non_negative(name: str, value: Any, idx: int, *, integer: bool) -> int | float | None:
@@ -62,7 +47,7 @@ def _station_row(activity_id: int, idx: int, station: str | ManualStationDetails
         "activity_id": activity_id,
         "set_idx": idx,
         "category": detail.get("category"),
-        "subcategory": _station_name(detail["subcategory"], idx),
+        "subcategory": exercise_names.normalize(detail["subcategory"], label=f"station {idx}"),
         "reps": _non_negative("reps", detail.get("reps"), idx, integer=True),
         "sets": _non_negative("sets", detail.get("sets"), idx, integer=True),
         "duration_s": _non_negative("duration_s", detail.get("duration_s"), idx, integer=False),

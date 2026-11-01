@@ -201,7 +201,8 @@ report that prerequisite; source-checkout commands are not an installation fallb
    - **Movement coverage** - when the digest's `movement` block is present and
      `sets_unmapped` > 0, add one brief line that the overlap read is partial: N of
      `sets_total` sets are unmapped (`unmapped` names), so those exercises need adding to
-     the movement map. Skip entirely when `movement` is null or nothing is unmapped.
+     the movement map. Offer the exercise-classification flow below for named exercises.
+     Skip entirely when `movement` is null or nothing is unmapped.
      `UNKNOWN` in that list is a Hyrox / group-HIIT circuit the watch recorded as one
      nameless set: ask the athlete for the stations and log them with `log_sets`
      (`mcp__coach__log_sets(activity_id, stations)`) so the overlap read can see them.
@@ -277,8 +278,9 @@ report that prerequisite; source-checkout commands are not an installation fallb
 
 ## What the athlete can tell you that the watch cannot
 
-Three local writes belong to the report flow, because what they record is what the next
-read is missing. All three are transport-free. RPE and stations refresh derived data;
+Local observations and exercise classifications belong to the report flow, because
+what they record is what the next read is missing. They are transport-free.
+RPE and stations refresh derived data;
 niggles are read directly without an unnecessary mart pass.
 
 - **How hard it felt.** `log_rpe(activity_id, rpe, soreness?, mood?, note?)` - the Borg
@@ -287,14 +289,43 @@ niggles are read directly without an unnecessary mart pass.
 - **A niggle.** `log_niggle(body_part, severity, date?, note?)` - a sub-injury complaint,
   severity 1-5. Record it when the athlete mentions one; the niggle signal reads these.
 - **The stations of a circuit.** `log_sets(activity_id, stations)` - see the movement
-  coverage note above.
+  coverage note above. When its result includes named `unmapped` exercises, offer the
+  exercise-classification flow below with a recommended assignment.
+
+### Exercise classifications
+
+Use this flow for an unmapped named exercise or an explicit request to change its
+movement/muscle assignment. Garmin supplies captured exercise identities; our map
+classifies them for movement analysis. Correcting a recorded exercise, repetition
+count or weight is a separate session-correction operation.
+
+1. Read `get_exercise_mappings(name=...)` for the exact recorded/logged name. Its
+   vocabulary lists the supported movement patterns and muscle groups. Show the
+   current assignment, if present, and your proposed assignment with its reason.
+   Ask for the athlete's approval or correction. Empty dimensions are deliberate
+   exclusions; `UNKNOWN` needs the actual stations through `log_sets`.
+2. After approval, call `map_exercise(name, pattern, muscle_group, expected_current?)`.
+   For a different existing assignment, pass its reviewed `binding` as
+   `expected_current`. A stale/refused replacement requires a fresh read and renewed
+   approval for the displayed change. Identical retries are no-ops.
+3. Report the old/new classification, affected selected activities/sets and refresh
+   outcome. `newly_mapped_sets` counts previously unknown sets; a changed existing
+   assignment can affect sets while that count remains zero. A future-use mapping
+   or identical retry normally has `recomputed=null`.
+
+These local writes retain captured/manual session evidence and use the current map
+when recomputing history; existing report files stay retained. They do not change
+Garmin Connect or personal records. Use `get_exercise_mappings(local_only=true)` to
+review local additions and overrides against their packaged assignments. They persist
+with the athlete database; a new empty database receives only packaged defaults.
 
 ### Local write outcomes
 
 Read `saved` separately from `recomputed` and `error`. If `saved=false`, the write was
 refused or failed. If `saved=true` and `recomputed=false`, name the saved record and
 explain that cached metrics are still older; do not say the entry was lost or add the
-event again. A niggle normally has `recomputed=null`. For a partial goal change,
+event again. Niggles and mappings with no affected history normally have
+`recomputed=null`. For a partial goal change,
 `block_before` is older evidence and `block_after` is unknown, not a refreshed block.
 
 Use the returned `recovery_command` only in the same selected athlete installation

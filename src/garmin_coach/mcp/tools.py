@@ -25,7 +25,7 @@ from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
 from ..coach import activity, digest, freshness, thresholds as _thresholds
-from ..core import db, manual_sets, plan, treadmill
+from ..core import db, exercise_mappings, manual_sets, plan, treadmill
 from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
@@ -241,6 +241,36 @@ def log_niggle(
         conn,
         athlete_changes.log_niggle(
             conn, body_part=body_part, severity=severity, date=date, note=note
+        ).as_data(),
+    )
+
+
+def get_exercise_mappings(
+    conn: sqlite3.Connection, *, name: str | None = None, local_only: bool = False
+) -> dict[str, Any]:
+    """Return exercise classifications, reference differences and allowed vocabulary."""
+    return _wrap(conn, exercise_mappings.read(conn, name=name, local_only=local_only))
+
+
+def map_exercise(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    pattern: str | None,
+    muscle_group: str | None,
+    expected_current: str | None = None,
+    data_start_date: str,
+) -> dict[str, Any]:
+    """Save an approved exercise assignment and report its historical refresh."""
+    return _wrap(
+        conn,
+        athlete_changes.map_exercise(
+            conn,
+            name=name,
+            pattern=pattern,
+            muscle_group=muscle_group,
+            expected_current=expected_current,
+            data_start_date=data_start_date,
         ).as_data(),
     )
 

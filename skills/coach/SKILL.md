@@ -1,6 +1,6 @@
 ---
 name: coach
-description: 'Coach the athlete using recorded training and race evidence. Use for a training report, coach read, weekly review, "how am I doing", or current form and fitness ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek", "zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka"); historical race results, comparisons or race time scenarios; and finding saved coaching context from earlier reports or decisions.'
+description: 'Coach the athlete using recorded training and race evidence. Use for a training report, coach read, weekly review, "how am I doing", or current form and fitness ("where do I stand", "what are my numbers", "gdzie stoje", "jakie mam staty", "jaka mam forme"); planning or re-planning a training week ("zaplanuj tydzien", "co planujemy na przyszly tydzien"); authoring, pushing, repeating or removing a workout ("wrzuc na zegarek", "tempo w czwartek: 8x1km po 3:40", "dodaj trening silowy na piatek", "zdejmij trening z czwartku", "odwolaj piatkowy trening", "jestem chory, usun to z zegarka"); logging exercise sets or correcting movement classifications ("popraw przypisanie cwiczenia"); historical race results, comparisons or race time scenarios; and finding saved coaching context from earlier reports or decisions.'
 ---
 
 # Coach
@@ -24,6 +24,7 @@ A saved-context lookup can lead into reporting, planning or workout authoring.
   the fields are the same whichever way they arrive. The same file covers what to do
   when a read shows the data is wrong or missing: `event_add` / `event_update` (the race
   calendar), `log_treadmill_speed` / `clear_treadmill_speed` (reported console settings),
+  `get_exercise_mappings` / `map_exercise` (local exercise classifications),
   `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day).
 - Before you read, propose, preview, or write a training week - opening
   `plans/<monday>_week.md` or calling `get_plan` / `plan_preview` / `plan_confirm` /
@@ -107,7 +108,7 @@ request from the athlete.
   the day to the athlete, ask whether the session happened, and offer the repair when it
   did. A weekly review written before Saturday's run had uploaded called the week a
   deload; that is the failure this rail exists to stop.
-- **Say what a write changed.** After `event_add`, `event_update`, `plan_import` or
+- **Say what a write changed.** After `event_add`, `event_update`, `plan_import`, `map_exercise` or
   a repair, state what moved, including the race block before and after. A repair
   requires `repair_preview`, showing its result and explicit athlete approval before
   `repair_confirm`; the local calendar/import tools do not use that token handshake.
@@ -144,8 +145,9 @@ requires generated report artifacts or an explicitly authorized local operation.
   the managed installation or supported source environment. Do not install global
   packages or create a replacement runtime inside an assistant sandbox.
 
-The permitted offline commands are `plan import`, `report` and `features` under the
-reporting procedure. They write local files or cached metrics; transport-free does
+The permitted offline commands are `plan import`, `report`, `features` and explicitly
+requested `exercise-map` operations under the reporting procedure. They write local
+files or cached metrics; transport-free does
 not mean read-only. An explicitly read-only question stays with MCP reads or existing
 artifacts. Operator-run `sync`, `backfill` and `daily` are outside this fallback.
 

@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
 from .coach import activity, freshness, report
-from .core import db, events as _events, installation
+from .core import db, events as _events, exercise_mappings, installation
 from .etl import client, sync
 from .marts import features, periodize, snapshot
 from .runtime import InstallationContext, current
@@ -75,7 +75,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 
 def _cmd_activity_laps(args: argparse.Namespace) -> int:
     context = current()
-    conn = context.open_database()
+    conn = context.open_existing_database()
     try:
         data = activity.read(conn, args.activity_id)
         print(
@@ -140,7 +140,7 @@ def _cmd_features(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     settings = current().settings
-    conn = current().open_database()
+    conn = current().open_existing_database()
 
     out = report.generate_report(
         conn,
@@ -228,7 +228,7 @@ def _cmd_push(args: argparse.Namespace) -> int:
 
 
 def _cmd_snapshot(args: argparse.Namespace) -> int:
-    conn = current().open_database()
+    conn = current().open_existing_database()
 
     status = snapshot.read(conn)
     conn.close()
@@ -337,6 +337,59 @@ def _cmd_log_rpe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_exercise_map(args: argparse.Namespace) -> int:
+    context = current()
+    try:
+        conn = context.open_existing_database(writable=args.map_command == "set")
+    except installation.InstallationError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
+    try:
+        if args.map_command == "list":
+            data = exercise_mappings.read(conn, name=args.name, local_only=args.local_only)
+        else:
+            result = athlete_changes.map_exercise(
+                conn,
+                name=args.name,
+                pattern=None if args.pattern == "none" else args.pattern,
+                muscle_group=None if args.muscle_group == "none" else args.muscle_group,
+                expected_current=args.expected_current,
+                data_start_date=context.settings.data_start_date,
+            )
+            data = result.as_data()
+        print(json.dumps(data, indent=2))
+        return 2 if data.get("error") else 0
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc)}))
+        return 2
+    finally:
+        conn.close()
+
+
+def _add_exercise_map_commands(sub: Any) -> None:
+    parser = sub.add_parser("exercise-map", help="Read or change local exercise classifications.")
+    commands = parser.add_subparsers(dest="map_command", required=True)
+    listing = commands.add_parser(
+        "list", help="Show assignments and packaged reference differences."
+    )
+    listing.add_argument("--name", default=None, help="Filter by normalized exercise name.")
+    listing.add_argument(
+        "--local-only", action="store_true", help="Show local additions/overrides."
+    )
+    setting = commands.add_parser(
+        "set", help="Save an approved assignment and refresh its history."
+    )
+    setting.add_argument("name", help="Exercise name, as recorded or manually logged.")
+    setting.add_argument("--pattern", required=True, choices=[*exercise_mappings.PATTERNS, "none"])
+    setting.add_argument(
+        "--muscle-group", required=True, choices=[*exercise_mappings.MUSCLE_GROUPS, "none"]
+    )
+    setting.add_argument(
+        "--expected-current", default=None, help="Reviewed binding from list, required to replace."
+    )
+    parser.set_defaults(func=_cmd_exercise_map)
+
+
 def _cmd_log_sets(args: argparse.Namespace) -> int:
     settings = current().settings
     conn = current().open_database()
@@ -392,7 +445,11 @@ def _format_block(row: dict[str, Any] | None) -> str:
 
 def _cmd_event(args: argparse.Namespace) -> int:
     settings = current().settings
-    conn = current().open_database()
+    conn = (
+        current().open_existing_database()
+        if args.event_command == "list"
+        else current().open_database()
+    )
     try:
         if args.event_command not in {"add", "update"}:
             return _list_events(conn)
@@ -672,6 +729,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lr.add_argument("--note", dest="note", default=None, help="Optional free-text note.")
     lr.set_defaults(func=_cmd_log_rpe)
+
+    _add_exercise_map_commands(sub)
 
     ls = sub.add_parser(
         "log-sets",

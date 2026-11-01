@@ -121,6 +121,18 @@ def bootstrap(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def reference_exercise_mappings() -> dict[str, tuple[str | None, str | None]]:
+    """Read packaged exercise assignments from the sole schema source in memory."""
+    with closing(sqlite3.connect(":memory:")) as reference:
+        reference.executescript(_schema_sql())
+        return {
+            name: (pattern, muscle)
+            for name, pattern, muscle in reference.execute(
+                "SELECT subcategory, pattern, muscle_group FROM exercise_pattern"
+            )
+        }
+
+
 def _migrate_columns(conn: sqlite3.Connection) -> None:
     """Add later-introduced columns to tables that predate them (idempotent)."""
     for table, columns in _ADDED_COLUMNS.items():

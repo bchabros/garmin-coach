@@ -86,6 +86,20 @@ class InstallationContext:
         """Create import transport only for an explicit authorized operation."""
         return self.import_factory(self.settings)
 
+    def open_existing_database(self, *, writable: bool = False) -> sqlite3.Connection:
+        """Open selected storage without migration, naming offline recovery on mismatch.
+
+        Args:
+            writable: Permit an explicit local write; read-only is the default.
+        """
+        try:
+            return installation.open_existing_database(self.settings, writable=writable)
+        except sqlite3.Error as exc:
+            raise installation.InstallationError(
+                "Existing storage could not be validated; diagnose the selected installation "
+                "and run garmin-coach --home <same installation> features offline before retrying."
+            ) from exc
+
     def connect_publisher(self) -> WorkoutPublisher:
         """Create workout transport without retaining an account session."""
         return self.publisher_factory(self.settings)

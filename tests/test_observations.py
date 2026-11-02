@@ -629,3 +629,115 @@ def test_default_features_horizon_includes_new_observation_sources(
     assert standing["computed_at"] == day
     assert standing["weight"]["value"] == 80
     assert standing["race_forecasts"]["5k"]["value"] == 1092
+    assert standing["hrv_baseline"] is None
+    assert conn.execute(
+        "SELECT hrv, sleep_score, rhr FROM daily_metrics WHERE date=?", (day,)
+    ).fetchone() == (None, None, None)
+
+
+def test_history_cli_refuses_implicit_schema_migration(athlete_home, capsys):
+    context = InstallationContext.select(athlete_home)
+    conn = context.open_database(create=True)
+    for table in (
+        "weight_observations",
+        "garmin_race_forecasts",
+        "observation_checks",
+        "observation_scans",
+    ):
+        conn.execute(f"DROP TABLE {table}")
+    conn.execute("ALTER TABLE athlete_status DROP COLUMN source_observations_json")
+    conn.commit()
+    conn.close()
+    import pathlib
+
+    path = pathlib.Path(context.settings.db_path)
+    before = path.read_bytes()
+    args = [
+        "--home",
+        str(athlete_home),
+        "observations",
+        "--from",
+        "2026-06-08",
+        "--to",
+        "2026-06-08",
+    ]
+    assert cli.main(args) == 2
+    output = capsys.readouterr()
+    assert "features" in output.err + output.out
+    assert path.read_bytes() == before
+    assert cli.main(["--home", str(athlete_home), "features"]) == 0
+    capsys.readouterr()
+    assert cli.main(args) == 0
+
+
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_default_history_stops_at_last_completed_day(athlete_home, fake_client, capsys, surface):
+    day = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+    (athlete_home / ".env").write_text(f"DATA_START_DATE={day}\n")
+    context = InstallationContext.select(athlete_home)
+    conn = context.open_database(create=True)
+    sync.backfill(fake_client(), conn, day, day)
+    with context.use():
+        if surface == "mcp":
+            data = server.get_observation_history()["data"]
+        else:
+            assert cli.main(["--home", str(athlete_home), "observations"]) == 0
+            data = json.loads(capsys.readouterr().out)["data"]
+        assert data["to_date"] == day
+        assert data["partial_today"] is False
+        assert all(not check["incomplete"] for check in data["checks"].values())
+        explicit = server.get_observation_history(to_date=dt.date.today().isoformat())["data"]
+        assert explicit["partial_today"] is True
+        assert explicit["checks"]["weight"]["never_checked_days"] == 1
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "checked,overdue", [("2026-06-08T11:00:00+00:00", 0), ("2026-06-07T23:59:00+00:00", 1)]
+)
+def test_check_freshness_allows_the_whole_seventh_calendar_day(
+    conn, fake_client, monkeypatch, checked, overdue
+):
+    from garmin_coach.coach import observations as history
+
+    day = "2026-06-08"
+    sync.backfill(fake_client(), conn, day, day)
+    conn.execute("UPDATE observation_checks SET checked_at=?", (checked,))
+    conn.commit()
+    real_datetime = dt.datetime
+
+    class Clock(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2026, 6, 15, 12, tzinfo=dt.timezone.utc)
+
+    monkeypatch.setattr(history.dt, "datetime", Clock)
+    data = history.read(conn, from_date=day, to_date=day, data_start_date=day)
+    assert data["checks"]["weight"]["overdue_days"] == overdue
+    assert data["checks"]["weight"]["due_days"] == overdue
+
+
+def test_terminal_backfill_reports_partial_sources_and_retains_successful_data(
+    athlete_home, fake_client, capsys
+):
+    day = "2026-06-08"
+    transport = fake_client(
+        by_day={
+            "weight": {day: TimeoutError("synthetic source outage")},
+            "race_forecasts": {day: [{"calendarDate": day, "time5K": 1200}]},
+        }
+    )
+    context = InstallationContext.select(athlete_home, import_factory=lambda settings: transport)
+    assert (
+        cli.main(
+            ["--home", str(athlete_home), "backfill", "--from", day, "--to", day],
+            context_factory=lambda home: context,
+        )
+        == 1
+    )
+    assert "weight failed" in capsys.readouterr().out
+    conn = context.open_existing_database()
+    try:
+        assert conn.execute("SELECT time_5k_s FROM garmin_race_forecasts").fetchall() == [(1200,)]
+    finally:
+        conn.close()

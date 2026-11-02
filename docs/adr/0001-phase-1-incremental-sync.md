@@ -23,8 +23,15 @@ Repeated daily imports need durable progress and isolation from transient Garmin
   never retained legacy observations. Re-read one of seven stable old-date buckets
   per successful nightly cutoff, excluding work already fetched in that run.
   A failed bucket stays due; repeating the same cutoff does not advance it twice.
-  This bounds extra reads while following old Garmin edits without assuming an
-  edit timestamp. Missed/failed runs can exceed a calendar week; coverage says so.
+  This spreads historical work across seven successful runs, not a fixed request
+  cap: initial source catch-up is about two daily requests per history day before
+  retries, and each source's nightly historical share grows with retained history.
+  Existing transport rate-limit/retry handling applies. Missed/failed runs can
+  exceed a calendar week; coverage says so without inventing an edit timestamp.
+- Initial setup keeps base-day checkpoints and observation-source completion
+  separate. Failed observation reads remain visible and independently resumable;
+  completed base days cannot hide a missing weight/forecast day or establish full
+  import success. A usable local read and a complete import are separate outcomes.
 
 ## Consequences
 

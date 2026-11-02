@@ -19,10 +19,10 @@ from typing import Any
 from dotenv import dotenv_values
 
 from . import distribution, plan_changes
-from .coach import digest, thresholds
+from .coach import digest, observations as source_history, thresholds
 from .core import db, installation, plan
 from .core.config import Settings
-from .etl import client, sync
+from .etl import client, observation_sync, sync
 from .marts import features, snapshot
 
 logger = logging.getLogger(__name__)
@@ -259,10 +259,17 @@ def _history_start(value: str, end: dt.date) -> dt.date:
 def _import(root: pathlib.Path, settings: Settings, start: str, end: str) -> int:
     retry = shlex.join(["garmin-coach", "--home", str(root), "setup", "--to", end])
     first = _resume_from(root, settings, start)
-    if first > end:
+    pending = []
+    if pathlib.Path(settings.db_path).exists():
         with closing(installation.open_database(settings)) as conn:
-            _first_read(root, settings, conn, start, end, complete=True)
-        return 0
+            pending = observation_sync.pending_days(
+                conn,
+                start,
+                min(end, (dt.date.fromisoformat(first) - dt.timedelta(days=1)).isoformat()),
+            )
+            if first > end and not pending:
+                _first_read(root, settings, conn, start, end, complete=True)
+                return 0
     print("setup: logging in to Garmin.")
     try:
         with client.redacted_logs():
@@ -276,22 +283,50 @@ def _import(root: pathlib.Path, settings: Settings, start: str, end: str) -> int
             _checkpoint(root, settings, start, end, None)
         print("setup: importing history; completed days are retained if interrupted.")
         failure = _backfill(
-            transport, conn, first, end, lambda day: _checkpoint(root, settings, start, end, day)
+            transport,
+            conn,
+            first,
+            end,
+            lambda day: _checkpoint(root, settings, start, end, day),
+            pending=pending,
         )
-        complete = failure is None
-        if failure:
-            completed = _completed_through(root, settings, start) or "none"
-            print(
-                f"setup: import incomplete ({failure}); last completed day: {completed}. "
-                f"Saved history is retained. Retry later: {retry}",
-                file=sys.stderr,
-            )
-        try:
-            _first_read(root, settings, conn, start, end, complete=complete, failure=failure)
-        except Exception as exc:
-            _record_failure("local_read", exc)
-            print(f"setup: local read failed; history is retained. Retry: {retry}", file=sys.stderr)
-            return 2
+        return _finish_import_read(root, settings, conn, start, end, failure, retry)
+
+
+def _finish_import_read(
+    root: pathlib.Path,
+    settings: Settings,
+    conn: sqlite3.Connection,
+    start: str,
+    end: str,
+    failure: str | None,
+    retry: str,
+) -> int:
+    """Report import completion separately from availability of a local coach read."""
+    complete = failure is None
+    if failure:
+        completed = _completed_through(root, settings, start) or "none"
+        print(
+            f"setup: import incomplete ({failure}); last completed day: {completed}. "
+            f"Saved history is retained. Retry later: {retry}",
+            file=sys.stderr,
+        )
+    try:
+        base_done = (_completed_through(root, settings, start) or "") >= end
+        _first_read(
+            root,
+            settings,
+            conn,
+            start,
+            end,
+            complete=complete,
+            failure=failure,
+            read_ready=base_done,
+        )
+    except Exception as exc:
+        _record_failure("local_read", exc)
+        print(f"setup: local read failed; history is retained. Retry: {retry}", file=sys.stderr)
+        return 2
     return 0 if complete else 2
 
 
@@ -306,17 +341,30 @@ def _backfill(
     first: str,
     end: str,
     checkpoint: Callable[[str], None],
+    *,
+    pending: list[tuple[observation_sync.Source, str]],
 ) -> str | None:
     try:
         with client.redacted_logs():
-            sync.backfill(
-                transport,
-                conn,
-                first,
-                end,
-                on_day_complete=checkpoint,
-                stop_on_enrichment_error=lambda exc: client.failure_kind(exc) == "rate_limited",
-            )
+
+            def stop(exc: Exception) -> bool:
+                return client.failure_kind(exc) == "rate_limited"
+
+            warnings = observation_sync.resume_pending(transport, conn, pending, stop_on_error=stop)
+            if first <= end:
+                result = sync.backfill(
+                    transport,
+                    conn,
+                    first,
+                    end,
+                    on_day_complete=checkpoint,
+                    stop_on_enrichment_error=stop,
+                )
+                warnings.extend(result.warnings)
+            for warning in warnings:
+                print(f"setup: warning: {warning}", file=sys.stderr)
+            if warnings:
+                return "observation_sources_incomplete"
     except (Exception, KeyboardInterrupt) as exc:
         conn.rollback()
         return _record_failure("history_import", exc)
@@ -376,11 +424,13 @@ def _first_read(
     *,
     adopted: bool = False,
     failure: str | None = None,
+    read_ready: bool | None = None,
 ) -> None:
+    ready = complete if read_ready is None else read_ready
     coverage = _coverage(conn, start, end)
     missing = [name for name, count in coverage.items() if count == 0]
     reading: dict[str, Any] = {}
-    if complete:
+    if ready:
         _prepare_read(root, settings, conn, end, has_observations=any(coverage.values()))
         reading = digest.build_digest(
             conn,
@@ -393,12 +443,15 @@ def _first_read(
         "from": start,
         "to": end,
         "import_complete": None if adopted else complete,
-        "read_ready": complete,
+        "read_ready": ready,
         "history_source": "existing" if adopted else "initial_import",
         "failure_kind": failure,
         "completed_through": _completed_through(root, settings, start) if not adopted else None,
         "missing_streams": missing,
         "days_with_observations": coverage,
+        "observation_checks": source_history.read(
+            conn, from_date=start, to_date=end, data_start_date=settings.data_start_date
+        )["checks"],
     }
     output = _save_read(root, conn, end, reading)
     _describe_read(output, reading, coverage, db.count_activities(conn, start, end))
@@ -486,6 +539,8 @@ def _describe_read(
     )
     if not complete:
         print("No coach read yet: finish the import before interpreting training or recovery.")
+    elif reading["onboarding"]["import_complete"] is False:
+        print("Local coach read is available; observation-source import remains incomplete.")
     print(
         "Algorithm thresholds are policy defaults; personal measurements come only from your data."
     )
@@ -512,5 +567,19 @@ def _observation_dates(conn: sqlite3.Connection, start: str, end: str) -> dict[s
         date_index = next(i for i, column in enumerate(rows.description) if column[0] == "date")
         observations[name] = [
             row[date_index] for row in rows if any(row[i] is not None for i in observed)
+        ]
+    for name, table, where in (
+        ("weight", "weight_observations", ""),
+        (
+            "race_forecasts",
+            "garmin_race_forecasts",
+            " AND (time_5k_s IS NOT NULL OR time_10k_s IS NOT NULL OR time_half_s IS NOT NULL OR time_marathon_s IS NOT NULL)",
+        ),
+    ):
+        observations[name] = [
+            row[0]
+            for row in conn.execute(
+                f"SELECT DISTINCT date FROM {table} WHERE date BETWEEN ? AND ?{where}", (start, end)
+            )
         ]
     return observations

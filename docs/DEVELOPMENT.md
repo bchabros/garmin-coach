@@ -65,8 +65,9 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 `onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
 existing-installation adoption, confirmed terminal login, resumable initial backfill and
 the first local digest. Its checkpoint is separate from nightly sync watermarks; the ETL
-calls back only after all daily streams commit. Templates under `templates/` contain no
-athlete observations. The schema seeds policy defaults and reference mappings only;
+calls back after the base daily streams commit. Weight/forecast check progress is
+independent: setup retries source gaps even when the base-day checkpoint has advanced.
+Templates under `templates/` contain no athlete observations. The schema seeds policy defaults and reference mappings only;
 existing personal HRV overrides and weekly templates are preserved in place.
 
 `clients.py` generates installation-bound plugins from the public resource list in

@@ -38,6 +38,9 @@ training changes.
 For history or missing/failed coverage, read `get_observation_history(from_date,
 to_date)` (terminal: `observations --from ... --to ...`). This is offline, with kg,
 seconds, individual observations and `checks` showing due/failed/never-checked dates.
+Omitted bounds end at yesterday; request today explicitly for partial intraday evidence.
+The computation horizon can advance from weight/forecasts while recovery evidence stays
+missing or older: assess each metric from its own dates and availability.
 Scan/check dates describe our reads, not when Garmin edited history. A seven-night
 cycle depends on successful runs; an incomplete check is not proof of no data.
 Ordinary standing questions stay on the read-only route. For an explicit earlier

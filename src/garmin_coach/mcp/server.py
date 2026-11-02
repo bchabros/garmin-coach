@@ -71,7 +71,10 @@ def get_snapshot() -> dict[str, Any]:
 def get_observation_history(
     from_date: str | None = None, to_date: str | None = None
 ) -> dict[str, Any]:
-    """Saved weighings, dated Garmin forecasts and due/failed source checks; no live reads."""
+    """Read saved observations/checks, defaulting to history start through yesterday.
+
+    Request today explicitly for partial intraday evidence. No live Garmin reads.
+    """
     conn = _open()
     try:
         return tools.get_observation_history(conn, from_date=from_date, to_date=to_date)

@@ -25,7 +25,14 @@ from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
 from ..coach import activity, digest, freshness, observations, thresholds as _thresholds
-from ..core import db, exercise_mappings, manual_sets, plan, treadmill, observations as recorded_observations
+from ..core import (
+    db,
+    exercise_mappings,
+    manual_sets,
+    plan,
+    treadmill,
+    observations as recorded_observations,
+)
 from ..runtime import current
 from ..etl import sync
 from ..etl.sync import GarminClient
@@ -90,11 +97,12 @@ def get_observation_history(
     conn: sqlite3.Connection, from_date: str | None = None, to_date: str | None = None
 ) -> dict[str, Any]:
     """Read imported weighings, Garmin forecasts and their source-check coverage offline."""
-    start = from_date or current().settings.data_start_date
-    end = to_date or dt.date.today().isoformat()
     try:
         data = observations.read(
-            conn, from_date=start, to_date=end, data_start_date=current().settings.data_start_date
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            data_start_date=current().settings.data_start_date,
         )
     except ValueError as exc:
         data = {"error": str(exc)}

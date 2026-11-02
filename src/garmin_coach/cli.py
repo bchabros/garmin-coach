@@ -93,13 +93,13 @@ def _cmd_activity_laps(args: argparse.Namespace) -> int:
 
 def _cmd_observations(args: argparse.Namespace) -> int:
     context = current()
-    conn = context.open_database()
+    conn = context.open_existing_database()
     try:
         try:
             data = observations.read(
                 conn,
-                from_date=args.from_date or context.settings.data_start_date,
-                to_date=args.to_date or _dt.date.today().isoformat(),
+                from_date=args.from_date,
+                to_date=args.to_date,
                 data_start_date=context.settings.data_start_date,
             )
         except ValueError as exc:
@@ -719,7 +719,12 @@ def build_parser() -> argparse.ArgumentParser:
     ob.add_argument(
         "--from", dest="from_date", default=None, help="First source day (default: data_start)."
     )
-    ob.add_argument("--to", dest="to_date", default=None, help="Last source day (default: today).")
+    ob.add_argument(
+        "--to",
+        dest="to_date",
+        default=None,
+        help="Last source day (default: yesterday; request today explicitly).",
+    )
     ob.set_defaults(func=_cmd_observations)
 
     sp = sub.add_parser(

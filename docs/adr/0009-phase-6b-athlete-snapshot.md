@@ -32,6 +32,9 @@ A current-standing answer needs one stable deterministic surface rather than rep
   Preserve every weighing and select each source day's last for its trend. Garmin
   race forecasts remain attributed estimates, with each distance's own date and
   history. Short or missing comparisons are null; report their actual span.
+  These sources may establish the materialization horizon when other streams are
+  absent. That horizon does not establish fresh HRV, sleep or readiness evidence;
+  preserve missing fields and each source's dates rather than inventing recovery.
 
 ## Consequences
 

@@ -149,3 +149,39 @@ def _history_dates(ctx: SyncContext, bucket: int, checked: set[str]) -> Iterator
         if day.toordinal() % 7 == bucket and date not in checked:
             yield date
         day += dt.timedelta(days=1)
+
+
+def pending_days(
+    conn: sqlite3.Connection, from_date: str, to_date: str
+) -> list[tuple[Source, str]]:
+    """List missing/failed source days independently of the base-import checkpoint."""
+    start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
+    completed = set(
+        conn.execute(
+            "SELECT stream, date FROM observation_checks WHERE date BETWEEN ? AND ? "
+            "AND checked_at IS NOT NULL AND error_kind IS NULL",
+            (from_date, to_date),
+        )
+    )
+    return [
+        (source, day.isoformat())
+        for source in SOURCES
+        for day in (start + dt.timedelta(days=n) for n in range((end - start).days + 1))
+        if (source.name, day.isoformat()) not in completed
+    ]
+
+
+def resume_pending(
+    client: GarminClient,
+    conn: sqlite3.Connection,
+    pending: list[tuple[Source, str]],
+    *,
+    stop_on_error: Callable[[Exception], bool] | None = None,
+) -> list[str]:
+    """Retry only unfinished observation reads, retaining independent saved progress."""
+    warnings = []
+    for source, date in pending:
+        error = pull_day(client, conn, source, date, stop_on_error=stop_on_error)
+        if error:
+            warnings.append(f"{source.name} failed for {date}: {error}")
+    return warnings

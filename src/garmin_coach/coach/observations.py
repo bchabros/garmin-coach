@@ -10,13 +10,19 @@ from ..core import observations as recorded
 
 
 def read(
-    conn: sqlite3.Connection, *, from_date: str, to_date: str, data_start_date: str
+    conn: sqlite3.Connection,
+    *,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    data_start_date: str,
 ) -> dict[str, Any]:
-    """Read saved source facts and coverage without contacting Garmin.
+    """Read saved source facts/coverage, defaulting to completed days, without Garmin.
 
     Raises:
         ValueError: The requested range is invalid, future, or before real history.
     """
+    from_date = from_date or data_start_date
+    to_date = to_date or (dt.date.today() - dt.timedelta(days=1)).isoformat()
     start, end = dt.date.fromisoformat(from_date), dt.date.fromisoformat(to_date)
     if start.isoformat() != from_date or end.isoformat() != to_date or start > end:
         raise ValueError("dates must be an ordered YYYY-MM-DD range")
@@ -77,7 +83,7 @@ def _coverage(
             (name, start, end),
         )
     )
-    floor = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).isoformat(timespec="seconds")
+    floor = (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=7)).isoformat()
     successful = [row for row in checks if row["checked_at"] and row["error_kind"] is None]
     fresh = [row for row in successful if row["checked_at"] >= floor]
     return {

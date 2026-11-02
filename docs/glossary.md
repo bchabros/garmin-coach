@@ -175,7 +175,16 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 - **movement coverage** - how much captured/manual station evidence has a known map,
   with unknown names visible rather than silently classified.
 - **manual set overlay** - the athlete's durable station descriptions for a circuit,
-  superseding that activity's captured sets as a whole while preserving them.
+  superseding that activity's captured sets as a whole while preserving them. Its
+  extension to individual working-set corrections is planned in #117.
+- **working-set correction** (planned, #117) - the athlete's ordered description of
+  intended individual working sets, distinct from a circuit's station summary.
+- **captured-set baseline** (planned, #117) - the captured exercise evidence against
+  which a manual correction was made; its absence leaves the earlier account state unknown.
+- **retired set correction** (planned, #117) - a retained manual correction that no
+  longer overrides the captured exercise evidence used by the current analysis.
+- **historical set recheck** (planned, #117) - a later observation of an older activity's
+  exercise sets, distinct from evidence of when the athlete edited them.
 - **movement_sets** - the selected manual-or-captured station evidence with its source;
   coverage and overlap refer to that same selection.
 

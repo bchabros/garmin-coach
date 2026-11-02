@@ -51,6 +51,8 @@ Key amendments: 0006/0017 bound historical reporting and transactions; 0010/0027
 replace original load bucketing; 0015 allows optional templates after #84; 0019/0021
 refine confirmation; 0023/0024 separate session shape from hardness; 0029/0030 refine
 reuse/removal; 0031–0035 govern installation, native ownership and public resources;
-0036 separates durable athlete facts from derived-refresh outcomes.
+0036 separates durable athlete facts from derived-refresh outcomes; 0039 extends
+0014/0022/0026/0036 with the planned recorded-set correction and historical recheck
+boundary (implementation and operator acceptance pending in #117).
 #103 retires duplicate phase history and unpopulated snapshot paths while preserving
 legacy database and input compatibility.

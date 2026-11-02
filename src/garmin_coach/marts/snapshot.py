@@ -16,7 +16,7 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from . import periodize as _periodize
+from . import observations, periodize as _periodize
 from ..coach import signals as _signals, thresholds as _thresholds
 from ..core import db, plan as _plan_of_record
 
@@ -75,10 +75,13 @@ _STATUS_COLUMNS = (
     "planned_label_today",
     "planned_intent_today",
     "plan_source_today",
+    "source_observations_json",
 )
 
 
-def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None:
+def rollup(
+    conn: sqlite3.Connection, *, through_date: str | None = None, data_start_date: str | None = None
+) -> None:
     """Recompute the singleton ``athlete_status`` row from finished marts + core.
 
     A mart-from-mart step - never calls Garmin. Runs as the tail of ``features``,
@@ -88,7 +91,9 @@ def rollup(conn: sqlite3.Connection, *, through_date: str | None = None) -> None
     cutoff = through_date or db.latest_mart_date(conn)
     if cutoff is None:
         return
-    db.upsert_status(conn, {"id": 1, **build(conn, through_date=cutoff)})
+    status = build(conn, through_date=cutoff, data_start_date=data_start_date)
+    sourced = {key: status.pop(key) for key in ("weight", "race_forecasts")}
+    db.upsert_status(conn, {"id": 1, **status, "source_observations_json": json.dumps(sourced)})
 
 
 def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
@@ -96,7 +101,19 @@ def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
     # Project the supported contract: older installations retain retired columns.
     columns = ", ".join(_STATUS_COLUMNS)
     row = conn.execute(f"SELECT {columns} FROM athlete_status WHERE id = 1").fetchone()
-    return dict(zip(_STATUS_COLUMNS, row)) if row is not None else None
+    if row is None:
+        return None
+    result = dict(zip(_STATUS_COLUMNS, row))
+    sourced = result.pop("source_observations_json")
+    result.update(
+        json.loads(sourced)
+        if sourced
+        else {
+            "weight": None,
+            "race_forecasts": {key: None for key in ("5k", "10k", "half_marathon", "marathon")},
+        }
+    )
+    return result
 
 
 def write_json(status: dict[str, Any], out_dir: pathlib.Path) -> pathlib.Path:
@@ -110,16 +127,24 @@ def build(
     conn: sqlite3.Connection,
     *,
     through_date: str,
+    data_start_date: str | None = None,
 ) -> dict[str, Any]:
     """Compose the current-standing dict as of ``through_date``.
 
     Every "latest" read is scoped to ``date <= through_date`` so a past ``through_date``
     reproduces that day's standing. ``planned_*_today`` uses that date's weekday.
     Total: a missing source degrades to ``None`` rather than raising.
+    Imported observations also respect the supplied installation history start.
     """
     thr = _thresholds.read(conn)
     return {
         "computed_at": through_date,
+        "weight": observations.weight(
+            conn, through_date, thr["snapshot_trend_min_span_days"], data_start_date=data_start_date
+        ),
+        "race_forecasts": observations.race_forecasts(
+            conn, through_date, thr["snapshot_trend_min_span_days"], data_start_date=data_start_date
+        ),
         **_markers(conn, through_date, thr),
         **_hrv(conn, through_date, thr),
         **_load_acwr(conn, through_date, thr),

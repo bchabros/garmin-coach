@@ -154,6 +154,8 @@ def test_first_login_imports_the_chosen_range_then_builds_an_honest_read(
         "wellness",
         "readiness",
         "status",
+        "weight",
+        "race_forecasts",
     ]
     assert "First coach read" in capsys.readouterr().out
 
@@ -435,7 +437,7 @@ def test_empty_payloads_do_not_become_measurements_or_zero_training(
     reading = json.loads(
         next((home / "reports/2026-09-02").glob("setup-*/digest.json")).read_text()
     )
-    assert len(reading["onboarding"]["missing_streams"]) == 6
+    assert len(reading["onboarding"]["missing_streams"]) == 8
     assert reading["headline"]["load_7d"] is None
 
 
@@ -892,3 +894,68 @@ def test_adopting_manual_database_requires_an_explicit_history_cutoff(
     assert (home / ".env").read_text() == ""
     assert not list(home.glob("reports/*/setup-*/digest.json"))
     assert "DATA_START_DATE" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("source", ["weight", "race_forecasts"])
+def test_setup_reports_and_resumes_failed_observations_after_base_checkpoint(
+    tmp_path, monkeypatch, fake_client, source
+):
+    home = tmp_path / "athlete"
+    transport = fake_client(by_day={source: {"2026-09-01": TimeoutError("synthetic outage")}})
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    args = ["--home", str(home), "setup", "--to", "2026-09-02"]
+    assert cli.main(args) == 2
+    reading = json.loads(next((home / "reports").glob("*/setup-*/digest.json")).read_text())
+    state = reading["onboarding"]
+    assert state["import_complete"] is False
+    assert state["read_ready"] is True
+    assert state["failure_kind"] == "observation_sources_incomplete"
+    assert state["completed_through"] == "2026-09-02"
+    assert state["observation_checks"][source]["failed_dates"] == ["2026-09-01"]
+    assert source in state["missing_streams"]
+    transport.by_day[source].clear()
+    transport.calls.clear()
+    answer(monkeypatch, "yes")
+    assert cli.main(args) == 0
+    assert transport.calls == [(source, "2026-09-01")]
+    readings = [
+        json.loads(path.read_text())["onboarding"]
+        for path in (home / "reports").glob("*/setup-*/digest.json")
+    ]
+    assert any(row["import_complete"] and row["read_ready"] for row in readings)
+
+
+def test_observation_gap_survives_an_interrupted_base_import(tmp_path, monkeypatch, fake_client):
+    class Interrupted(fake_client):
+        recovered = False
+
+        def get_sleep(self, date):
+            if date == "2026-09-02" and not self.recovered:
+                raise TimeoutError("synthetic base interruption")
+            return super().get_sleep(date)
+
+    home = tmp_path / "athlete"
+    transport = Interrupted(
+        by_day={"weight": {"2026-09-01": TimeoutError("synthetic weight outage")}}
+    )
+    answer(monkeypatch, "2026-09-01", "none", "yes", "yes")
+    monkeypatch.setattr("garmin_coach.etl.client.login", lambda settings: transport)
+    args = ["--home", str(home), "setup", "--to", "2026-09-02"]
+    assert cli.main(args) == 2
+    state = json.loads(next((home / "reports").glob("*/setup-*/status.json")).read_text())[
+        "onboarding"
+    ]
+    assert state["completed_through"] == "2026-09-01"
+    assert state["read_ready"] is False
+    transport.by_day["weight"].clear()
+    transport.recovered = True
+    transport.calls.clear()
+    answer(monkeypatch, "yes")
+    assert cli.main(args) == 0
+    assert [date for source, date in transport.calls if source == "weight"] == [
+        "2026-09-01",
+        "2026-09-02",
+    ]
+    assert ("sleep", "2026-09-01") not in transport.calls
+    assert ("activities", "2026-09-02..2026-09-02") in transport.calls

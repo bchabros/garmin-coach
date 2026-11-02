@@ -105,10 +105,12 @@ exercise mappings, without the owner's HRV baseline/SD or training week. Existin
 personal rows retain their historical meaning. Date-only payload rows and negative
 availability flags are not counted as measurements. The first digest records import
 completion, missing streams and days with observations under `onboarding`; sparse or
-partial evidence is named in the terminal. An incomplete import writes a distinct
-`setup-<unique>/status.json`, leaves existing marts untouched and produces no coaching
-digest, snapshot or recommendation until resumption completes. No agreed plan means unknown adherence and
-no invented missed sessions. The legacy `DATA_START_DATE` default remains for adopted
+partial evidence is named in the terminal. An incomplete base-history import writes a
+distinct `setup-<unique>/status.json`, leaves existing marts untouched and produces no
+coaching digest, snapshot or recommendation until the base-history import completes. Weight/forecast
+failures have separate completion and read-readiness states; see
+[observation-source recovery](#initial-catch-up-and-request-cost).
+No agreed plan means unknown adherence and no invented missed sessions. The legacy `DATA_START_DATE` default remains for adopted
 installations; new setup always records the athlete's explicit choice.
 
 **Separate user-operated live acceptance.** Automated checks use temporary storage and
@@ -431,6 +433,70 @@ environment must agree with it):
   simply had no data; a re-run repairs them.
 - **Onboarding gap.** Real data starts 2026-06-08 (`data_start`, defined in
   `docs/glossary.md`); earlier dates are explicit gaps, not zero training.
+
+## Weight observations and Garmin race forecasts
+
+The first incremental import fetches available source history from the configured
+`data_start`; source checks have their own progress. Nightly runs also re-read one
+seventh of older dates per source, completing a cycle after seven successful nightly
+cutoffs. Failures keep that bucket due; repeating the same cutoff cannot advance it
+twice. Other streams continue, and normal nightly orchestration runs features once.
+Older guarded installations need the new schema via the normal update or offline
+`garmin-coach features` in the same installation before restarting the coach server.
+New standing fields remain unavailable until source import and features succeed.
+The new CLI history read also validates existing storage without migration.
+
+### Initial catch-up and request cost
+
+For D configured history days, initial weight/forecast catch-up needs about 2D daily
+source requests before retries, in addition to the existing streams. For an existing
+installation, run `sync` manually at a convenient time, inspect its warnings, then run
+`features` before relying on the new fields. An incomplete source resumes from its own
+successful checks on the next import; it does not erase previously saved observations.
+
+After catch-up, each source rereads its recent window plus roughly one seventh of older
+history per night. This spreads the work across seven successful cutoffs; it is not a
+fixed request cap, and the cost grows with retained history. Existing rate-limit/retry
+handling still applies. A 429 can leave a source incomplete and due for a later run.
+No live catch-up or schedule change is performed by installing the program alone.
+
+New-athlete `setup` reports failed weight/forecast reads as an incomplete import and
+returns 2, with per-source check evidence in `onboarding.observation_checks`. A local
+coach read can remain ready when the base history is complete; that does not mark the
+observation import complete. Repeating setup retries missing/failed observation dates
+independently of the base-day checkpoint, preserving already completed streams.
+
+Read saved observations and check coverage without Garmin:
+
+```bash
+garmin-coach observations --from 2026-06-08 --to 2026-10-30
+```
+
+The MCP equivalent is `get_observation_history(from_date, to_date)`. Omitted bounds
+mean configured `data_start` through yesterday, matching the finished nightly import.
+Request today explicitly for intraday evidence; `partial_today` stays true even after
+a successful refresh. `checks` reports successful, never-checked, failed and overdue
+days, plus nightly scan progress. Check freshness includes the whole seventh UTC
+calendar day, so a one-hour scheduling delay does not alone make a source check overdue;
+it is separate from the counter of successful nightly buckets.
+Check times are source observations, not Garmin edit timestamps. Weight is kg;
+forecast values are seconds and remain Garmin estimates. `get_snapshot`/`snapshot.json`
+adds dated `weight` and `race_forecasts` blocks with supported 28-day changes and actual
+spans; a source date is not the date of the latest import.
+
+For an earlier re-read, use `repair_preview` then confirmed `repair_confirm` for up
+to 14 finished days. It reimports all streams in that period, including these sources,
+without changing watermarks. `observation_warnings` and `complete: false` identify
+partial reads even when other data saved and features rebuilt. A failed mart rebuild
+preserves source facts and older marts; run `garmin-coach features` offline to recover.
+If another stream interrupts the range, `saved`, `progressed_streams` and
+`committed_days` identify retained progress; `complete` stays false. The repair still
+refreshes committed facts or names that offline recovery command.
+Terminal operators can use `backfill --from ... --to ...` followed by `features`;
+backfill prints observation warnings and exits 1 when these sources are incomplete.
+This means partial import, not discarded data. Shell callers that stop on nonzero
+status must inspect the warnings and explicitly run `features` if they want to read
+saved partial evidence; a same-range retry can repair the missing source reads.
 
 ## Generating a coach report
 

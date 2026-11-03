@@ -273,6 +273,10 @@ class GarminTransport:
         """Fetch per-activity exercise sets (strength/Hyrox work only)."""
         return self._api.get_activity_exercise_sets(str(activity_id))
 
+    def set_activity_exercise_sets(self, activity_id: int, payload: dict[str, Any]) -> Any:
+        """Send one reviewed recorded-set replacement; do not retry uncertain writes."""
+        return self._api.set_activity_exercise_sets(str(activity_id), payload)
+
     def get_activity_splits(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch captured laps; Garmin reports seconds, metres and metres/second."""
         return self._api.get_activity_splits(str(activity_id))

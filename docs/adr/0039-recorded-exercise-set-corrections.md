@@ -3,8 +3,9 @@
 ## Status
 
 Accepted design ([#117](https://github.com/bchabros/garmin-coach/issues/117),
-2026-10-31); implementation, transport-format verification and operator acceptance
-remain pending. This record does not describe an available account-editing tool.
+2026-10-31). Cached previews, correction baselines, retirement history and historical
+rechecks and approval-bound confirmation are implemented. Add/delete transport-format
+verification and operator acceptance remain pending; #117 stays open.
 
 ## Context
 

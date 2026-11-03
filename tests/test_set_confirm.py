@@ -101,3 +101,33 @@ def test_mismatching_readback_keeps_manual_overlay(conn, fixture):
     assert result["saved"] is True
     assert result["overlay_retired"] is False
     assert set_corrections.saved(conn, 900001)["manual"]
+
+
+def test_local_edit_during_account_read_refuses_before_put(conn, fixture):
+    account, rows, proposal = prepare(conn, fixture)
+
+    def edit_during_get(aid):
+        db.replace_manual_activity_sets(
+            conn, aid, [{"activity_id": aid, "set_idx": 0, "subcategory": "NEW_CORRECTION"}]
+        )
+        conn.commit()
+        return copy.deepcopy(account.payload)
+
+    account.get_activity_exercise_sets = edit_during_get
+    with pytest.raises(ValueError, match="stale"):
+        set_confirm.confirm(
+            conn, 900001, rows, proposal["approval"], lambda: account, data_start_date="2026-06-08"
+        )
+    assert account.writes == []
+
+
+def test_direct_confirm_retains_reviewed_working_set_history_without_overlay(conn, fixture):
+    from garmin_coach import set_history
+
+    account, rows, proposal = prepare(conn, fixture)
+    set_confirm.confirm(
+        conn, 900001, rows, proposal["approval"], lambda: account, data_start_date="2026-06-08"
+    )
+    history = set_history.read(conn, 900001)["history"]
+    assert history[-1]["reason"] == "verified_working_set_correction"
+    assert history[-1]["declaration"] == rows

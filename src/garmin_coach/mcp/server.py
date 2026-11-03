@@ -15,6 +15,7 @@ computation happens here.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import sqlite3
 import sys
 from typing import Any
@@ -110,6 +111,36 @@ def get_activity_laps(activity_id: int) -> dict[str, Any]:
         return tools.get_activity_laps(conn, activity_id)
     finally:
         conn.close()
+
+
+@server.tool(annotations=_READS_DB)
+def get_activity_sets(activity_id: int) -> dict[str, Any]:
+    """Read captured/manual strength sets offline; stored weights are grams."""
+    from .. import set_corrections
+
+    with closing(_open()) as conn:
+        return tools.wrap(conn, set_corrections.saved(conn, activity_id))
+
+
+@server.tool(annotations=_READS_GARMIN)
+def preview_set_correction(activity_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Preview ordered work sets against Garmin; weight_kg is explicitly kilograms.
+
+    Show complete pairing, old/new names, repetitions and weights before approval.
+    This reads the account but never writes. Add/delete timing is not yet verified.
+    """
+    from .. import set_corrections
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            set_corrections.preview(
+                conn,
+                activity_id,
+                rows,
+                lambda: current().connect_import().get_activity_exercise_sets(activity_id),
+            ),
+        )
 
 
 @server.tool(annotations=_READS_DB)

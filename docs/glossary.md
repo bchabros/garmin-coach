@@ -185,11 +185,11 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   extension to individual working-set corrections is planned in #117.
 - **working-set correction** (planned, #117) - the athlete's ordered description of
   intended individual working sets, distinct from a circuit's station summary.
-- **captured-set baseline** (planned, #117) - the captured exercise evidence against
+- **captured-set baseline** (#117) - the captured exercise evidence against
   which a manual correction was made; its absence leaves the earlier account state unknown.
-- **retired set correction** (planned, #117) - a retained manual correction that no
+- **retired set correction** (#117) - a retained manual correction that no
   longer overrides the captured exercise evidence used by the current analysis.
-- **historical set recheck** (planned, #117) - a later observation of an older activity's
+- **historical set recheck** (#117) - a later observation of an older activity's
   exercise sets, distinct from evidence of when the athlete edited them.
 - **movement_sets** - the selected manual-or-captured station evidence with its source;
   coverage and overlap refer to that same selection.
@@ -327,3 +327,10 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   distinct from the private athlete profile.
 - **consolidation pass** - a backed-up review of agent notes that merges duplicates
   and corrects false facts; age alone prompts checking rather than deletion.
+
+- **observed strength record** - the highest eligible recorded external load for an
+  exact exercise variant and comparison conditions, overall or at a given repetition count.
+- **comparison conditions** - athlete-reported equipment, external-load mode and
+  total/per-hand weight basis that determine which working-set results can be compared.
+- **unranked strength evidence** - selected exercise evidence that cannot establish
+  a comparable individual working-set result; its missing/unsupported reason remains visible.

@@ -691,3 +691,46 @@ no Garmin login is needed. They exercise binding stability, full/partial reports
 replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parity,
 late rebuild failures, database reopen and complete-week isolation. Fresh assistant
 activation/acceptance and any real reported-speed write remain separate operator steps.
+
+## Recorded exercise-set preview
+
+`garmin-coach activity-sets ACTIVITY_ID` reads cached strength/HIIT sets without
+Garmin access. Stored `max_weight` is grams. Add `--rows-json` with one ordered
+working-set row per captured work set to explicitly read the account and preview
+a correction. Rows accept `name`, optional `reps`, `weight_kg` (kilograms) and
+`captured_index` (zero-based captured work index). Missing repetitions/weight
+preserve account values. Legacy circuit quantities are never expanded into sets.
+
+The sanctioned MCP equivalents are `get_activity_sets` and
+`preview_set_correction`. A preview preserves rests, timing and opaque account
+fields, and binds the complete proposal to reviewed account and local evidence.
+It never writes Garmin. Added/deleted sets refuse until their transport/timing
+contract has operator evidence. Garmin UI acceptance remains pending in #117.
+
+Use `set-correction-state ACTIVITY_ID` to inspect observed-source dates, baseline
+state, conflicts and retained correction history. `refresh-activity-sets ACTIVITY_ID`
+explicitly reads that account activity and recomputes its analysis. Resolve only
+a reviewed conflict using `resolve-set-conflict ACTIVITY_ID --choice captured|manual
+--binding HASH`. Captured retires the active overlay; manual retains it against
+the reviewed source baseline. Both retain the previous declaration in history.
+
+Nightly history checks select an oldest-first seventh of eligible activities
+(rounded up), excluding the recent import window, once per report date. Failed
+reads retain prior evidence and stay due. Seven-night coverage requires successful
+runs/reads; check timestamps never establish Garmin edit timestamps.
+
+## Observed strength records
+
+`strength-records [--through YYYY-MM-DD]` reads local heaviest-load and exact-rep
+records, ties, history and unranked coverage without Garmin access. MCP
+`get_strength_records` returns the same evidence. Unknown comparison conditions
+and legacy circuit aggregates do not rank. These are available-history bests,
+independent of Garmin PRs, with grams converted to displayed kilograms.
+
+After reviewing a selected set's evidence binding, explicitly record its equipment
+and external-load basis using `declare-strength-conditions ACTIVITY_ID SET_IDX
+--binding HASH --equipment LABEL --weight-basis total|per_hand
+--resistance-mode external_load`, or MCP `declare_strength_conditions`. Conditions
+remain athlete-reported. Source edits invalidate the binding; reread before a new
+declaration. Exact variants/equipment/bases stay separate. Assisted, bodyweight-only
+and estimated-1RM records are unsupported. See ADR 0040.

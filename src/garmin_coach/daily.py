@@ -54,6 +54,7 @@ class DailyResult:
     plans_imported: list[str] = field(default_factory=list)
     invalidated_pushes: list[dict] = field(default_factory=list)
     plan_warnings: list[str] = field(default_factory=list)
+    history_checks: dict = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -202,6 +203,19 @@ def run_daily(
         len(result.sync.warnings),
         len(result.sync.enrichment_misses),
     )
+
+    if not result.sync.total_outage:
+        from . import set_history
+
+        history = set_history.recheck(
+            conn,
+            lambda aid: client.get_activity_exercise_sets(aid),
+            through_date=to_date or (dt.date.today() - dt.timedelta(days=1)).isoformat(),
+            data_start_date=data_start_date,
+            recent_days=recheck_days,
+        )
+        result.errors.extend(history["errors"])
+        result.history_checks = history
 
     logger.info("daily: features stage starting")
     try:

@@ -56,3 +56,5 @@ reuse/removal; 0031–0035 govern installation, native ownership and public reso
 boundary (implementation and operator acceptance pending in #117).
 #103 retires duplicate phase history and unpopulated snapshot paths while preserving
 legacy database and input compatibility.
+
+- [0040 - Observed strength records](0040-observed-strength-records.md) — explicit comparison conditions and corrected evidence.

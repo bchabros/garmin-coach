@@ -39,6 +39,91 @@ def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sy
     return settings, conn, transport
 
 
+def _cmd_activity_sets(args: argparse.Namespace) -> int:
+    from . import set_corrections
+
+    conn = current().open_existing_database()
+    try:
+        result = (
+            set_corrections.preview(
+                conn,
+                args.activity_id,
+                json.loads(args.rows_json),
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+            )
+            if args.rows_json
+            else set_corrections.saved(conn, args.activity_id)
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
+def _cmd_set_history(args: argparse.Namespace) -> int:
+    from . import set_history
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        if args.history_action == "refresh":
+            result = set_history.refresh(
+                conn,
+                args.activity_id,
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+                data_start_date=current().settings.data_start_date,
+            )
+        elif args.history_action == "resolve":
+            result = set_history.choose(
+                conn,
+                args.activity_id,
+                args.choice,
+                args.binding,
+                data_start_date=current().settings.data_start_date,
+            )
+        else:
+            result = {
+                **set_history.read(conn, args.activity_id),
+                "history_coverage": set_history.coverage(
+                    conn,
+                    through_date=_dt.date.today().isoformat(),
+                    data_start_date=current().settings.data_start_date,
+                    recent_days=current().settings.sync_recheck_days,
+                ),
+            }
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("recomputed", True) else 1
+    finally:
+        conn.close()
+
+
+def _cmd_strength_records(args: argparse.Namespace) -> int:
+    from . import strength_changes
+    from .coach import strength_records
+
+    conn = current().open_existing_database(writable=args.declare)
+    try:
+        if args.declare:
+            result = strength_changes.declare(
+                conn,
+                args.activity_id,
+                args.set_idx,
+                args.binding,
+                equipment=args.equipment,
+                weight_basis=args.weight_basis,
+                resistance_mode=args.resistance_mode,
+            )
+        else:
+            result = strength_records.read(
+                conn,
+                through_date=args.through_date or _dt.date.today().isoformat(),
+                data_start_date=current().settings.data_start_date,
+            )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -596,6 +681,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
     )
     rf.set_defaults(func=_cmd_refresh_today)
+
+    for name, action in [
+        ("set-correction-state", "read"),
+        ("refresh-activity-sets", "refresh"),
+        ("resolve-set-conflict", "resolve"),
+    ]:
+        history = sub.add_parser(
+            name, help="Inspect, explicitly refresh, or resolve recorded-set evidence."
+        )
+        history.add_argument("activity_id", type=int)
+        if action == "resolve":
+            history.add_argument("--choice", required=True, choices=["captured", "manual"])
+            history.add_argument("--binding", required=True)
+        history.set_defaults(func=_cmd_set_history, history_action=action)
+
+    records = sub.add_parser(
+        "strength-records", help="Read comparable local strength records offline."
+    )
+    records.add_argument("--through", dest="through_date")
+    records.set_defaults(func=_cmd_strength_records, declare=False)
+    conditions = sub.add_parser(
+        "declare-strength-conditions",
+        help="Record explicit external-load comparison conditions locally.",
+    )
+    conditions.add_argument("activity_id", type=int)
+    conditions.add_argument("set_idx", type=int)
+    conditions.add_argument("--binding", required=True)
+    conditions.add_argument("--equipment", required=True)
+    conditions.add_argument("--weight-basis", choices=["total", "per_hand"], required=True)
+    conditions.add_argument("--resistance-mode", choices=["external_load"], required=True)
+    conditions.set_defaults(func=_cmd_strength_records, declare=True)
+
+    aset = sub.add_parser(
+        "activity-sets", help="Read saved sets or explicitly preview an account correction."
+    )
+    aset.add_argument("activity_id", type=int)
+    aset.add_argument(
+        "--rows-json", help="Ordered working sets: name, reps, weight_kg, optional captured_index."
+    )
+    aset.set_defaults(func=_cmd_activity_sets)
 
     al = sub.add_parser(
         "activity-laps", help="Read saved laps and descriptive repetition facts (no network)."

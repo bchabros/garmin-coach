@@ -775,3 +775,43 @@ SELECT s.activity_id, s.set_idx, s.category, s.subcategory, s.reps, s.sets, s.du
        s.max_weight, 'captured' AS source
 FROM activity_sets s
 WHERE NOT EXISTS (SELECT 1 FROM manual_activity_sets m WHERE m.activity_id = s.activity_id);
+
+-- Complete observed set payloads and explicit correction baselines; no source edit time.
+CREATE TABLE IF NOT EXISTS exercise_set_observations (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    payload_json TEXT NOT NULL,
+    checked_on TEXT NOT NULL,
+    observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS exercise_correction_state (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    captured_sha TEXT NOT NULL,
+    manual_sha TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS exercise_correction_history (
+    id INTEGER PRIMARY KEY,
+    activity_id INTEGER NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+    declaration_json TEXT NOT NULL,
+    baseline_sha TEXT,
+    reason TEXT NOT NULL,
+    retired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS exercise_set_recheck_runs (
+    date TEXT PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS exercise_set_attempts (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    attempted_on TEXT NOT NULL,
+    error TEXT
+);
+
+-- Athlete-reported comparison conditions are facts, bound to reviewed working evidence.
+CREATE TABLE IF NOT EXISTS strength_set_conditions (
+    activity_id INTEGER NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+    set_idx INTEGER NOT NULL,
+    binding TEXT NOT NULL,
+    equipment TEXT NOT NULL,
+    weight_basis TEXT NOT NULL CHECK(weight_basis IN ('total','per_hand')),
+    declared_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(activity_id,set_idx)
+);

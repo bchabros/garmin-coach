@@ -419,3 +419,10 @@ with the current binding. `refresh_activity_sets` explicitly reads a selected
 strength/HIIT activity and updates its saved analysis; ordinary reads stay offline.
 History retains replaced/retired declarations. Seven-night historical coverage is
 conditional on successful runs and source reads; observation dates are not edit times.
+
+After explicit approval of the exact `preview_set_correction` result, call
+`confirm_set_correction` with the same ordered rows and approval fingerprint.
+A stale refusal requires a fresh shown proposal and new approval. State account
+write, read-back verification, local saving, overlay retirement and recomputation
+separately. An uncertain write requires fresh evidence, never an automatic retry.
+Add/delete transport and actual Garmin UI acceptance remain pending in #117.

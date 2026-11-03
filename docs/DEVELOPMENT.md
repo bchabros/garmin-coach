@@ -413,3 +413,8 @@ acceptance cannot be established by fake account tests.
 retirement history between selected refresh, normal import and nightly rechecks.
 Its public operations use temporary SQLite and source callbacks in
 `tests/test_set_history.py`; nightly source writes feed the existing final mart pass.
+
+`set_confirm.confirm` owns the approval-bound account write/read-back/save outcome.
+Test with a fake complete account at that public boundary, including stale proposals,
+uncertain PUT, read-back mismatch and saved facts after rebuild failure. The transport
+uses the pinned library's full-payload setter and deliberately has no write retry.

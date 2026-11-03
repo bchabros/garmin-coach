@@ -39,6 +39,7 @@ def _past(days: int) -> str:
 
 
 EXPECTED_TOOLS = {
+    "confirm_set_correction",
     "get_set_correction_state",
     "refresh_activity_sets",
     "resolve_set_conflict",
@@ -232,6 +233,7 @@ READ_ONLY_TOOLS = {
 
 # The tools that reach the Garmin account, reading or writing.
 GARMIN_TOOLS = {
+    "confirm_set_correction",
     "refresh_activity_sets",
     "preview_set_correction",
     "get_workout_status",

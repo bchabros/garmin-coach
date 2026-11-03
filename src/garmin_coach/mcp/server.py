@@ -199,6 +199,33 @@ def resolve_set_conflict(activity_id: int, choice: str, binding: str) -> dict[st
         )
 
 
+@server.tool(annotations=_WRITES_GARMIN)
+def confirm_set_correction(
+    activity_id: int, rows: list[dict[str, Any]], approval: str
+) -> dict[str, Any]:
+    """Send only the exact shown-and-approved set proposal; re-preview stale evidence.
+
+    Requires explicit athlete approval of exercise, kilogram weight, repetitions
+    and pairing. Writes once, verifies read-back and reports partial outcomes.
+    Added/deleted-set transport and Garmin UI acceptance remain unverified.
+    """
+    from typing import cast
+    from .. import set_confirm
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            set_confirm.confirm(
+                conn,
+                activity_id,
+                rows,
+                approval,
+                lambda: cast(set_confirm.SetEditor, current().connect_import()),
+                data_start_date=current().settings.data_start_date,
+            ),
+        )
+
+
 @server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""

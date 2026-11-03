@@ -4,8 +4,8 @@
 
 Accepted design ([#117](https://github.com/bchabros/garmin-coach/issues/117),
 2026-10-31). Cached previews, correction baselines, retirement history and historical
-rechecks are implemented. Account confirmation, add/delete transport-format
-verification and operator acceptance remain pending.
+rechecks and approval-bound confirmation are implemented. Add/delete transport-format
+verification and operator acceptance remain pending; #117 stays open.
 
 ## Context
 

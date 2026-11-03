@@ -718,3 +718,18 @@ Nightly history checks select an oldest-first seventh of eligible activities
 (rounded up), excluding the recent import window, once per report date. Failed
 reads retain prior evidence and stay due. Seven-night coverage requires successful
 runs/reads; check timestamps never establish Garmin edit timestamps.
+
+## Confirm a reviewed recorded-set correction
+
+After showing the preview and receiving approval for the exact changes, use
+`confirm-set-correction ACTIVITY_ID --rows-json JSON --approval HASH --confirm`
+or sanctioned MCP `confirm_set_correction`. Both re-read account evidence and
+refuse stale proposals. A single uncertain PUT is never retried automatically.
+Read fresh source evidence before recovery.
+
+Account write, read-back verification, durable captured save, correction retirement
+and derived refresh are separate outcomes. Only matching, durably saved evidence
+can retire an unchanged active overlay; history remains retained. A later mart
+failure leaves saved facts and names offline recovery. The full #117 feature remains
+incomplete: added/deleted-set formatting and actual Garmin UI acceptance are still
+empirical gates. These commands do not claim to update Garmin personal records.

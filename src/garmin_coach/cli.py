@@ -96,6 +96,26 @@ def _cmd_set_history(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _cmd_confirm_sets(args: argparse.Namespace) -> int:
+    from typing import cast
+    from . import set_confirm
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        result = set_confirm.confirm(
+            conn,
+            args.activity_id,
+            json.loads(args.rows_json),
+            args.approval,
+            lambda: cast(set_confirm.SetEditor, current().connect_import()),
+            data_start_date=current().settings.data_start_date,
+        )
+        print(json.dumps(result))
+        return 0 if result["verified"] and result["saved"] and result["recomputed"] else 1
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -667,6 +687,16 @@ def build_parser() -> argparse.ArgumentParser:
             history.add_argument("--choice", required=True, choices=["captured", "manual"])
             history.add_argument("--binding", required=True)
         history.set_defaults(func=_cmd_set_history, history_action=action)
+
+    confirm_sets = sub.add_parser(
+        "confirm-set-correction",
+        help="Send the exact reviewed correction once and verify read-back.",
+    )
+    confirm_sets.add_argument("activity_id", type=int)
+    confirm_sets.add_argument("--rows-json", required=True)
+    confirm_sets.add_argument("--approval", required=True)
+    confirm_sets.add_argument("--confirm", action="store_true", required=True)
+    confirm_sets.set_defaults(func=_cmd_confirm_sets)
 
     aset = sub.add_parser(
         "activity-sets", help="Read saved sets or explicitly preview an account correction."

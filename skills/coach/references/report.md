@@ -411,3 +411,11 @@ pairing; clarify ambiguous circuit descriptions first. Stored weights are grams;
 `weight_kg` input is kilograms. The preview does not write the account. Add/delete
 timing and Garmin UI acceptance remain pending in #117; report the refusal
 instead of substituting ad-hoc Garmin writes.
+
+Read `get_set_correction_state` before resolving changed captured/manual sets.
+An unknown baseline cannot establish which edit is newer. Show both versions and
+use `resolve_set_conflict` only for the athlete's explicit captured/manual choice
+with the current binding. `refresh_activity_sets` explicitly reads a selected
+strength/HIIT activity and updates its saved analysis; ordinary reads stay offline.
+History retains replaced/retired declarations. Seven-night historical coverage is
+conditional on successful runs and source reads; observation dates are not edit times.

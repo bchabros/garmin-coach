@@ -60,6 +60,34 @@ def _cmd_activity_sets(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _cmd_set_history(args: argparse.Namespace) -> int:
+    from . import set_history
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        if args.history_action == "refresh":
+            result = set_history.refresh(
+                conn,
+                args.activity_id,
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+                data_start_date=current().settings.data_start_date,
+            )
+        elif args.history_action == "resolve":
+            result = set_history.choose(
+                conn,
+                args.activity_id,
+                args.choice,
+                args.binding,
+                data_start_date=current().settings.data_start_date,
+            )
+        else:
+            result = set_history.read(conn, args.activity_id)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("recomputed", True) else 1
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -617,6 +645,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
     )
     rf.set_defaults(func=_cmd_refresh_today)
+
+    for name, action in [
+        ("set-correction-state", "read"),
+        ("refresh-activity-sets", "refresh"),
+        ("resolve-set-conflict", "resolve"),
+    ]:
+        history = sub.add_parser(
+            name, help="Inspect, explicitly refresh, or resolve recorded-set evidence."
+        )
+        history.add_argument("activity_id", type=int)
+        if action == "resolve":
+            history.add_argument("--choice", required=True, choices=["captured", "manual"])
+            history.add_argument("--binding", required=True)
+        history.set_defaults(func=_cmd_set_history, history_action=action)
 
     aset = sub.add_parser(
         "activity-sets", help="Read saved sets or explicitly preview an account correction."

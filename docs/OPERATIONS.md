@@ -706,3 +706,15 @@ The sanctioned MCP equivalents are `get_activity_sets` and
 fields, and binds the complete proposal to reviewed account and local evidence.
 It never writes Garmin. Added/deleted sets refuse until their transport/timing
 contract has operator evidence. Garmin UI acceptance remains pending in #117.
+
+Use `set-correction-state ACTIVITY_ID` to inspect observed-source dates, baseline
+state, conflicts and retained correction history. `refresh-activity-sets ACTIVITY_ID`
+explicitly reads that account activity and recomputes its analysis. Resolve only
+a reviewed conflict using `resolve-set-conflict ACTIVITY_ID --choice captured|manual
+--binding HASH`. Captured retires the active overlay; manual retains it against
+the reviewed source baseline. Both retain the previous declaration in history.
+
+Nightly history checks select an oldest-first seventh of eligible activities
+(rounded up), excluding the recent import window, once per report date. Failed
+reads retain prior evidence and stay due. Seven-night coverage requires successful
+runs/reads; check timestamps never establish Garmin edit timestamps.

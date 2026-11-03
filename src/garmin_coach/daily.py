@@ -203,6 +203,18 @@ def run_daily(
         len(result.sync.enrichment_misses),
     )
 
+    if not result.sync.total_outage:
+        from . import set_history
+
+        history = set_history.recheck(
+            conn,
+            lambda aid: client.get_activity_exercise_sets(aid),
+            through_date=to_date or (dt.date.today() - dt.timedelta(days=1)).isoformat(),
+            data_start_date=data_start_date,
+            recent_days=recheck_days,
+        )
+        result.errors.extend(history["errors"])
+
     logger.info("daily: features stage starting")
     try:
         features.features(conn, data_start_date=data_start_date, to_date=to_date)

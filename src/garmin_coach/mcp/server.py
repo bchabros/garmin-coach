@@ -144,6 +144,50 @@ def preview_set_correction(activity_id: int, rows: list[dict[str, Any]]) -> dict
 
 
 @server.tool(annotations=_READS_DB)
+def get_set_correction_state(activity_id: int) -> dict[str, Any]:
+    """Read saved correction baseline, source conflicts and retained history offline."""
+    from .. import set_history
+
+    with closing(_open()) as conn:
+        return tools.wrap(conn, set_history.read(conn, activity_id))
+
+
+@server.tool(annotations=_REPULLS_GARMIN)
+def refresh_activity_sets(activity_id: int) -> dict[str, Any]:
+    """Explicitly re-read one strength/HIIT source and refresh saved analysis."""
+    from .. import set_history
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            set_history.refresh(
+                conn,
+                activity_id,
+                lambda: current().connect_import().get_activity_exercise_sets(activity_id),
+                data_start_date=current().settings.data_start_date,
+            ),
+        )
+
+
+@server.tool(annotations=_WRITES_LOCAL)
+def resolve_set_conflict(activity_id: int, choice: str, binding: str) -> dict[str, Any]:
+    """Apply the reviewed captured/manual choice; retain the previous declaration."""
+    from .. import set_history
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            set_history.choose(
+                conn,
+                activity_id,
+                choice,
+                binding,
+                data_start_date=current().settings.data_start_date,
+            ),
+        )
+
+
+@server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""
     conn = _open()

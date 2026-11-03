@@ -89,8 +89,8 @@ def build(
     ]
     current = _endpoint(conn, end, start) if end.weekday() != 6 else None
     status = conn.execute(
-        "SELECT date,status_source_date,status_phrase,fitness_trend FROM training_status_daily WHERE date BETWEEN ? AND ? ORDER BY date DESC LIMIT 1",
-        (start.isoformat(), through_date),
+        "SELECT date,status_source_date,status_phrase,fitness_trend FROM training_status_daily WHERE date BETWEEN ? AND ? AND (status_source_date IS NULL OR status_source_date<=?) ORDER BY date DESC LIMIT 1",
+        (start.isoformat(), through_date, through_date),
     ).fetchone()
     return {
         "through_date": through_date,

@@ -63,3 +63,13 @@ def test_existing_database_bootstrap_adds_metadata_without_inventing_history(con
     db.bootstrap(conn)
     result = weekly_fitness.build(conn, "2026-09-14", data_start_date="2026-06-08")
     assert result["completed_weeks"][-1]["estimate_date"] is None
+
+
+def test_future_status_source_is_excluded_from_historical_horizon(conn):
+    db.upsert_daily(
+        conn,
+        "training_status_daily",
+        {"date": "2026-09-13", "status_source_date": "2026-09-20", "status_phrase": "FUTURE"},
+    )
+    result = weekly_fitness.build(conn, "2026-09-14", data_start_date="2026-06-08")
+    assert result["garmin_status"] is None

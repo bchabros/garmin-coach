@@ -39,6 +39,7 @@ def _past(days: int) -> str:
 
 
 EXPECTED_TOOLS = {
+    "get_fitness_history",
     # read (local DB)
     "get_snapshot",
     "get_observation_history",
@@ -202,6 +203,7 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existi
 # only read. Claude Desktop asks before every call unless the tool says so, and only a
 # tool that says so can be allowed for good (issue #79).
 READ_ONLY_TOOLS = {
+    "get_fitness_history",
     "get_exercise_mappings",
     "get_snapshot",
     "get_observation_history",

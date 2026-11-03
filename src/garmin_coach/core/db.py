@@ -85,6 +85,7 @@ def _schema_columns(conn: sqlite3.Connection, name: str) -> dict[str, tuple[str,
 # IF NOT EXISTS cannot add a column to a table that already exists, so bootstrap
 # backfills these with ALTER for DBs created by an earlier schema version.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "training_status_daily": {"vo2max_estimate_date": "TEXT", "status_source_date": "TEXT"},
     "activities": {"temp_c": "REAL"},  # per-activity temperature (personal zones)
     "daily_metrics": {"load_strength": "REAL"},  # blended strength load
     "weekly_metrics": {  # weekly strength load + its share
@@ -95,7 +96,11 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "weeks_to_event": "INTEGER",
     },
     # per-week plan overrides (issue #21): which source resolved today's intent
-    "athlete_status": {"plan_source_today": "TEXT", "source_observations_json": "TEXT"},
+    "athlete_status": {
+        "plan_source_today": "TEXT",
+        "source_observations_json": "TEXT",
+        "weekly_fitness_json": "TEXT",
+    },
 }
 
 

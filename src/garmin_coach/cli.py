@@ -39,6 +39,25 @@ def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sy
     return settings, conn, transport
 
 
+def _cmd_fitness_history(args: argparse.Namespace) -> int:
+    from .coach import fitness_history
+
+    conn = current().open_existing_database()
+    try:
+        result = fitness_history.read(
+            conn,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            baseline_from=args.baseline_from,
+            baseline_to=args.baseline_to,
+            data_start_date=current().settings.data_start_date,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -596,6 +615,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
     )
     rf.set_defaults(func=_cmd_refresh_today)
+
+    fitness = sub.add_parser(
+        "fitness-history", help="Read dated status and compare recorded run periods offline."
+    )
+    fitness.add_argument("--from", dest="from_date", required=True)
+    fitness.add_argument("--to", dest="to_date", required=True)
+    fitness.add_argument("--baseline-from")
+    fitness.add_argument("--baseline-to")
+    fitness.set_defaults(func=_cmd_fitness_history)
 
     al = sub.add_parser(
         "activity-laps", help="Read saved laps and descriptive repetition facts (no network)."

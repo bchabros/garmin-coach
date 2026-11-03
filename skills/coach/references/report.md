@@ -400,3 +400,17 @@ saved and refreshed outcomes separately, including partial failures, and say wha
 
 - If a signal is absent from the digest, do not mention it. Silence means "not flagged".
 - One report per run day; re-running overwrites `reports/{today}/`.
+
+### Recent VO2max evidence
+
+For current form, lead with `snapshot.weekly_fitness.completed_weeks` and its
+two/four-week comparisons. The partial current week is progress so far. A Sunday
+report horizon closes that week; no duplicate partial week is shown. Keep the
+90-day `vo2max_delta` as background, preserving its existing meaning. A positive
+quarter cannot establish recent improvement when recent weeks fall or lack evidence.
+
+Name actual observation/estimate dates, carried values, age, unavailable reasons
+and limitations. Daily copies are stored snapshots, not distinct estimate events;
+unknown event counts remain unknown even when dated values are equal. Separate
+recorded Garmin feedback from computed comparisons and proposed explanations.
+These are Garmin estimates, not laboratory measurements or proof of race readiness.

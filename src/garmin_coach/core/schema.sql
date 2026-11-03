@@ -426,6 +426,8 @@ CREATE TABLE IF NOT EXISTS training_readiness (
 
 -- Training status snapshot (daily) — load balance targets, ACWR, fitness markers.
 CREATE TABLE IF NOT EXISTS training_status_daily (
+  vo2max_estimate_date TEXT,
+  status_source_date TEXT,
   date                 TEXT PRIMARY KEY,
   status               TEXT,               -- PRODUCTIVE|MAINTAINING|OVERREACHING|DETRAINING|RECOVERY|PEAKING
   status_phrase        TEXT,               -- PRODUCTIVE_3...
@@ -721,6 +723,7 @@ CREATE TABLE IF NOT EXISTS athlete_status (
   planned_intent_today     TEXT,              -- resolved plan intent for weekday(computed_at)
   planned_label_today      TEXT,
   plan_source_today        TEXT,              -- plan_week | plan_template
+  weekly_fitness_json TEXT,
   source_observations_json TEXT               -- sourced weight/forecast standing, not legacy values
 );
 

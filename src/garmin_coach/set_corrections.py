@@ -8,10 +8,20 @@ import json
 import math
 import sqlite3
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypedDict
 
 from .core import exercise_names
 from .workouts.exercises import EXERCISE_MAP
+
+
+class WorkingSet(TypedDict):
+    """Validated identity, optional measurements and reviewed captured pairing."""
+
+    category: str
+    name: str
+    reps: int | None
+    weight: float | None
+    captured_index: int | None
 
 
 def fingerprint(value: Any) -> str:
@@ -20,6 +30,18 @@ def fingerprint(value: Any) -> str:
 
 
 def saved(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
+    """Read one coherent saved generation, preserving caller-owned transactions."""
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN")
+    try:
+        return _saved(conn, activity_id)
+    finally:
+        if started:
+            conn.rollback()
+
+
+def _saved(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
     """Read captured/manual exercise evidence without opening an account session."""
     info = conn.execute(
         "SELECT date,gtype FROM activities WHERE activity_id=?", (activity_id,)
@@ -50,11 +72,11 @@ def _identity(name: Any) -> tuple[str, str]:
     raise ValueError(f"unresolved curated exercise identity: {canonical}")
 
 
-def validate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def validate(rows: list[dict[str, Any]]) -> list[WorkingSet]:
     """Validate one explicit row per intended working set before any account read."""
     if not rows:
         raise ValueError("a nonempty ordered working-set correction is required")
-    result = []
+    result: list[WorkingSet] = []
     for row in rows:
         if set(row) - {"name", "reps", "weight_kg", "captured_index"}:
             raise ValueError("unsupported working-set field")
@@ -112,13 +134,16 @@ def preview(
     ]
     if len(active) != len(intended) or sorted(pairing) != list(range(len(active))):
         raise ValueError("add/delete format and unrecorded timing require operator verification")
-    if pairing != sorted(pairing):
-        raise ValueError("pairing must preserve recorded chronological order")
     for row, idx in zip(intended, pairing, strict=True):
         entry = active[idx]
-        entry["exercises"] = [
-            {"category": row["category"], "name": row["name"], "probability": 100.0}
-        ]
+        exercises = entry.get("exercises")
+        if (
+            not isinstance(exercises, list)
+            or len(exercises) != 1
+            or not isinstance(exercises[0], dict)
+        ):
+            raise ValueError("exactly one captured exercise per working set is required")
+        exercises[0].update(category=row["category"], name=row["name"])
         for key, value in [("repetitionCount", row["reps"]), ("weight", row["weight"])]:
             if value is not None:
                 entry[key] = value

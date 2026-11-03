@@ -39,6 +39,27 @@ def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sy
     return settings, conn, transport
 
 
+def _cmd_activity_sets(args: argparse.Namespace) -> int:
+    from . import set_corrections
+
+    conn = current().open_existing_database()
+    try:
+        result = (
+            set_corrections.preview(
+                conn,
+                args.activity_id,
+                json.loads(args.rows_json),
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+            )
+            if args.rows_json
+            else set_corrections.saved(conn, args.activity_id)
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -596,6 +617,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Pull today's (partial) data and rebuild the mart through today (issue #8).",
     )
     rf.set_defaults(func=_cmd_refresh_today)
+
+    aset = sub.add_parser(
+        "activity-sets", help="Read saved sets or explicitly preview an account correction."
+    )
+    aset.add_argument("activity_id", type=int)
+    aset.add_argument(
+        "--rows-json", help="Ordered working sets: name, reps, weight_kg, optional captured_index."
+    )
+    aset.set_defaults(func=_cmd_activity_sets)
 
     al = sub.add_parser(
         "activity-laps", help="Read saved laps and descriptive repetition facts (no network)."

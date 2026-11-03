@@ -691,3 +691,18 @@ no Garmin login is needed. They exercise binding stability, full/partial reports
 replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parity,
 late rebuild failures, database reopen and complete-week isolation. Fresh assistant
 activation/acceptance and any real reported-speed write remain separate operator steps.
+
+## Recorded exercise-set preview
+
+`garmin-coach activity-sets ACTIVITY_ID` reads cached strength/HIIT sets without
+Garmin access. Stored `max_weight` is grams. Add `--rows-json` with one ordered
+working-set row per captured work set to explicitly read the account and preview
+a correction. Rows accept `name`, optional `reps`, `weight_kg` (kilograms) and
+`captured_index` (zero-based captured work index). Missing repetitions/weight
+preserve account values. Legacy circuit quantities are never expanded into sets.
+
+The sanctioned MCP equivalents are `get_activity_sets` and
+`preview_set_correction`. A preview preserves rests, timing and opaque account
+fields, and binds the complete proposal to reviewed account and local evidence.
+It never writes Garmin. Added/deleted sets refuse until their transport/timing
+contract has operator evidence. Garmin UI acceptance remains pending in #117.

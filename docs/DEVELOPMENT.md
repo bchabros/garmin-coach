@@ -400,3 +400,11 @@ Garmin's readiness remains a named external observation, not an invented local s
 
 Other deferred work: beat-to-beat/DFA-alpha-1 evidence and forecast-aware pace
 adjustment. Neither has an ingestion or coaching contract in the current system.
+
+### Recorded-set correction seam
+
+`set_corrections` owns explicit account preview and cached captured/manual reads.
+Test its public operations with temporary SQLite and injected source callbacks;
+invalid local proposals must refuse before connecting. Account payload evidence
+is distinct from normalized station summaries. Operator add/delete and Garmin UI
+acceptance cannot be established by fake account tests.

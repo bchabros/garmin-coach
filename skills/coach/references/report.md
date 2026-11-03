@@ -414,3 +414,12 @@ and limitations. Daily copies are stored snapshots, not distinct estimate events
 unknown event counts remain unknown even when dated values are equal. Separate
 recorded Garmin feedback from computed comparisons and proposed explanations.
 These are Garmin estimates, not laboratory measurements or proof of race readiness.
+
+Use `get_fitness_history` for dated Garmin status/VO2max and athlete-selected
+before/after running periods. Show activity averages separately from work/lap
+evidence. Missing historical sensors, satellite settings, lane, configured maximum
+HR and matched routes remain unknown. An athlete's chest-strap report stays
+attributed; it does not establish historical sensor provenance. Similar distance
+or type alone cannot establish matched runs. Describe observed changes and
+possible explanations separately; never claim the cause of Maintaining/Productive
+from a quarterly rise, RPE or one benchmark. This read is entirely offline.

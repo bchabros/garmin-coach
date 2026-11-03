@@ -405,3 +405,9 @@ adjustment. Neither has an ingestion or coaching contract in the current system.
 materialization. Source calendar dates stay in core; the block persists separately
 from sourced weight/forecast evidence. Test source normalization and the public
 snapshot/features SQLite seam, including legacy bootstrap and historical cutoffs.
+
+`coach.fitness_history.read` owns coherent selected-period status/run comparisons.
+Tests at its public SQLite read seam cover source-date limits, attributed context
+and non-comparable periods; CLI/MCP expose the same read. No account transport
+or current device setting is consulted. Real authenticated-client acceptance
+remains separate from synthetic read and protocol tests.

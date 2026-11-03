@@ -691,3 +691,12 @@ no Garmin login is needed. They exercise binding stability, full/partial reports
 replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parity,
 late rebuild failures, database reopen and complete-week isolation. Fresh assistant
 activation/acceptance and any real reported-speed write remain separate operator steps.
+
+## Dated fitness and running comparisons
+
+`fitness-history --from YYYY-MM-DD --to YYYY-MM-DD` reads saved dated status,
+VO2max and running evidence offline. Add `--baseline-from` and `--baseline-to`
+for a second athlete-selected period. MCP `get_fitness_history` exposes the same
+read and separately attributed optional athlete context. Activity averages stay
+distinct from captured/verified lap evidence. Unknown historical measurement
+settings and routes remain unknown; the read does not claim matched runs.

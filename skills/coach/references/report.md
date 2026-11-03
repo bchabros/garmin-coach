@@ -400,3 +400,22 @@ saved and refreshed outcomes separately, including partial failures, and say wha
 
 - If a signal is absent from the digest, do not mention it. Silence means "not flagged".
 - One report per run day; re-running overwrites `reports/{today}/`.
+
+### Recorded exercise-set proposals
+
+For a recorded strength/HIIT correction, use `get_activity_sets` for cached
+captured/manual evidence, then `preview_set_correction` only when an account read
+is requested. Supply one ordered working-set row per retained captured work set.
+Show the old and proposed exercise, repetitions, kilograms and captured-index
+pairing; clarify ambiguous circuit descriptions first. Stored weights are grams;
+`weight_kg` input is kilograms. The preview does not write the account. Add/delete
+timing and Garmin UI acceptance remain pending in #117; report the refusal
+instead of substituting ad-hoc Garmin writes.
+
+Read `get_set_correction_state` before resolving changed captured/manual sets.
+An unknown baseline cannot establish which edit is newer. Show both versions and
+use `resolve_set_conflict` only for the athlete's explicit captured/manual choice
+with the current binding. `refresh_activity_sets` explicitly reads a selected
+strength/HIIT activity and updates its saved analysis; ordinary reads stay offline.
+History retains replaced/retired declarations. Seven-night historical coverage is
+conditional on successful runs and source reads; observation dates are not edit times.

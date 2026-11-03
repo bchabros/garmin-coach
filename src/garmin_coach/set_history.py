@@ -32,6 +32,8 @@ def persist(conn: sqlite3.Connection, activity_id: int, payload: Any, *, checked
             raise ValueError("malformed captured exercise identities")
     rows = models.normalize_exercise_sets(activity_id, data)
     day = set_corrections.saved(conn, activity_id)["date"]
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
     conn.execute("SAVEPOINT observed_sets")
     try:
         encoded = json.dumps(data, allow_nan=False)
@@ -215,11 +217,20 @@ def recheck(
     for aid, _, _ in due[:budget]:
         try:
             persist(conn, aid, fetch(aid), checked_on=through_date)
+            conn.execute(
+                "INSERT INTO exercise_set_attempts VALUES(?,?,NULL) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=NULL",
+                (aid, through_date),
+            )
             conn.commit()
             checked.append(aid)
         except Exception:
             conn.rollback()
             errors.append(f"set history read failed for activity {aid}; prior evidence retained")
+            conn.execute(
+                "INSERT INTO exercise_set_attempts VALUES(?,?,?) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=excluded.error",
+                (aid, through_date, "source_read_failed"),
+            )
+            conn.commit()
     conn.execute("INSERT INTO exercise_set_recheck_runs VALUES(?)", (through_date,))
     conn.commit()
     return {
@@ -227,4 +238,39 @@ def recheck(
         "due": len(due) - len(checked),
         "errors": errors,
         "already_run": False,
+    }
+
+
+def coverage(
+    conn: sqlite3.Connection, *, through_date: str, data_start_date: str, recent_days: int = 3
+) -> dict[str, Any]:
+    """Expose conditional seven-night progress, including failed and missed checks."""
+    end = dt.date.fromisoformat(through_date)
+    cutoff = (end - dt.timedelta(days=max(1, recent_days) - 1)).isoformat()
+    overdue = (end - dt.timedelta(days=7)).isoformat()
+    rows = conn.execute(
+        "SELECT a.activity_id,a.date,o.checked_on,t.attempted_on,t.error FROM activities a LEFT JOIN exercise_set_observations o USING(activity_id) LEFT JOIN exercise_set_attempts t USING(activity_id) WHERE a.gtype IN ('strength_training','hiit') AND a.date>=? AND a.date<? ORDER BY a.date,a.activity_id",
+        (data_start_date, cutoff),
+    ).fetchall()
+    items = [
+        {
+            "activity_id": aid,
+            "date": day,
+            "checked_on": checked,
+            "attempted_on": attempted,
+            "error": error,
+            "due": checked is None or checked <= overdue,
+        }
+        for aid, day, checked, attempted, error in rows
+    ]
+    return {
+        "through_date": through_date,
+        "recent_window_start": cutoff,
+        "eligible": len(items),
+        "due": sum(i["due"] for i in items),
+        "never_checked": sum(i["checked_on"] is None for i in items),
+        "overdue": sum(i["checked_on"] is not None and i["due"] for i in items),
+        "failed": sum(i["error"] is not None for i in items),
+        "activities": items,
+        "condition": "Coverage requires successful nights and source reads; observation dates are not edit times.",
     }

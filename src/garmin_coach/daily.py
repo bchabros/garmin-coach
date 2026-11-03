@@ -54,6 +54,7 @@ class DailyResult:
     plans_imported: list[str] = field(default_factory=list)
     invalidated_pushes: list[dict] = field(default_factory=list)
     plan_warnings: list[str] = field(default_factory=list)
+    history_checks: dict = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -214,6 +215,7 @@ def run_daily(
             recent_days=recheck_days,
         )
         result.errors.extend(history["errors"])
+        result.history_checks = history
 
     logger.info("daily: features stage starting")
     try:

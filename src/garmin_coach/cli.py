@@ -81,7 +81,15 @@ def _cmd_set_history(args: argparse.Namespace) -> int:
                 data_start_date=current().settings.data_start_date,
             )
         else:
-            result = set_history.read(conn, args.activity_id)
+            result = {
+                **set_history.read(conn, args.activity_id),
+                "history_coverage": set_history.coverage(
+                    conn,
+                    through_date=_dt.date.today().isoformat(),
+                    data_start_date=current().settings.data_start_date,
+                    recent_days=current().settings.sync_recheck_days,
+                ),
+            }
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("recomputed", True) else 1
     finally:

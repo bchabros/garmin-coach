@@ -15,6 +15,7 @@ computation happens here.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 from contextlib import closing
 import sqlite3
 import sys
@@ -149,7 +150,18 @@ def get_set_correction_state(activity_id: int) -> dict[str, Any]:
     from .. import set_history
 
     with closing(_open()) as conn:
-        return tools.wrap(conn, set_history.read(conn, activity_id))
+        return tools.wrap(
+            conn,
+            {
+                **set_history.read(conn, activity_id),
+                "history_coverage": set_history.coverage(
+                    conn,
+                    through_date=dt.date.today().isoformat(),
+                    data_start_date=current().settings.data_start_date,
+                    recent_days=current().settings.sync_recheck_days,
+                ),
+            },
+        )
 
 
 @server.tool(annotations=_REPULLS_GARMIN)

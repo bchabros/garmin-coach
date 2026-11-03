@@ -799,3 +799,8 @@ CREATE TABLE IF NOT EXISTS exercise_correction_history (
 CREATE TABLE IF NOT EXISTS exercise_set_recheck_runs (
     date TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS exercise_set_attempts (
+    activity_id INTEGER PRIMARY KEY REFERENCES activities(activity_id) ON DELETE CASCADE,
+    attempted_on TEXT NOT NULL,
+    error TEXT
+);

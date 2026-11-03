@@ -90,3 +90,49 @@ def test_seven_successful_nights_cover_history_without_repeating_recent_sets(con
         assert repeated["already_run"] is True
     assert sorted(observed) == list(range(1, 15))
     assert outcome["due"] == 0
+
+
+def test_persist_is_rolled_back_by_its_caller(conn, fixture):
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": 900001,
+            "date": "2026-06-12",
+            "start_local": "2026-06-12 17:00:00",
+            "gtype": "strength_training",
+            "discipline": "Siła",
+        },
+    )
+    conn.commit()
+    set_history.persist(conn, 900001, fixture("exercise_sets_strength"), checked_on="2026-06-13")
+    assert conn.in_transaction
+    conn.rollback()
+    assert set_history.read(conn, 900001)["captured"] == []
+    assert set_history.read(conn, 900001)["checked_on"] is None
+
+
+def test_failed_scan_is_observable_and_remains_due_until_recovered(conn):
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": 1,
+            "date": "2026-06-12",
+            "start_local": "2026-06-12 17:00:00",
+            "gtype": "strength_training",
+            "discipline": "Siła",
+        },
+    )
+    conn.commit()
+    set_history.recheck(
+        conn, lambda aid: None, through_date="2026-07-01", data_start_date="2026-06-08"
+    )
+    state = set_history.coverage(conn, through_date="2026-07-01", data_start_date="2026-06-08")
+    assert state["due"] == state["failed"] == state["never_checked"] == 1
+    set_history.recheck(
+        conn,
+        lambda aid: {"activityId": aid, "exerciseSets": []},
+        through_date="2026-07-02",
+        data_start_date="2026-06-08",
+    )
+    state = set_history.coverage(conn, through_date="2026-07-02", data_start_date="2026-06-08")
+    assert state["due"] == state["failed"] == state["never_checked"] == 0

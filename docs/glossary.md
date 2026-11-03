@@ -327,3 +327,8 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   distinct from the private athlete profile.
 - **consolidation pass** - a backed-up review of agent notes that merges duplicates
   and corrects false facts; age alone prompts checking rather than deletion.
+
+- **weekly VO2max standing** - the latest eligible recorded Garmin estimate available
+  by a training week's end, with observation/estimate dates and carried-evidence limits.
+- **estimate event** - a distinct source-identified measurement event; a daily stored
+  value or numeric change alone does not establish one.

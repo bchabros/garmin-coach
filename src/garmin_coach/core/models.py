@@ -400,6 +400,15 @@ def _first_device(mapping: Any) -> dict[str, Any]:
     return {}
 
 
+def _source_date(value: Any) -> str | None:
+    import datetime as dt
+
+    try:
+        return dt.date.fromisoformat(value).isoformat() if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
 def normalize_status(date: str, p: dict[str, Any]) -> dict[str, Any]:
     """Normalize a get_training_status payload to a `training_status_daily` row."""
     ts = _first_device((p.get("mostRecentTrainingStatus") or {}).get("latestTrainingStatusData"))
@@ -430,5 +439,7 @@ def normalize_status(date: str, p: dict[str, Any]) -> dict[str, Any]:
         "ml_anaerobic_max": lb.get("monthlyLoadAnaerobicTargetMax"),
         "balance_phrase": lb.get("trainingBalanceFeedbackPhrase"),
         "vo2max": vo2.get("vo2MaxPreciseValue"),
+        "vo2max_estimate_date": _source_date(vo2.get("calendarDate")),
+        "status_source_date": _source_date(ts.get("calendarDate")),
         "fitness_age": vo2.get("fitnessAge"),
     }

@@ -400,3 +400,8 @@ Garmin's readiness remains a named external observation, not an invented local s
 
 Other deferred work: beat-to-beat/DFA-alpha-1 evidence and forecast-aware pace
 adjustment. Neither has an ingestion or coaching contract in the current system.
+
+`marts.weekly_fitness` builds the dated weekly VO2max block inside snapshot
+materialization. Source calendar dates stay in core; the block persists separately
+from sourced weight/forecast evidence. Test source normalization and the public
+snapshot/features SQLite seam, including legacy bootstrap and historical cutoffs.

@@ -41,3 +41,20 @@ A current-standing answer needs one stable deterministic surface rather than rep
 CLI, MCP and reports share the persisted standing without network access. Historical
 recomputations remain reproducible, and legacy columns cannot leak retired values
 back into the API. No destructive migration is needed for this scope reduction.
+
+## Dated weekly evidence (#120)
+
+A separate weekly block now retains completed Monday-Sunday periods, the additional
+baseline week and partial current-week context. A Sunday horizon closes the week.
+Comparisons retain missing periods and do not silently substitute an older baseline.
+Existing VO2max/HRV long-window delta/span fields retain their meanings.
+
+The anonymized status fixture distinguishes generic VO2max `calendarDate` from
+the daily observation date and contains a separate Training Status source date.
+Those dates are retained when supplied; old rows remain unknown until an explicit
+evidence-supported reimport. No verified event identity exists, so event counts
+remain unknown. Repeated daily copies are not averaged into measurements.
+
+This trades a single trend claim for dated, possibly conflicting evidence. Ages,
+carried values and unknown provenance stay visible without inventing a new stale
+threshold or a replacement Garmin Training Status.

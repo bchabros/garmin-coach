@@ -16,7 +16,7 @@ import pathlib
 import sqlite3
 from typing import Any
 
-from . import observations, periodize as _periodize
+from . import observations, weekly_fitness, periodize as _periodize
 from ..coach import signals as _signals, thresholds as _thresholds
 from ..core import db, plan as _plan_of_record
 
@@ -76,6 +76,7 @@ _STATUS_COLUMNS = (
     "planned_intent_today",
     "plan_source_today",
     "source_observations_json",
+    "weekly_fitness_json",
 )
 
 
@@ -92,8 +93,17 @@ def rollup(
     if cutoff is None:
         return
     status = build(conn, through_date=cutoff, data_start_date=data_start_date)
+    weekly = status.pop("weekly_fitness")
     sourced = {key: status.pop(key) for key in ("weight", "race_forecasts")}
-    db.upsert_status(conn, {"id": 1, **status, "source_observations_json": json.dumps(sourced)})
+    db.upsert_status(
+        conn,
+        {
+            "id": 1,
+            **status,
+            "source_observations_json": json.dumps(sourced),
+            "weekly_fitness_json": json.dumps(weekly),
+        },
+    )
 
 
 def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
@@ -104,6 +114,8 @@ def read(conn: sqlite3.Connection) -> dict[str, Any] | None:
     if row is None:
         return None
     result = dict(zip(_STATUS_COLUMNS, row))
+    weekly = result.pop("weekly_fitness_json")
+    result["weekly_fitness"] = json.loads(weekly) if weekly else None
     sourced = result.pop("source_observations_json")
     result.update(
         json.loads(sourced)
@@ -139,6 +151,7 @@ def build(
     thr = _thresholds.read(conn)
     return {
         "computed_at": through_date,
+        "weekly_fitness": weekly_fitness.build(conn, through_date, data_start_date=data_start_date),
         "weight": observations.weight(
             conn, through_date, thr["snapshot_trend_min_span_days"], data_start_date=data_start_date
         ),

@@ -200,6 +200,57 @@ def resolve_set_conflict(activity_id: int, choice: str, binding: str) -> dict[st
 
 
 @server.tool(annotations=_READS_DB)
+def get_strength_records(through_date: str | None = None) -> dict[str, Any]:
+    """Read local heaviest/per-repetition external-load records with ties and coverage.
+
+    Unknown equipment, weight basis and legacy circuit summaries remain unranked.
+    Results are independent of Garmin's own personal-record feature.
+    """
+    from ..coach import strength_records
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            strength_records.read(
+                conn,
+                through_date=through_date or dt.date.today().isoformat(),
+                data_start_date=current().settings.data_start_date,
+            ),
+        )
+
+
+@server.tool(annotations=_WRITES_LOCAL)
+def declare_strength_conditions(
+    activity_id: int,
+    set_idx: int,
+    binding: str,
+    equipment: str,
+    weight_basis: str,
+    resistance_mode: str,
+) -> dict[str, Any]:
+    """Save explicitly reported equipment and total/per_hand external_load conditions.
+
+    Show the set and proposed conditions first. Use its current record-read binding.
+    Assisted/bodyweight records are unsupported; these declarations never edit Garmin.
+    """
+    from .. import strength_changes
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            strength_changes.declare(
+                conn,
+                activity_id,
+                set_idx,
+                binding,
+                equipment=equipment,
+                weight_basis=weight_basis,
+                resistance_mode=resistance_mode,
+            ),
+        )
+
+
+@server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""
     conn = _open()

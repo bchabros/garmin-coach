@@ -413,3 +413,9 @@ acceptance cannot be established by fake account tests.
 retirement history between selected refresh, normal import and nightly rechecks.
 Its public operations use temporary SQLite and source callbacks in
 `tests/test_set_history.py`; nightly source writes feed the existing final mart pass.
+
+`strength_changes` owns local comparison-condition declarations under a write
+transaction. `coach.strength_records` owns coherent offline selected-evidence,
+eligibility and observed-record reads. Public SQLite tests cover literal worked
+records, corrected leaders, ties, distinct variants/bases, source bindings, legacy
+circuit exclusion and history horizons; adapters share those public operations.

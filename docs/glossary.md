@@ -327,3 +327,10 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
   distinct from the private athlete profile.
 - **consolidation pass** - a backed-up review of agent notes that merges duplicates
   and corrects false facts; age alone prompts checking rather than deletion.
+
+- **observed strength record** - the highest eligible recorded external load for an
+  exact exercise variant and comparison conditions, overall or at a given repetition count.
+- **comparison conditions** - athlete-reported equipment, external-load mode and
+  total/per-hand weight basis that determine which working-set results can be compared.
+- **unranked strength evidence** - selected exercise evidence that cannot establish
+  a comparable individual working-set result; its missing/unsupported reason remains visible.

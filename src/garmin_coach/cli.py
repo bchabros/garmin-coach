@@ -96,6 +96,34 @@ def _cmd_set_history(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _cmd_strength_records(args: argparse.Namespace) -> int:
+    from . import strength_changes
+    from .coach import strength_records
+
+    conn = current().open_existing_database(writable=args.declare)
+    try:
+        if args.declare:
+            result = strength_changes.declare(
+                conn,
+                args.activity_id,
+                args.set_idx,
+                args.binding,
+                equipment=args.equipment,
+                weight_basis=args.weight_basis,
+                resistance_mode=args.resistance_mode,
+            )
+        else:
+            result = strength_records.read(
+                conn,
+                through_date=args.through_date or _dt.date.today().isoformat(),
+                data_start_date=current().settings.data_start_date,
+            )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
 def _cmd_backfill(args: argparse.Namespace) -> int:
     settings, conn, transport = _init_env(create=True)
     from_date = args.from_date or settings.data_start_date
@@ -667,6 +695,23 @@ def build_parser() -> argparse.ArgumentParser:
             history.add_argument("--choice", required=True, choices=["captured", "manual"])
             history.add_argument("--binding", required=True)
         history.set_defaults(func=_cmd_set_history, history_action=action)
+
+    records = sub.add_parser(
+        "strength-records", help="Read comparable local strength records offline."
+    )
+    records.add_argument("--through", dest="through_date")
+    records.set_defaults(func=_cmd_strength_records, declare=False)
+    conditions = sub.add_parser(
+        "declare-strength-conditions",
+        help="Record explicit external-load comparison conditions locally.",
+    )
+    conditions.add_argument("activity_id", type=int)
+    conditions.add_argument("set_idx", type=int)
+    conditions.add_argument("--binding", required=True)
+    conditions.add_argument("--equipment", required=True)
+    conditions.add_argument("--weight-basis", choices=["total", "per_hand"], required=True)
+    conditions.add_argument("--resistance-mode", choices=["external_load"], required=True)
+    conditions.set_defaults(func=_cmd_strength_records, declare=True)
 
     aset = sub.add_parser(
         "activity-sets", help="Read saved sets or explicitly preview an account correction."

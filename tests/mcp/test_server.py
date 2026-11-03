@@ -39,6 +39,8 @@ def _past(days: int) -> str:
 
 
 EXPECTED_TOOLS = {
+    "get_strength_records",
+    "declare_strength_conditions",
     "get_set_correction_state",
     "refresh_activity_sets",
     "resolve_set_conflict",
@@ -207,6 +209,7 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existi
 # only read. Claude Desktop asks before every call unless the tool says so, and only a
 # tool that says so can be allowed for good (issue #79).
 READ_ONLY_TOOLS = {
+    "get_strength_records",
     "get_set_correction_state",
     "get_activity_sets",
     "preview_set_correction",

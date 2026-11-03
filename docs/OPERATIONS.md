@@ -718,3 +718,19 @@ Nightly history checks select an oldest-first seventh of eligible activities
 (rounded up), excluding the recent import window, once per report date. Failed
 reads retain prior evidence and stay due. Seven-night coverage requires successful
 runs/reads; check timestamps never establish Garmin edit timestamps.
+
+## Observed strength records
+
+`strength-records [--through YYYY-MM-DD]` reads local heaviest-load and exact-rep
+records, ties, history and unranked coverage without Garmin access. MCP
+`get_strength_records` returns the same evidence. Unknown comparison conditions
+and legacy circuit aggregates do not rank. These are available-history bests,
+independent of Garmin PRs, with grams converted to displayed kilograms.
+
+After reviewing a selected set's evidence binding, explicitly record its equipment
+and external-load basis using `declare-strength-conditions ACTIVITY_ID SET_IDX
+--binding HASH --equipment LABEL --weight-basis total|per_hand
+--resistance-mode external_load`, or MCP `declare_strength_conditions`. Conditions
+remain athlete-reported. Source edits invalidate the binding; reread before a new
+declaration. Exact variants/equipment/bases stay separate. Assisted, bodyweight-only
+and estimated-1RM records are unsupported. See ADR 0040.

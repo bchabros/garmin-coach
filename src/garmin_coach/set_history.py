@@ -43,6 +43,10 @@ def persist(conn: sqlite3.Connection, activity_id: int, payload: Any, *, checked
             "INSERT INTO exercise_set_observations(activity_id,payload_json,checked_on) VALUES(?,?,?) ON CONFLICT(activity_id) DO UPDATE SET payload_json=excluded.payload_json,checked_on=excluded.checked_on,observed_at=CURRENT_TIMESTAMP",
             (activity_id, encoded, checked_on),
         )
+        conn.execute(
+            "INSERT INTO exercise_set_attempts VALUES(?,?,NULL) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=NULL",
+            (activity_id, checked_on),
+        )
     except BaseException:
         conn.execute("ROLLBACK TO observed_sets")
         raise

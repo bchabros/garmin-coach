@@ -136,3 +136,33 @@ def test_failed_scan_is_observable_and_remains_due_until_recovered(conn):
     )
     state = set_history.coverage(conn, through_date="2026-07-02", data_start_date="2026-06-08")
     assert state["due"] == state["failed"] == state["never_checked"] == 0
+
+
+def test_selected_refresh_clears_an_earlier_historical_failure(conn):
+    db.upsert_activity(
+        conn,
+        {
+            "activity_id": 1,
+            "date": "2026-06-12",
+            "start_local": "2026-06-12 17:00:00",
+            "gtype": "strength_training",
+            "discipline": "Siła",
+        },
+    )
+    conn.commit()
+    set_history.recheck(
+        conn, lambda aid: None, through_date="2026-07-01", data_start_date="2026-06-08"
+    )
+    set_history.refresh(
+        conn,
+        1,
+        lambda: {"activityId": 1, "exerciseSets": []},
+        checked_on="2026-07-02",
+        data_start_date="2026-06-08",
+    )
+    assert (
+        set_history.coverage(conn, through_date="2026-07-02", data_start_date="2026-06-08")[
+            "failed"
+        ]
+        == 0
+    )

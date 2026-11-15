@@ -8,6 +8,24 @@ from garmin_coach import set_corrections
 from garmin_coach.core import db
 
 
+@pytest.mark.parametrize(
+    "weight,grams", [(16.1, 16100), (32.2, 32200), (64.1, 64100), (64.4, 64400)]
+)
+def test_decimal_kilograms_produce_exact_account_grams(conn, fixture, weight, grams):
+    session(conn)
+    proposal = set_corrections.preview(
+        conn,
+        900001,
+        [
+            {"name": "bench_press", "weight_kg": weight},
+            {"name": "deadlift"},
+            {"name": "bench_press"},
+        ],
+        lambda: fixture("exercise_sets_strength"),
+    )
+    assert proposal["proposed"]["exerciseSets"][0]["weight"] == grams
+
+
 def session(conn):
     db.upsert_activity(
         conn,
@@ -145,3 +163,69 @@ def test_mcp_saved_read_is_offline_and_preview_is_open_world():
     assert tools["get_activity_sets"].annotations.openWorldHint is False
     assert tools["preview_set_correction"].annotations.openWorldHint is True
     assert tools["preview_set_correction"].annotations.readOnlyHint is True
+
+
+def test_preview_explains_evidence_pairing_and_before_after(conn, fixture):
+    session(conn)
+    proposal = set_corrections.preview(
+        conn,
+        900001,
+        [
+            {"name": "deadlift", "weight_kg": 100},
+            {"name": "bench_press", "weight_kg": 60},
+            {"name": "bench_press"},
+        ],
+        lambda: fixture("exercise_sets_strength"),
+    )
+    assert proposal["pairing"] == [1, 0, 2]
+    change = proposal["changes"][0]
+    assert change["captured_index"] == 1
+    assert change["pairing_basis"] == "identity_and_weight"
+    assert change["name_matches"] is True
+    assert change["weight_matches"] is True
+    assert change["before"]["weight_kg"] == 100
+    assert change["after"]["weight_kg"] == 100
+    assert change["before"]["duration"] == change["after"]["duration"] == 52
+
+
+def test_partial_pairing_is_refused_with_specific_error(conn, fixture):
+    session(conn)
+    with pytest.raises(ValueError, match="captured_index for every"):
+        set_corrections.preview(
+            conn,
+            900001,
+            [
+                {"name": "bench_press", "captured_index": 1},
+                {"name": "deadlift"},
+                {"name": "bench_press"},
+            ],
+            lambda: fixture("exercise_sets_strength"),
+        )
+
+
+@pytest.mark.parametrize("rows", ["{", "{}", '[{"name":"made_up"}]'])
+def test_cli_invalid_proposal_is_a_clean_refusal(athlete_home, capsys, rows):
+    from garmin_coach import cli
+    from garmin_coach.runtime import InstallationContext
+
+    context = InstallationContext.select(athlete_home)
+    with context.open_database(create=True) as conn:
+        db.bootstrap(conn)
+        session(conn)
+    assert (
+        cli.main(["--home", str(athlete_home), "activity-sets", "900001", "--rows-json", rows]) == 2
+    )
+    output = capsys.readouterr()
+    assert "garmin-coach:" in output.err
+    assert "Traceback" not in output.err
+
+
+@pytest.mark.parametrize(
+    "field,value", [("exercises", None), ("exercises", [None]), ("weight", "heavy")]
+)
+def test_malformed_source_refuses_before_pairing(conn, fixture, field, value):
+    session(conn)
+    payload = fixture("exercise_sets_strength")
+    payload["exerciseSets"][0][field] = value
+    with pytest.raises(ValueError, match="captured"):
+        set_corrections.preview(conn, 900001, [{"name": "bench_press"}] * 3, lambda: payload)

@@ -1031,6 +1031,11 @@ def main(
     except client.LoginUnavailableError as exc:
         print(f"login failed: {exc}")
         return 2
+    except ValueError as exc:
+        if args.command not in {"activity-sets", "confirm-set-correction", "resolve-set-conflict"}:
+            raise
+        print(f"garmin-coach: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

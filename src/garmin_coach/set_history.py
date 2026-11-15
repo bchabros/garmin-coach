@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import sqlite3
 from collections.abc import Callable
@@ -11,25 +12,16 @@ from typing import Any
 
 from . import set_corrections
 from .core import db, models
+from .etl.client import failure_kind
 from .marts import features
+
+logger = logging.getLogger(__name__)
 
 
 def persist(conn: sqlite3.Connection, activity_id: int, payload: Any, *, checked_on: str) -> None:
     """Stage validated raw/core source evidence atomically; caller owns the commit."""
     data = set_corrections.account_payload(activity_id, payload)
     dt.date.fromisoformat(checked_on)
-    for entry in data["exerciseSets"]:
-        for key in ("duration", "weight", "repetitionCount"):
-            value = entry.get(key)
-            if value is not None and (
-                type(value) not in (int, float) or not math.isfinite(value) or value < 0
-            ):
-                raise ValueError(f"invalid captured {key}")
-        if entry.get("exercises") is not None and (
-            not isinstance(entry["exercises"], list)
-            or any(not isinstance(e, dict) for e in entry["exercises"])
-        ):
-            raise ValueError("malformed captured exercise identities")
     rows = models.normalize_exercise_sets(activity_id, data)
     day = set_corrections.saved(conn, activity_id)["date"]
     if not conn.in_transaction:
@@ -95,7 +87,6 @@ def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
             "SELECT checked_on,observed_at FROM exercise_set_observations WHERE activity_id=?",
             (activity_id,),
         ).fetchone()
-        known = bool(state and state[1] == set_corrections.fingerprint(local["manual"]))
         history = [
             {
                 "declaration": json.loads(row[0]),
@@ -110,10 +101,6 @@ def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
         ]
         return {
             **local,
-            "baseline_state": "known" if known else "unknown",
-            "conflict": state[0] != set_corrections.fingerprint(local["captured"])
-            if known and local["manual"]
-            else None,
             "history": history,
             "checked_on": source[0] if source else None,
             "observed_at": source[1] if source else None,
@@ -131,6 +118,7 @@ def rebuild(conn: sqlite3.Connection, day: str, data_start_date: str) -> dict[st
         return {"saved": True, "recomputed": True}
     except Exception:
         conn.rollback()
+        logger.exception("set_history: derived refresh failed after saving facts")
         return {
             "saved": True,
             "recomputed": False,
@@ -188,6 +176,24 @@ def refresh(
     return {**rebuild(conn, local["date"], data_start_date), "evidence": read(conn, activity_id)}
 
 
+def _recheck_one(
+    conn: sqlite3.Connection, fetch: Callable[[int], Any], activity_id: int, checked_on: str
+) -> str | None:
+    try:
+        persist(conn, activity_id, fetch(activity_id), checked_on=checked_on)
+        conn.commit()
+        return None
+    except Exception as exc:
+        conn.rollback()
+        logger.exception("set_history: source check failed for activity %s", activity_id)
+        conn.execute(
+            "INSERT INTO exercise_set_attempts VALUES(?,?,?) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=excluded.error",
+            (activity_id, checked_on, "source_read_failed"),
+        )
+        conn.commit()
+        return failure_kind(exc)
+
+
 def recheck(
     conn: sqlite3.Connection,
     fetch: Callable[[int], Any],
@@ -218,23 +224,17 @@ def recheck(
         return {"checked": [], "due": len(due), "errors": [], "already_run": True}
     budget = math.ceil(len(candidates) / 7)
     checked, errors = [], []
+    stopped_reason = None
     for aid, _, _ in due[:budget]:
-        try:
-            persist(conn, aid, fetch(aid), checked_on=through_date)
-            conn.execute(
-                "INSERT INTO exercise_set_attempts VALUES(?,?,NULL) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=NULL",
-                (aid, through_date),
-            )
-            conn.commit()
+        reason = _recheck_one(conn, fetch, aid, through_date)
+        if reason is None:
             checked.append(aid)
-        except Exception:
-            conn.rollback()
-            errors.append(f"set history read failed for activity {aid}; prior evidence retained")
-            conn.execute(
-                "INSERT INTO exercise_set_attempts VALUES(?,?,?) ON CONFLICT(activity_id) DO UPDATE SET attempted_on=excluded.attempted_on,error=excluded.error",
-                (aid, through_date, "source_read_failed"),
-            )
-            conn.commit()
+            continue
+        errors.append(f"set history read failed for activity {aid}; prior evidence retained")
+        if reason in {"rate_limited", "authentication", "unavailable"}:
+            stopped_reason = reason
+            logger.warning("set_history: stopping historical batch (%s)", reason)
+            break
     conn.execute("INSERT INTO exercise_set_recheck_runs VALUES(?)", (through_date,))
     conn.commit()
     return {
@@ -242,6 +242,7 @@ def recheck(
         "due": len(due) - len(checked),
         "errors": errors,
         "already_run": False,
+        "stopped_reason": stopped_reason,
     }
 
 

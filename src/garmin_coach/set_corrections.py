@@ -58,7 +58,15 @@ def _saved(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
         )
         names = [c[0] for c in cur.description]
         result[label] = [dict(zip(names, row, strict=True)) for row in cur]
-    result["baseline_state"] = "unknown"
+    state = conn.execute(
+        "SELECT captured_sha,manual_sha FROM exercise_correction_state WHERE activity_id=?",
+        (activity_id,),
+    ).fetchone()
+    known = bool(state and state[1] == fingerprint(result["manual"]))
+    result["baseline_state"] = "known" if known else "unknown"
+    result["conflict"] = (
+        state[0] != fingerprint(result["captured"]) if known and result["manual"] else None
+    )
     result["weight_unit"] = "grams"
     return result
 

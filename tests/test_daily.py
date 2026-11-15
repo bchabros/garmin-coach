@@ -80,6 +80,27 @@ def test_daily_run_is_ok_when_pipeline_completes_cleanly(conn, fake_client, tmp_
     assert result.exit_code == 0
 
 
+def test_history_bookkeeping_failure_degrades_but_keeps_features_and_digest(
+    conn, fake_client, tmp_path
+):
+    conn.execute(
+        "CREATE TRIGGER fail_history_run BEFORE INSERT ON exercise_set_recheck_runs BEGIN SELECT RAISE(ABORT, 'history bookkeeping unavailable'); END"
+    )
+    conn.commit()
+    result = daily.run_daily(
+        fake_client(),
+        conn,
+        data_start_date="2026-06-08",
+        to_date="2026-06-10",
+        reports_dir=tmp_path,
+    )
+    assert result.features_ok is True
+    assert result.status == "degraded"
+    assert result.exit_code == 1
+    assert any("history" in error for error in result.errors)
+    assert not any("features crashed" in error or "alert" in error for error in result.errors)
+
+
 def test_daily_run_surfaces_hrv_low_alert_from_fresh_mart(conn, fake_client, tmp_path):
     """Given a low latest HRV night, the run extracts an HRV_LOW_MORNING alert."""
     # Descending series [76,72,68,64,60]: median 68, SD 6.3245, threshold 61.67,

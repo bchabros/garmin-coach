@@ -301,8 +301,8 @@ appear there. Export/import and dated mapping history are separate capabilities.
 | Status | Exit | Meaning | What to do |
 |--------|------|---------|------------|
 | `ok` | 0 | All streams synced, features + alerts ran. | Nothing. |
-| `degraded` | 1 | An isolated stream failed but the run continued. | Check the log for the failing stream; often self-heals next run. Re-run `sync` if it persists. |
-| `failed` | 2 | A stage crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
+| `degraded` | 1 | An isolated stream, historical set read or non-fatal stage failed; features and alerts continued. | Check the log and historical coverage; retry or refresh the named activity after recovery. |
+| `failed` | 2 | A core stage (sync/features) crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
 
 A crash in the `features` stage rolls the **whole** mart pass back: daily metrics,
 plan blocks, weekly rollups, zones, overlap and the snapshot either all advance
@@ -720,8 +720,15 @@ explicitly reads that account activity and recomputes its analysis. Resolve only
 a reviewed conflict using `resolve-set-conflict ACTIVITY_ID --choice captured|manual
 --binding HASH`. Captured retires the active overlay; manual retains it against
 the reviewed source baseline. Both retain the previous declaration in history.
+Cached `activity-sets` and `get_activity_sets` expose the same baseline/conflict
+state as correction history; legacy declarations still have unknown baselines.
 
 Nightly history checks select an oldest-first seventh of eligible activities
 (rounded up), excluding the recent import window, once per report date. Failed
 reads retain prior evidence and stay due. Seven-night coverage requires successful
 runs/reads; check timestamps never establish Garmin edit timestamps.
+Rate-limit, authentication and unavailable-transport failures stop the remaining
+batch immediately; isolated malformed observations do not. A failed observation
+or history-stage crash degrades the night (exit 1) while features and alerts
+continue. Failed/due coverage remains visible, saved source evidence survives,
+and rebuild failures log their traceback plus the offline recovery route.

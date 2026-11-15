@@ -700,6 +700,13 @@ working-set row per captured work set to explicitly read the account and preview
 a correction. Rows accept `name`, optional `reps`, `weight_kg` (kilograms) and
 `captured_index` (zero-based captured work index). Missing repetitions/weight
 preserve account values. Legacy circuit quantities are never expanded into sets.
+Kilograms round to whole account grams. Pairing first uses unique exercise/weight
+evidence, then unique exercise identity, then the remaining captured order. The
+per-set `changes` show the pairing basis, name/weight agreement and before/after
+values in kilograms with preserved times. Order fallbacks require review; they
+are not evidence of an exercise match. To override pairing, supply a distinct
+`captured_index` for every row; partial or duplicate indices refuse explicitly.
+Invalid proposals and malformed JSON print a concise CLI error and exit 2.
 
 The sanctioned MCP equivalents are `get_activity_sets` and
 `preview_set_correction`. A preview preserves rests, timing and opaque account

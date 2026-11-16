@@ -95,22 +95,18 @@ def get_fitness_history(
     User-reported context stays attributed and cannot establish verified sensors.
     No automatic matched-run claim or explanation of Garmin status is produced.
     """
-    from contextlib import closing
-    from ..coach import fitness_history
-
-    with closing(_open()) as conn:
-        return tools.wrap(
+    conn = _open()
+    try:
+        return tools.get_fitness_history(
             conn,
-            fitness_history.read(
-                conn,
-                from_date=from_date,
-                to_date=to_date,
-                baseline_from=baseline_from,
-                baseline_to=baseline_to,
-                reported_context=reported_context,
-                data_start_date=current().settings.data_start_date,
-            ),
+            from_date=from_date,
+            to_date=to_date,
+            baseline_from=baseline_from,
+            baseline_to=baseline_to,
+            reported_context=reported_context,
         )
+    finally:
+        conn.close()
 
 
 @server.tool(annotations=_READS_DB)

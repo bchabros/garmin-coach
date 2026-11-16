@@ -44,14 +44,22 @@ def _cmd_fitness_history(args: argparse.Namespace) -> int:
 
     conn = current().open_existing_database()
     try:
-        result = fitness_history.read(
-            conn,
-            from_date=args.from_date,
-            to_date=args.to_date,
-            baseline_from=args.baseline_from,
-            baseline_to=args.baseline_to,
-            data_start_date=current().settings.data_start_date,
-        )
+        try:
+            result = fitness_history.read(
+                conn,
+                from_date=args.from_date,
+                to_date=args.to_date,
+                baseline_from=args.baseline_from,
+                baseline_to=args.baseline_to,
+                reported_context=json.loads(args.reported_context_json)
+                if args.reported_context_json
+                else None,
+                data_start_date=current().settings.data_start_date,
+                today=_dt.date.today(),
+            )
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}))
+            return 2
         print(json.dumps(result, ensure_ascii=False))
         return 0
     finally:
@@ -623,6 +631,9 @@ def build_parser() -> argparse.ArgumentParser:
     fitness.add_argument("--to", dest="to_date", required=True)
     fitness.add_argument("--baseline-from")
     fitness.add_argument("--baseline-to")
+    fitness.add_argument(
+        "--reported-context-json", help="Attributed activity_id/note objects as JSON."
+    )
     fitness.set_defaults(func=_cmd_fitness_history)
 
     al = sub.add_parser(

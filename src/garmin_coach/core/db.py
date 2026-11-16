@@ -12,7 +12,8 @@ import datetime as _dt
 import hashlib
 import importlib.resources
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -21,6 +22,19 @@ def connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """Keep related reads coherent without closing a caller-owned transaction."""
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if started:
+            conn.rollback()
 
 
 def _schema_sql() -> str:

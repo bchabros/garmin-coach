@@ -7,6 +7,7 @@ The discipline mapping lives here (single source of truth, easy to extend).
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 # Discipline label whose Garmin (HR-driven) load under-counts the real effort; the
@@ -401,8 +402,6 @@ def _first_device(mapping: Any) -> dict[str, Any]:
 
 
 def _source_date(value: Any) -> str | None:
-    import datetime as dt
-
     try:
         return dt.date.fromisoformat(value).isoformat() if isinstance(value, str) else None
     except ValueError:

@@ -24,7 +24,14 @@ from collections.abc import Callable
 from typing import Any
 
 from .. import athlete_changes, daily, plan_changes
-from ..coach import activity, digest, freshness, observations, thresholds as _thresholds
+from ..coach import (
+    activity,
+    digest,
+    fitness_history,
+    freshness,
+    observations,
+    thresholds as _thresholds,
+)
 from ..core import (
     db,
     exercise_mappings,
@@ -91,6 +98,33 @@ def _day_before(date: str) -> str:
 def get_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
     """Return the athlete_status snapshot row (None until features has run)."""
     return _wrap(conn, snapshot.read(conn))
+
+
+def get_fitness_history(
+    conn: sqlite3.Connection,
+    *,
+    from_date: str,
+    to_date: str,
+    baseline_from: str | None = None,
+    baseline_to: str | None = None,
+    reported_context: list[dict[str, Any]] | None = None,
+    today: dt.date | None = None,
+) -> dict[str, Any]:
+    """Wrap the shared offline period read, returning controlled input refusals."""
+    try:
+        data = fitness_history.read(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            baseline_from=baseline_from,
+            baseline_to=baseline_to,
+            reported_context=reported_context,
+            today=today or dt.date.today(),
+            data_start_date=current().settings.data_start_date,
+        )
+    except ValueError as exc:
+        data = {"error": str(exc)}
+    return _wrap(conn, data)
 
 
 def get_observation_history(

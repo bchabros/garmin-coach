@@ -691,3 +691,29 @@ no Garmin login is needed. They exercise binding stability, full/partial reports
 replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parity,
 late rebuild failures, database reopen and complete-week isolation. Fresh assistant
 activation/acceptance and any real reported-speed write remain separate operator steps.
+
+## Dated fitness and running comparisons
+
+`fitness-history --from YYYY-MM-DD --to YYYY-MM-DD` reads saved dated status,
+VO2max and running evidence offline. Add `--baseline-from` and `--baseline-to`
+for a second athlete-selected period. MCP `get_fitness_history` exposes the same
+read and separately attributed optional athlete context. Activity averages stay
+distinct from captured/verified lap evidence. Unknown historical measurement
+settings and routes remain unknown; the read does not claim matched runs.
+
+The baseline must end before the selected period begins. Both CLI and MCP accept
+reported context; pass `--reported-context-json` to CLI with a JSON list such as
+`[{"activity_id":123,"note":"Athlete reports a chest strap"}]`. It remains an
+unverified athlete statement. Invalid/inverted dates, incomplete or overlapping
+baselines and malformed context produce a JSON error; CLI exits 2.
+
+Weekly snapshot evidence uses observation and source-estimate dates separately.
+Copies of the same dated estimate do not establish zero change. The actual source
+span (or explicitly limited observation span) must cover the requested comparison
+span. Evidence at least seven days old is stale for this weekly reporting view,
+leaving its value visible while withholding its delta. Legacy rows expose an
+observation-age fallback without claiming a fresh estimate. Rebuild persisted
+weekly evidence with offline `features` after updating; old source dates remain
+unknown unless a supported reimport provides them. ADR 0009 records these rules
+and the measurement-settings fixture investigation. Fresh authenticated-client
+acceptance for #120 remains pending.

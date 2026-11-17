@@ -202,6 +202,23 @@ The default mart cutoff includes actual weight/forecast observations within real
 history. Backfill can retain caller-owned committed progress across an exception;
 period repair rolls back unfinished writes and refreshes saved facts independently.
 
+`marts.weekly_fitness` builds dated weekly VO2max evidence inside snapshot
+materialization, preserving long-window VO2max/HRV meanings. Core retains only
+fixture-supported source dates. Weekly comparisons require sufficient actual span
+and current reporting evidence; repeated copies of the same dated estimate never
+establish a measured zero change. The separate persisted block is shared by CLI,
+MCP and saved reports. Tests cover calendar/onboarding boundaries, missing and
+stale evidence, source-date normalization, legacy column order and report parity.
+
+`coach.fitness_history.read` owns coherent selected-period status/run comparisons
+with an explicit caller-supplied current date. `core.db.read_snapshot` also serves
+saved-activity reads and preserves caller-owned transactions. Source-date limits,
+disjoint baseline validation, attributed context, running-only/lap evidence and
+absent pace are tested at the public SQLite seam. CLI and `mcp.tools` share that
+read and controlled input errors; MCP protocol registration only delegates.
+The source/settings investigation and its limits are recorded in ADR 0009.
+Authenticated-client acceptance remains separate from synthetic read/protocol tests.
+
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
 not initialize Matplotlib even when the CLI imports the report module.

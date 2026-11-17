@@ -12,7 +12,8 @@ import datetime as _dt
 import hashlib
 import importlib.resources
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -21,6 +22,19 @@ def connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+@contextmanager
+def read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """Keep related reads coherent without closing a caller-owned transaction."""
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if started:
+            conn.rollback()
 
 
 def _schema_sql() -> str:
@@ -85,6 +99,7 @@ def _schema_columns(conn: sqlite3.Connection, name: str) -> dict[str, tuple[str,
 # IF NOT EXISTS cannot add a column to a table that already exists, so bootstrap
 # backfills these with ALTER for DBs created by an earlier schema version.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "training_status_daily": {"vo2max_estimate_date": "TEXT", "status_source_date": "TEXT"},
     "activities": {"temp_c": "REAL"},  # per-activity temperature (personal zones)
     "daily_metrics": {"load_strength": "REAL"},  # blended strength load
     "weekly_metrics": {  # weekly strength load + its share
@@ -95,7 +110,11 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "weeks_to_event": "INTEGER",
     },
     # per-week plan overrides (issue #21): which source resolved today's intent
-    "athlete_status": {"plan_source_today": "TEXT", "source_observations_json": "TEXT"},
+    "athlete_status": {
+        "plan_source_today": "TEXT",
+        "source_observations_json": "TEXT",
+        "weekly_fitness_json": "TEXT",
+    },
 }
 
 

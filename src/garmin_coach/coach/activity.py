@@ -5,36 +5,22 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from typing import Any
 
 from .. import execution
-from ..core import laps
+from ..core import db, laps
 from . import console
 
 
-@contextmanager
-def _snapshot(conn: sqlite3.Connection) -> Iterator[None]:
-    # Keep execution, the declaration and cached metrics in one read generation.
-    # Caller-owned transactions (including features) retain their ownership.
-    started = not conn.in_transaction
-    if started:
-        conn.execute("BEGIN")
-    try:
-        yield
-    finally:
-        if started:
-            conn.rollback()
-
-
-def read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
+def read(
+    conn: sqlite3.Connection, activity_id: int, *, today: dt.date | None = None
+) -> dict[str, Any]:
     """Read coherent captured/manual evidence and cached metrics without transport."""
-    with _snapshot(conn):
-        return _read(conn, activity_id)
+    with db.read_snapshot(conn):
+        return _read(conn, activity_id, today or dt.date.today())
 
 
-def _read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
+def _read(conn: sqlite3.Connection, activity_id: int, today: dt.date) -> dict[str, Any]:
     observed = execution.read(conn, activity_id)
     info = observed.activity
     if info is None:
@@ -54,7 +40,7 @@ def _read(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:
         "activity": info,
         "work_execution": observed.as_data(),
         "reported_console": console.read(conn, observed),
-        "partial_today": info["date"] == dt.date.today().isoformat(),
+        "partial_today": info["date"] == today.isoformat(),
         "captured_source": "Garmin get_activity_splits",
         "group_source": "Garmin get_activity_typed_splits",
         "treadmill_pace_caution": (
@@ -87,7 +73,7 @@ def markers(conn: sqlite3.Connection, activity_id: int) -> dict[str, bool]:
 def weekly(conn: sqlite3.Connection, week_start: str) -> list[dict[str, Any]]:
     """Read one coherent snapshot of the already selected complete week's sessions."""
     end = (dt.date.fromisoformat(week_start) + dt.timedelta(days=6)).isoformat()
-    with _snapshot(conn):
+    with db.read_snapshot(conn):
         rows = conn.execute(
             "SELECT a.activity_id,a.date,a.gtype,s.summary_json,h.activity_id FROM activities a "
             "LEFT JOIN activity_interval_summaries s USING(activity_id) "

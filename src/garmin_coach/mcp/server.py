@@ -83,6 +83,33 @@ def get_observation_history(
 
 
 @server.tool(annotations=_READS_DB)
+def get_fitness_history(
+    from_date: str,
+    to_date: str,
+    baseline_from: str | None = None,
+    baseline_to: str | None = None,
+    reported_context: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Read dated status/VO2max and selected-period runs offline with unknown settings.
+
+    User-reported context stays attributed and cannot establish verified sensors.
+    No automatic matched-run claim or explanation of Garmin status is produced.
+    """
+    conn = _open()
+    try:
+        return tools.get_fitness_history(
+            conn,
+            from_date=from_date,
+            to_date=to_date,
+            baseline_from=baseline_from,
+            baseline_to=baseline_to,
+            reported_context=reported_context,
+        )
+    finally:
+        conn.close()
+
+
+@server.tool(annotations=_READS_DB)
 def get_digest(to_date: str | None = None) -> dict[str, Any]:
     """The cited coach digest (signals, weekly, zones, recommendation) for a horizon."""
     conn = _open()

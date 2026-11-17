@@ -185,6 +185,127 @@ def test_sanctioned_adapters_preview_and_confirm_added_work(athlete_home, fixtur
         assert len(set_corrections.saved(conn, 900001)["captured"]) == 4
 
 
+def _count_proposal_with_active_overlay(conn, fixture):
+    from garmin_coach import athlete_changes, set_history
+
+    account, _, _ = prepare(conn, fixture)
+    account.payload = fixture("exercise_sets_candidates")
+    set_history.persist(conn, 900001, account.payload, checked_on="2026-06-13")
+    conn.commit()
+    athlete_changes.log_activity_sets(
+        conn, activity_id=900001, stations=["LUNGE"], data_start_date="2026-06-08"
+    )
+    rows = [
+        {"captured_index": 0},
+        {"captured_index": 1},
+        {"captured_index": 2},
+        {"captured_index": None, "name": "lunge", "reps": 1, "weight_kg": 0},
+    ]
+    proposal = set_corrections.preview(conn, 900001, rows, lambda: account.payload)
+    return account, rows, proposal
+
+
+def test_unavailable_readback_keeps_active_correction_and_prior_source(conn, fixture):
+    from garmin_coach import set_history
+
+    account, rows, proposal = _count_proposal_with_active_overlay(conn, fixture)
+    before = set_history.read(conn, 900001)
+
+    def read(aid):
+        if account.writes:
+            raise TimeoutError("synthetic read-back unavailable")
+        return copy.deepcopy(account.payload)
+
+    account.get_activity_exercise_sets = read
+    result = set_confirm.confirm(
+        conn,
+        900001,
+        rows,
+        proposal["approval"],
+        lambda: account,
+        data_start_date="2026-06-08",
+    )
+    assert result["account_write"] == "sent"
+    assert result["verified"] is False
+    assert result["saved"] is False
+    assert result["overlay_retired"] is False
+    assert result["recomputed"] is None
+    assert "read-back unavailable" in result["error"]
+    assert len(account.writes) == 1
+    assert set_history.read(conn, 900001) == before
+
+
+@pytest.mark.parametrize("failure", ["source_save", "after_overlay_retirement"])
+def test_failed_capture_or_archive_rolls_back_all_local_retirement(conn, fixture, failure):
+    from garmin_coach import set_history
+
+    account, rows, proposal = _count_proposal_with_active_overlay(conn, fixture)
+    before = set_history.read(conn, 900001)
+    raw_before = conn.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0]
+    table = (
+        "exercise_set_observations" if failure == "source_save" else "exercise_correction_history"
+    )
+    condition = (
+        "" if failure == "source_save" else "WHEN NEW.reason='verified_working_set_correction'"
+    )
+    conn.execute(
+        f"CREATE TRIGGER fail_operator_save BEFORE INSERT ON {table} {condition} BEGIN SELECT RAISE(ABORT,'synthetic local persistence failure'); END"
+    )
+    conn.commit()
+    result = set_confirm.confirm(
+        conn,
+        900001,
+        rows,
+        proposal["approval"],
+        lambda: account,
+        data_start_date="2026-06-08",
+    )
+    assert result["account_write"] == "sent"
+    assert result["verified"] is True
+    assert result["saved"] is False
+    assert result["overlay_retired"] is False
+    assert result["recomputed"] is None
+    assert "local save failed" in result["error"]
+    assert len(account.writes) == 1
+    assert set_history.read(conn, 900001) == before
+    assert conn.execute("SELECT COUNT(*) FROM raw_payloads").fetchone()[0] == raw_before
+
+
+def test_failed_derived_refresh_keeps_verified_source_and_retirement_history(conn, fixture):
+    from garmin_coach import set_history
+
+    account, rows, proposal = _count_proposal_with_active_overlay(conn, fixture)
+    mart_before = conn.execute("SELECT * FROM daily_metrics ORDER BY date").fetchall()
+    assert mart_before
+    conn.execute(
+        "CREATE TRIGGER fail_mart_rebuild BEFORE INSERT ON daily_metrics BEGIN SELECT RAISE(ABORT,'synthetic mart failure'); END"
+    )
+    conn.commit()
+    result = set_confirm.confirm(
+        conn,
+        900001,
+        rows,
+        proposal["approval"],
+        lambda: account,
+        data_start_date="2026-06-08",
+    )
+    assert result["account_write"] == "sent"
+    assert result["verified"] is True
+    assert result["saved"] is True
+    assert result["overlay_retired"] is True
+    assert result["recomputed"] is False
+    assert "features offline" in result["recovery"]
+    state = set_history.read(conn, 900001)
+    assert state["manual"] == []
+    assert len(state["captured"]) == 4
+    assert [row["reason"] for row in state["history"]] == [
+        "verified_account_correction",
+        "verified_working_set_correction",
+    ]
+    assert conn.execute("SELECT * FROM daily_metrics ORDER BY date").fetchall() == mart_before
+    assert len(account.writes) == 1
+
+
 def test_stale_account_refuses_before_any_write(conn, fixture):
     account, rows, proposal = prepare(conn, fixture)
     account.payload["exerciseSets"][0]["weight"] = 80000

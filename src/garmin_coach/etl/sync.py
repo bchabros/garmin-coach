@@ -358,6 +358,20 @@ def _store_exercise_sets(
     )
     if payload is None:
         return
+    from .. import set_history
+
+    eligible = conn.execute(
+        "SELECT gtype FROM activities WHERE activity_id=?", (activity_id,)
+    ).fetchone()
+    if eligible and eligible[0] in {"strength_training", "hiit"}:
+        try:
+            set_history.persist(conn, activity_id, payload, checked_on=dt.date.today().isoformat())
+        except (ValueError, TypeError, sqlite3.Error):
+            if misses is not None:
+                misses.append(
+                    f"sets for activity {activity_id}: invalid evidence; prior sets retained"
+                )
+        return
     db.insert_raw(conn, "get_activity_exercise_sets", ref_date, json.dumps(payload))
     db.replace_activity_sets(
         conn, activity_id, models.normalize_exercise_sets(activity_id, payload)

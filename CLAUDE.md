@@ -15,8 +15,8 @@ skill. Work is tracked as GitHub issues (see below). Architecture decisions live
 the `garminconnect` library. The metrics/coach layer only ever reads the finished
 DB -- it must never call Garmin live. The `mcp__garmin__*` tools are for **ad-hoc
 exploration and building test fixtures only**, never the pipeline. The repo's own
-`mcp__coach__*` server is the sanctioned tool surface (reads + same-day refresh +
-workout push; see ADR 0014).
+`mcp__coach__*` server is the sanctioned tool surface (reads, guarded refresh and
+approved workout/recorded-set writes; see ADRs 0014/0039).
 
 **Onboarding cutoff.** This account has real data from **2026-06-08** (`data_start`);
 earlier dates are onboarding -- explicit gaps, not zero training. Every metric is

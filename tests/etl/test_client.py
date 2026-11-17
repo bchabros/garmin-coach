@@ -261,3 +261,42 @@ def test_the_refresh_reason_from_the_http_client_reaches_the_warning_and_nothing
     library = [r for r in caplog.records if r.name.startswith("garminconnect")]
     assert all(r.levelno >= logging.WARNING for r in library)  # no debug detail leaks
     assert any("Cached tokens were rejected" in r.getMessage() for r in library)
+
+
+class _FailingSetWrite:
+    def __init__(self, error):
+        self.error = error
+        self.calls = []
+
+    def set_activity_exercise_sets(self, activity_id, payload):
+        self.calls.append((activity_id, payload))
+        raise self.error
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 422, 429])
+def test_set_write_translates_only_explicit_client_rejection(status):
+    api = _FailingSetWrite(client.GarminConnectConnectionError(f"API Error {status} - rejected"))
+    transport = client.GarminTransport(api)
+    with pytest.raises(client.AccountWriteRejectedError) as raised:
+        transport.set_activity_exercise_sets(900001, {"activityId": 900001, "exerciseSets": []})
+    assert raised.value.status_code == status
+    assert len(api.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        client.GarminConnectConnectionError("API Error 408 - request timed out"),
+        client.GarminConnectConnectionError("API Error 500 - internal error"),
+        client.GarminConnectConnectionError("unrecognized error mentioning 400"),
+        TimeoutError("response lost"),
+        ConnectionError("connection lost"),
+    ],
+)
+def test_uncertain_set_write_is_never_reclassified_or_retried(error):
+    api = _FailingSetWrite(error)
+    transport = client.GarminTransport(api)
+    with pytest.raises(type(error)) as raised:
+        transport.set_activity_exercise_sets(900001, {"activityId": 900001, "exerciseSets": []})
+    assert raised.value is error
+    assert len(api.calls) == 1

@@ -39,6 +39,83 @@ def _init_env(*, create: bool = False) -> tuple[Settings, sqlite3.Connection, sy
     return settings, conn, transport
 
 
+def _cmd_activity_sets(args: argparse.Namespace) -> int:
+    from . import set_corrections
+
+    conn = current().open_existing_database()
+    try:
+        result = (
+            set_corrections.preview(
+                conn,
+                args.activity_id,
+                json.loads(args.rows_json),
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+            )
+            if args.rows_json
+            else set_corrections.saved(conn, args.activity_id)
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
+def _cmd_set_history(args: argparse.Namespace) -> int:
+    from . import set_history
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        if args.history_action == "refresh":
+            result = set_history.refresh(
+                conn,
+                args.activity_id,
+                lambda: current().connect_import().get_activity_exercise_sets(args.activity_id),
+                data_start_date=current().settings.data_start_date,
+            )
+        elif args.history_action == "resolve":
+            result = set_history.choose(
+                conn,
+                args.activity_id,
+                args.choice,
+                args.binding,
+                data_start_date=current().settings.data_start_date,
+            )
+        else:
+            result = {
+                **set_history.read(conn, args.activity_id),
+                "history_coverage": set_history.coverage(
+                    conn,
+                    through_date=_dt.date.today().isoformat(),
+                    data_start_date=current().settings.data_start_date,
+                    recent_days=current().settings.sync_recheck_days,
+                ),
+            }
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("recomputed", True) else 1
+    finally:
+        conn.close()
+
+
+def _cmd_confirm_sets(args: argparse.Namespace) -> int:
+    from typing import cast
+    from . import set_confirm
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        result = set_confirm.confirm(
+            conn,
+            args.activity_id,
+            json.loads(args.rows_json),
+            args.approval,
+            lambda: cast(set_confirm.SetEditor, current().connect_import()),
+            data_start_date=current().settings.data_start_date,
+        )
+        print(json.dumps(result))
+        return 0 if result["verified"] and result["saved"] and result["recomputed"] else 1
+    finally:
+        conn.close()
+
+
 def _cmd_fitness_history(args: argparse.Namespace) -> int:
     from .coach import fitness_history
 
@@ -624,6 +701,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rf.set_defaults(func=_cmd_refresh_today)
 
+    for name, action in [
+        ("set-correction-state", "read"),
+        ("refresh-activity-sets", "refresh"),
+        ("resolve-set-conflict", "resolve"),
+    ]:
+        history = sub.add_parser(
+            name, help="Inspect, explicitly refresh, or resolve recorded-set evidence."
+        )
+        history.add_argument("activity_id", type=int)
+        if action == "resolve":
+            history.add_argument("--choice", required=True, choices=["captured", "manual"])
+            history.add_argument("--binding", required=True)
+        history.set_defaults(func=_cmd_set_history, history_action=action)
+
+    confirm_sets = sub.add_parser(
+        "confirm-set-correction",
+        help="Send the exact reviewed correction once and verify read-back.",
+    )
+    confirm_sets.add_argument("activity_id", type=int)
+    confirm_sets.add_argument("--rows-json", required=True)
+    confirm_sets.add_argument("--approval", required=True)
+    confirm_sets.add_argument("--confirm", action="store_true", required=True)
+    confirm_sets.set_defaults(func=_cmd_confirm_sets)
+
+    aset = sub.add_parser(
+        "activity-sets", help="Read saved sets or explicitly preview an account correction."
+    )
+    aset.add_argument("activity_id", type=int)
+    aset.add_argument(
+        "--rows-json",
+        help="Ordered working sets: name/category, reps, weight_kg; captured_index null adds work.",
+    )
+    aset.set_defaults(func=_cmd_activity_sets)
     fitness = sub.add_parser(
         "fitness-history", help="Read dated status and compare recorded run periods offline."
     )
@@ -989,6 +1099,11 @@ def main(
         return 2
     except client.LoginUnavailableError as exc:
         print(f"login failed: {exc}")
+        return 2
+    except ValueError as exc:
+        if args.command not in {"activity-sets", "confirm-set-correction", "resolve-set-conflict"}:
+            raise
+        print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2
 
 

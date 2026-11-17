@@ -44,6 +44,7 @@ class DailyResult:
         invalidated_pushes: Workouts the imported plans no longer allow; warnings
             only, with no effect on the run's status or the Garmin account.
         plan_warnings: Dated plan-conflict checks blocked by unreadable local evidence.
+        history_checks: Historical set-check progress or a non-fatal stage error.
     """
 
     sync: sync.SyncResult | None = None
@@ -54,6 +55,7 @@ class DailyResult:
     plans_imported: list[str] = field(default_factory=list)
     invalidated_pushes: list[dict] = field(default_factory=list)
     plan_warnings: list[str] = field(default_factory=list)
+    history_checks: dict = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -202,6 +204,25 @@ def run_daily(
         len(result.sync.warnings),
         len(result.sync.enrichment_misses),
     )
+
+    if not result.sync.total_outage:
+        from . import set_history
+
+        try:
+            history = set_history.recheck(
+                conn,
+                lambda aid: client.get_activity_exercise_sets(aid),
+                through_date=to_date or (dt.date.today() - dt.timedelta(days=1)).isoformat(),
+                data_start_date=data_start_date,
+                recent_days=recheck_days,
+            )
+            result.errors.extend(history["errors"])
+            result.history_checks = history
+        except Exception:
+            conn.rollback()
+            logger.exception("daily: historical set-check stage crashed")
+            result.errors.append("set history checks crashed; coverage incomplete")
+            result.history_checks = {"error": "history_stage_failed", "coverage_complete": False}
 
     logger.info("daily: features stage starting")
     try:

@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from . import athlete_changes, clients, daily, lifecycle, onboarding, plan_changes, retention
 from .coach import activity, freshness, observations, report
-from .core import db, events as _events, exercise_mappings, installation
+from .core import db, events as _events, exercise_mappings, installation, strength_sets
 from .etl import client, sync
 from .marts import features, periodize, snapshot
 from .runtime import InstallationContext, current
@@ -137,6 +137,45 @@ def _cmd_fitness_history(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(json.dumps({"error": str(exc)}))
             return 2
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
+def _cmd_strength_records(args: argparse.Namespace) -> int:
+    from .coach import strength_records
+
+    conn = current().open_existing_database()
+    today = _dt.date.today()
+    try:
+        result = strength_records.read(
+            conn,
+            through_date=args.through_date or today.isoformat(),
+            today=today,
+            data_start_date=current().settings.data_start_date,
+            recent_days=current().settings.sync_recheck_days,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    finally:
+        conn.close()
+
+
+def _cmd_declare_strength_conditions(args: argparse.Namespace) -> int:
+    from . import strength_changes
+
+    conn = current().open_existing_database(writable=True)
+    try:
+        result = strength_changes.declare(
+            conn,
+            args.activity_id,
+            args.set_idx,
+            args.binding,
+            equipment=args.equipment,
+            weight_basis=args.weight_basis,
+            resistance_mode=args.resistance_mode,
+        )
         print(json.dumps(result, ensure_ascii=False))
         return 0
     finally:
@@ -724,6 +763,24 @@ def build_parser() -> argparse.ArgumentParser:
     confirm_sets.add_argument("--approval", required=True)
     confirm_sets.add_argument("--confirm", action="store_true", required=True)
     confirm_sets.set_defaults(func=_cmd_confirm_sets)
+    records = sub.add_parser(
+        "strength-records", help="Read comparable local strength records offline."
+    )
+    records.add_argument("--through", dest="through_date")
+    records.set_defaults(func=_cmd_strength_records)
+    conditions = sub.add_parser(
+        "declare-strength-conditions",
+        help="Record explicit resistance mode and comparison conditions locally.",
+    )
+    conditions.add_argument("activity_id", type=int)
+    conditions.add_argument("set_idx", type=int)
+    conditions.add_argument("--binding", required=True)
+    conditions.add_argument("--equipment", required=True)
+    conditions.add_argument("--weight-basis", choices=strength_sets.WEIGHT_BASES, required=True)
+    conditions.add_argument(
+        "--resistance-mode", choices=strength_sets.RESISTANCE_MODES, required=True
+    )
+    conditions.set_defaults(func=_cmd_declare_strength_conditions)
 
     aset = sub.add_parser(
         "activity-sets", help="Read saved sets or explicitly preview an account correction."
@@ -1101,7 +1158,13 @@ def main(
         print(f"login failed: {exc}")
         return 2
     except ValueError as exc:
-        if args.command not in {"activity-sets", "confirm-set-correction", "resolve-set-conflict"}:
+        if args.command not in {
+            "activity-sets",
+            "confirm-set-correction",
+            "resolve-set-conflict",
+            "strength-records",
+            "declare-strength-conditions",
+        }:
             raise
         print(f"garmin-coach: {exc}", file=sys.stderr)
         return 2

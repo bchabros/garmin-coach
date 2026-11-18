@@ -808,3 +808,15 @@ CREATE TABLE IF NOT EXISTS exercise_set_attempts (
     attempted_on TEXT NOT NULL,
     error TEXT
 );
+
+-- Athlete-reported comparison conditions are facts, bound to reviewed working evidence.
+CREATE TABLE IF NOT EXISTS strength_set_conditions (
+    activity_id INTEGER NOT NULL REFERENCES activities(activity_id) ON DELETE CASCADE,
+    set_idx INTEGER NOT NULL,
+    binding TEXT NOT NULL,
+    equipment TEXT NOT NULL,
+    weight_basis TEXT NOT NULL CHECK(weight_basis IN ('total','per_hand')),
+    resistance_mode TEXT CHECK(resistance_mode IN ('external_load','assisted_load','bodyweight_only')),
+    declared_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(activity_id,set_idx)
+);

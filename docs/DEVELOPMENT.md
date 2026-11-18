@@ -48,19 +48,32 @@ sandbox where `poetry`/`task` are not on PATH (see `docs/OPERATIONS.md`) -- use
 
 | Layer | Responsibility |
 | --- | --- |
-| `core/` | Installation selection/opener, configuration, schema, pure normalizers, persistence, plans/events and week arithmetic. |
+| `core/` | Installation selection/opener, configuration, schema, pure normalizers, persistence, plans/events, selected strength evidence, source coverage and week arithmetic. |
 | `etl/` | The only `garminconnect` import; login/endpoint adapter and injected raw-first sync. |
 | `marts/` | Recomputable features/load, periodization, weekly facts, zones, overlap and standing. |
 | `coach/` | Digest/signals/policy/recommendation over finished data; explicit report/chart generation. |
 | `workouts/` | Pure author/exercises/hardness, dated-workout lifecycle and the isolated account publisher. |
 | `mcp/`, `cli.py` | Conversational/command adapters; `mcp/probe.py` owns bounded protocol diagnosis. |
 | `runtime.py` | Captured installation context, fresh database openers and separate lazy Garmin factories. |
-| `daily.py`, `plan_changes.py`, `athlete_changes.py` | Complete nightly, plan-import and athlete-change outcomes, including their consequences. |
+| `daily.py`, `plan_changes.py`, `athlete_changes.py`, `strength_changes.py` | Complete nightly, plan-import, athlete-change and strength-condition declaration outcomes, including their consequences. |
 | `onboarding.py`, `project.py`, `synthetic.py` | Terminal setup/adoption; guarded source launch; explicit synthetic installations. |
 | `clients.py`, `coach_resources.py` | Native bindings, public coach-resource selection and generation receipts. |
 | `distribution.py`, `lifecycle.py`, `program_receipt.py` | Bootstrap/scheduling and maintenance, sharing program-state and ownership operations. |
 | `system_commands.py` | Scoped command transport for bootstrap, maintenance and their native-client operations. |
 | `retention.py` | Explicit report-file retention without DB/transport access. |
+
+`strength_changes` owns local comparison-condition declarations under a write
+transaction. `core.strength_sets` owns selected/source evidence, bindings,
+eligibility and the resistance-mode/weight-basis vocabulary shared by declarations
+and records. `core.evidence` supplies the unchanged reviewed-evidence hash;
+`core.set_observations` supplies source facts and historical-check coverage for
+both nightly history and offline records. These reads never import account transport.
+`coach.strength_records` calculates bests, ties and per-repetition progression
+inside one snapshot, with an explicit caller-supplied current date. Public SQLite
+tests cover corrected leaders, whole-gram ties, distinct variants/bases, stale
+bindings, persistent modes, legacy migration, reasoned exclusions, missing/empty
+source history and report horizons. Read and declaration CLI/MCP adapters share
+these operations; no real installation or Garmin account is used in tests.
 
 `onboarding.py` owns interactive `setup`: atomic creation from packaged empty templates,
 existing-installation adoption, confirmed terminal login, resumable initial backfill and

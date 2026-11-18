@@ -776,6 +776,7 @@ failure leaves saved facts and names offline recovery. These commands do not cla
 to update Garmin personal records. Source-format and UI acceptance are separate
 operator checks recorded in #117; fake transport alone cannot establish them.
 
+
 ## Dated fitness and running comparisons
 
 `fitness-history --from YYYY-MM-DD --to YYYY-MM-DD` reads saved dated status,
@@ -801,3 +802,33 @@ weekly evidence with offline `features` after updating; old source dates remain
 unknown unless a supported reimport provides them. ADR 0009 records these rules
 and the measurement-settings fixture investigation. Fresh authenticated-client
 acceptance evidence is recorded in #120 and its delivery PR.
+
+## Observed strength records
+
+`strength-records [--through YYYY-MM-DD]` reads local heaviest-load and exact-rep
+records, ties, history and unranked coverage without Garmin access. MCP
+`get_strength_records` returns the same evidence. Unknown comparison conditions
+and legacy circuit aggregates do not rank. These are available-history bests,
+independent of Garmin PRs, with grams converted to displayed kilograms.
+
+After reviewing a selected set's evidence binding, explicitly record its equipment
+and external-load basis using `declare-strength-conditions ACTIVITY_ID SET_IDX
+--binding HASH --equipment LABEL --weight-basis total|per_hand
+--resistance-mode external_load`, or MCP `declare_strength_conditions`. Conditions
+remain athlete-reported. Source edits invalidate the binding; reread before a new
+declaration. Exact variants/equipment/bases stay separate. Assisted, bodyweight-only
+and estimated-1RM records are unsupported. See ADR 0040.
+
+The declaration also accepts `assisted_load` and `bodyweight_only`, retaining those
+reported modes while excluding their sets from ranked external-load records with
+distinct reasons. Missing or migrated unknown modes remain unknown; run offline
+`features` before restarting a guarded older installation, then explicitly declare
+the missing mode. A name indicating assistance is a conservative exclusion hint,
+not a measured or declared mode.
+
+Record reads compare whole grams and present kilograms, with overall and per-rep
+progression. Coverage names known strength/HIIT activities whose source sets were
+never observed, valid observed-empty activities and missing normalized source rows,
+alongside historical-check progress. It cannot establish that all activities have
+been imported. The read and declaration CLI commands have separate handlers;
+invalid horizons and stale declarations print a concise error and exit 2.

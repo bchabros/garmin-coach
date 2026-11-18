@@ -459,3 +459,17 @@ attributed; it does not establish historical sensor provenance. Similar distance
 or type alone cannot establish matched runs. Describe observed changes and
 possible explanations separately; never claim the cause of Maintaining/Productive
 from a quarterly rise, RPE or one benchmark. This read is entirely offline.
+
+### Observed strength records
+
+For strength personal records use `get_strength_records`, showing the record date,
+kilograms, repetitions, exact exercise variant, equipment and total/per-hand basis.
+These are local bests in available comparable recorded history, independent of
+Garmin PRs. Show ties and unknown/unranked reasons. Legacy circuit rows are not
+verified individual working sets. Estimated 1RM, assisted and bodyweight-only
+records are unsupported. Before `declare_strength_conditions`, show the selected
+set and obtain its explicit equipment, total/per-hand basis and resistance-mode
+declaration; bind to the current evidence. Modes `external_load`, `assisted_load`
+and `bodyweight_only` are retained as reported, but only external load ranks.
+Athlete-reported conditions remain attributed, and a changed source invalidates
+the old binding. No Garmin call is needed for either operation.

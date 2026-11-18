@@ -46,6 +46,7 @@ in GitHub issues and PRs; earlier phase documents remain in Git history.
 | 0037 | [Captured laps and verified executed interval groups](0037-captured-interval-evidence.md) |
 | 0038 | [Reported console settings bind to verified work execution](0038-reported-treadmill-speed-binding.md) |
 | 0039 | [Correct recorded exercise sets against reviewed account evidence](0039-recorded-exercise-set-corrections.md) |
+| 0040 | [Observed strength records](0040-observed-strength-records.md) |
 
 Key amendments: 0006/0017 bound historical reporting and transactions; 0010/0027
 replace original load bucketing; 0015 allows optional templates after #84; 0019/0021
@@ -54,5 +55,7 @@ reuse/removal; 0031–0035 govern installation, native ownership and public reso
 0036 separates durable athlete facts from derived-refresh outcomes; 0039 extends
 0014/0022/0026/0036 with recorded-set correction and historical rechecks;
 implementation and operator acceptance evidence are recorded in #117.
+0040 builds on 0039/0022 with observed strength records and explicit comparison
+conditions.
 #103 retires duplicate phase history and unpopulated snapshot paths while preserving
 legacy database and input compatibility.

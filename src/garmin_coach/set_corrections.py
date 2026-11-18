@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
-import json
 import logging
 import math
 import sqlite3
@@ -12,15 +10,11 @@ from collections.abc import Callable
 from typing import Any
 
 from .core import exercise_names, recorded_sets
+from .core.evidence import fingerprint as fingerprint
 from .core.recorded_sets import WorkingSet
 from .workouts.exercises import EXERCISE_MAP
 
 logger = logging.getLogger(__name__)
-
-
-def fingerprint(value: Any) -> str:
-    """Identify complete reviewed evidence, independent of JSON key ordering."""
-    return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
 def saved(conn: sqlite3.Connection, activity_id: int) -> dict[str, Any]:

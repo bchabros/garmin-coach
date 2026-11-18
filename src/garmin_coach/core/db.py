@@ -115,6 +115,9 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "source_observations_json": "TEXT",
         "weekly_fitness_json": "TEXT",
     },
+    "strength_set_conditions": {
+        "resistance_mode": "TEXT CHECK(resistance_mode IN ('external_load','assisted_load','bodyweight_only'))",
+    },
 }
 
 

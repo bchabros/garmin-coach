@@ -19,13 +19,15 @@ A saved-context lookup can lead into reporting, planning or workout authoring.
 - Before you take in Garmin-derived numbers or calendar data - reading
   `reports/{today}/digest.json` or `snapshot.json`, or calling `get_digest` / `get_snapshot` / `get_weekly` / `get_zones`
   / `get_recommendation` / `get_recent_activities` / `get_activity_laps` / `get_events`
-  / `get_observation_history` / `get_activity_sets` / `get_set_correction_state`, whether you are
+  / `get_observation_history` / `get_activity_sets` / `get_set_correction_state`
+  / `get_strength_records`, whether you are
   writing the full report or answering "jaka mam forme?" in one line - you **MUST** read
   `references/report.md`. It carries what every field means and which may be null, and
   the fields are the same whichever way they arrive. The same file covers what to do
   when a read shows the data is wrong or missing: `event_add` / `event_update` (the race
   calendar), `log_treadmill_speed` / `clear_treadmill_speed` (reported console settings),
   `get_exercise_mappings` / `map_exercise` (local exercise classifications),
+  `declare_strength_conditions` (explicit local strength comparison conditions),
   `preview_set_correction` / `confirm_set_correction`, `refresh_activity_sets` /
   `resolve_set_conflict` (recorded exercise-set corrections),
   `refresh_today`, and `repair_preview` / `repair_confirm` (a missing day or an explicitly requested observation re-read).

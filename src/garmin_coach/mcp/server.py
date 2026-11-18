@@ -256,6 +256,61 @@ def confirm_set_correction(
 
 
 @server.tool(annotations=_READS_DB)
+def get_strength_records(through_date: str | None = None) -> dict[str, Any]:
+    """Read local heaviest/per-repetition external-load records with ties and coverage.
+
+    Unknown equipment, weight basis and legacy circuit summaries remain unranked.
+    Results are independent of Garmin's own personal-record feature.
+    """
+    from ..coach import strength_records
+
+    today = dt.date.today()
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            strength_records.read(
+                conn,
+                through_date=through_date or today.isoformat(),
+                today=today,
+                recent_days=current().settings.sync_recheck_days,
+                data_start_date=current().settings.data_start_date,
+            ),
+        )
+
+
+@server.tool(annotations=_WRITES_LOCAL)
+def declare_strength_conditions(
+    activity_id: int,
+    set_idx: int,
+    binding: str,
+    equipment: str,
+    weight_basis: str,
+    resistance_mode: str,
+) -> dict[str, Any]:
+    """Save explicitly reported equipment, weight basis and resistance mode.
+
+    Show the set and proposed conditions first. Use its current record-read binding.
+    Modes external_load, assisted_load and bodyweight_only are retained as reported.
+    Assisted/bodyweight results remain unranked; declarations never edit Garmin.
+    """
+    from .. import strength_changes
+
+    with closing(_open()) as conn:
+        return tools.wrap(
+            conn,
+            strength_changes.declare(
+                conn,
+                activity_id,
+                set_idx,
+                binding,
+                equipment=equipment,
+                weight_basis=weight_basis,
+                resistance_mode=resistance_mode,
+            ),
+        )
+
+
+@server.tool(annotations=_READS_DB)
 def get_weekly(week_start: str | None = None) -> dict[str, Any]:
     """Weekly mart rows plus the plan-vs-actual grid (one week, or all weeks)."""
     conn = _open()

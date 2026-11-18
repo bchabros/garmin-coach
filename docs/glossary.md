@@ -202,6 +202,15 @@ coach references; specs and acceptance evidence belong in GitHub issues/PRs.
 - **movement_sets** - the selected manual-or-captured station evidence with its source;
   coverage and overlap refer to that same selection.
 
+- **observed strength record** - the highest eligible recorded external load for an
+  exact exercise variant and comparison conditions, overall or at a given repetition count.
+- **comparison conditions** - athlete-reported equipment, resistance mode and
+  total/per-hand weight basis that determine which working-set results can be compared.
+- **resistance mode** - whether the recorded work uses external load, assistance
+  reducing bodyweight, or bodyweight alone; an absent declaration remains unknown.
+- **unranked strength evidence** - selected exercise evidence that cannot establish
+  a comparable individual working-set result; its missing/unsupported reason remains visible.
+
 ## Plans and events
 
 - **complete week** - a Monday–Sunday span entirely through yesterday; partial

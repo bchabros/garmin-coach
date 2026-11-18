@@ -12,6 +12,7 @@ from typing import Any
 
 from . import set_corrections
 from .core import db, models
+from .core.set_observations import coverage as coverage
 from .etl.client import failure_kind
 from .marts import features
 
@@ -243,39 +244,4 @@ def recheck(
         "errors": errors,
         "already_run": False,
         "stopped_reason": stopped_reason,
-    }
-
-
-def coverage(
-    conn: sqlite3.Connection, *, through_date: str, data_start_date: str, recent_days: int = 3
-) -> dict[str, Any]:
-    """Expose conditional seven-night progress, including failed and missed checks."""
-    end = dt.date.fromisoformat(through_date)
-    cutoff = (end - dt.timedelta(days=max(1, recent_days) - 1)).isoformat()
-    overdue = (end - dt.timedelta(days=7)).isoformat()
-    rows = conn.execute(
-        "SELECT a.activity_id,a.date,o.checked_on,t.attempted_on,t.error FROM activities a LEFT JOIN exercise_set_observations o USING(activity_id) LEFT JOIN exercise_set_attempts t USING(activity_id) WHERE a.gtype IN ('strength_training','hiit') AND a.date>=? AND a.date<? ORDER BY a.date,a.activity_id",
-        (data_start_date, cutoff),
-    ).fetchall()
-    items = [
-        {
-            "activity_id": aid,
-            "date": day,
-            "checked_on": checked,
-            "attempted_on": attempted,
-            "error": error,
-            "due": checked is None or checked <= overdue,
-        }
-        for aid, day, checked, attempted, error in rows
-    ]
-    return {
-        "through_date": through_date,
-        "recent_window_start": cutoff,
-        "eligible": len(items),
-        "due": sum(i["due"] for i in items),
-        "never_checked": sum(i["checked_on"] is None for i in items),
-        "overdue": sum(i["checked_on"] is not None and i["due"] for i in items),
-        "failed": sum(i["error"] is not None for i in items),
-        "activities": items,
-        "condition": "Coverage requires successful nights and source reads; observation dates are not edit times.",
     }

@@ -40,6 +40,8 @@ def _past(days: int) -> str:
 
 EXPECTED_TOOLS = {
     "confirm_set_correction",
+    "get_strength_records",
+    "declare_strength_conditions",
     "get_set_correction_state",
     "refresh_activity_sets",
     "resolve_set_conflict",
@@ -213,6 +215,7 @@ READ_ONLY_TOOLS = {
     "get_activity_sets",
     "preview_set_correction",
     "get_fitness_history",
+    "get_strength_records",
     "get_exercise_mappings",
     "get_snapshot",
     "get_observation_history",

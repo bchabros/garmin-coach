@@ -401,6 +401,42 @@ saved and refreshed outcomes separately, including partial failures, and say wha
 - If a signal is absent from the digest, do not mention it. Silence means "not flagged".
 - One report per run day; re-running overwrites `reports/{today}/`.
 
+### Recorded exercise-set proposals
+
+For a recorded strength/HIIT correction, use `get_activity_sets` for cached
+captured/manual evidence, then `preview_set_correction` only when an account read
+is requested. Supply one ordered working-set row per intended working set.
+Show the old and proposed exercise, repetitions, kilograms and captured-index
+pairing; clarify ambiguous circuit descriptions first. Stored weights are grams;
+`weight_kg` input is kilograms. The preview does not write the account.
+
+Show added and deleted sets separately. New work requires the athlete's exercise,
+repetitions and weight (zero for bodyweight); its duration/start time stay unknown.
+Garmin's 0:00 display does not establish measured zero time. Never invent timing.
+The preview proposes alignment; when correcting it, provide `captured_index` for
+every row: a source work index retains that set and null adds new work. Omitted
+source indices are deleted. Additions keep surviving indices in source order.
+For a repetition/weight-only change, omit name/category on explicitly indexed
+surviving rows to preserve all source recognition candidates. These candidates
+are watch guesses, not verified exercise identities. For a generic recorded name,
+use its known category without a variant name; an exact variant must be curated.
+Review repeated-identity and order fallbacks rather than treating them as matches.
+Report any refusal; do not substitute ad-hoc Garmin writes.
+
+Read `get_set_correction_state` before resolving changed captured/manual sets.
+An unknown baseline cannot establish which edit is newer. Show both versions and
+use `resolve_set_conflict` only for the athlete's explicit captured/manual choice
+with the current binding. `refresh_activity_sets` explicitly reads a selected
+strength/HIIT activity and updates its saved analysis; ordinary reads stay offline.
+History retains replaced/retired declarations. Seven-night historical coverage is
+conditional on successful runs and source reads; observation dates are not edit times.
+
+After explicit approval of the exact `preview_set_correction` result, call
+`confirm_set_correction` with the same ordered rows and approval fingerprint.
+A stale refusal requires a fresh shown proposal and new approval. State account
+write, read-back verification, local saving, overlay retirement and recomputation
+separately. An uncertain write requires fresh evidence, never an automatic retry.
+
 ### Recent VO2max evidence
 
 For current form, lead with `snapshot.weekly_fitness.completed_weeks` and its

@@ -12,6 +12,7 @@ import contextlib
 import getpass
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Iterator
@@ -39,6 +40,14 @@ _REDACT_LOGS: ContextVar[bool] = ContextVar("redact_garmin_logs", default=False)
 
 class LoginUnavailableError(RuntimeError):
     """Login needs an answer typed at a terminal, and no terminal is attached."""
+
+
+class AccountWriteRejectedError(RuntimeError):
+    """An explicit HTTP client rejection, separate from an uncertain write."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"Garmin rejected the account write (HTTP {status_code})")
 
 
 def failure_kind(exc: BaseException) -> str:
@@ -272,6 +281,18 @@ class GarminTransport:
     def get_activity_exercise_sets(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch per-activity exercise sets (strength/Hyrox work only)."""
         return self._api.get_activity_exercise_sets(str(activity_id))
+
+    def set_activity_exercise_sets(self, activity_id: int, payload: dict[str, Any]) -> Any:
+        """Send one reviewed recorded-set replacement; do not retry uncertain writes."""
+        try:
+            return self._api.set_activity_exercise_sets(str(activity_id), payload)
+        except GarminConnectConnectionError as exc:
+            # Pinned 0.3.6 discards the response and emits this exact prefix.
+            # Unknown formats and request-timeout responses remain uncertain.
+            match = re.match(r"^API Error (4\d{2})(?: - |$)", str(exc))
+            if match and (status := int(match[1])) != 408:
+                raise AccountWriteRejectedError(status) from exc
+            raise
 
     def get_activity_splits(self, activity_id: int) -> dict[str, Any] | None:
         """Fetch captured laps; Garmin reports seconds, metres and metres/second."""

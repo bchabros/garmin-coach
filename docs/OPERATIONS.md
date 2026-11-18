@@ -301,8 +301,8 @@ appear there. Export/import and dated mapping history are separate capabilities.
 | Status | Exit | Meaning | What to do |
 |--------|------|---------|------------|
 | `ok` | 0 | All streams synced, features + alerts ran. | Nothing. |
-| `degraded` | 1 | An isolated stream failed but the run continued. | Check the log for the failing stream; often self-heals next run. Re-run `sync` if it persists. |
-| `failed` | 2 | A stage crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
+| `degraded` | 1 | An isolated stream, historical set read or non-fatal stage failed; features and alerts continued. | Check the log and historical coverage; retry or refresh the named activity after recovery. |
+| `failed` | 2 | A core stage (sync/features) crashed or the whole sync was down. | Read the log; treat as a real outage (network, auth, Garmin down, or a 429 -- see below). |
 
 A crash in the `features` stage rolls the **whole** mart pass back: daily metrics,
 plan blocks, weekly rollups, zones, overlap and the snapshot either all advance
@@ -692,6 +692,90 @@ replacement/clear, stale refusal, unchanged captured measurements, CLI/MCP parit
 late rebuild failures, database reopen and complete-week isolation. Fresh assistant
 activation/acceptance and any real reported-speed write remain separate operator steps.
 
+## Recorded exercise-set preview
+
+`garmin-coach activity-sets ACTIVITY_ID` reads cached strength/HIIT sets without
+Garmin access. Stored `max_weight` is grams. Add `--rows-json` with one ordered
+working-set row per intended work set to explicitly read the account and preview
+a correction. Rows accept curated `name`, optional `reps`, `weight_kg` (kilograms)
+and `captured_index` (zero-based captured work index). A known `category` with no
+`name` selects its generic exercise; an explicit category/name pair selects a
+curated variant. Omit both on an indexed surviving row to preserve its complete
+recognition candidates. Missing repetitions/weight preserve surviving account
+values. Legacy circuit quantities are never expanded into sets.
+Kilograms round to whole account grams. Pairing first uses unique exercise/weight
+evidence, then unique exercise identity, then the remaining captured order. The
+per-set `changes` show the pairing basis, name/weight agreement and before/after
+values in kilograms with preserved times. Order fallbacks require review; they
+are not evidence of an exercise match. To override pairing, supply a distinct
+`captured_index` for every row; null explicitly introduces new work and omitted
+captured indices are deleted. Partial pairing or duplicate surviving indices
+refuse. New work needs an explicit exercise, repetitions and kilogram weight;
+zero weight means bodyweight. With additions, surviving indices must follow source
+order. Repeated-identity pairing is also a heuristic requiring review.
+Invalid proposals and malformed JSON print a concise CLI error and exit 2.
+
+The sanctioned MCP equivalents are `get_activity_sets` and
+`preview_set_correction`. A preview preserves rests, timing and opaque account
+fields, and binds the complete proposal to reviewed account and local evidence.
+It never writes Garmin. The preview lists `added` and `deleted` work separately.
+New work and its empty rests use the observed null timing contract, with no
+invented timestamp or measured zero duration. Garmin may display this as 0:00;
+the source time remains unknown. A REST weight of -1 is an unmeasured sentinel,
+never a negative kilogram load. Existing work/rest entries retain their original
+timing and opaque fields. A deleted set loses its following rests; trailing empty
+unrecorded rest scaffolding is removed only when it contains no other information.
+ADR 0039 owns this contract; operator evidence is recorded in #117 and its PR.
+
+Use `set-correction-state ACTIVITY_ID` to inspect observed-source dates, baseline
+state, conflicts and retained correction history. `refresh-activity-sets ACTIVITY_ID`
+explicitly reads that account activity and recomputes its analysis. Resolve only
+a reviewed conflict using `resolve-set-conflict ACTIVITY_ID --choice captured|manual
+--binding HASH`. Captured retires the active overlay; manual retains it against
+the reviewed source baseline. Both retain the previous declaration in history.
+Cached `activity-sets` and `get_activity_sets` expose the same baseline/conflict
+state as correction history; legacy declarations still have unknown baselines.
+
+Nightly history checks select an oldest-first seventh of eligible activities
+(rounded up), excluding the recent import window, once per report date. Failed
+reads retain prior evidence and stay due. Seven-night coverage requires successful
+runs/reads; check timestamps never establish Garmin edit timestamps.
+Rate-limit, authentication and unavailable-transport failures stop the remaining
+batch immediately; isolated malformed observations do not. A failed observation
+or history-stage crash degrades the night (exit 1) while features and alerts
+continue. Failed/due coverage remains visible, saved source evidence survives,
+and rebuild failures log their traceback plus the offline recovery route.
+
+## Confirm a reviewed recorded-set correction
+
+After showing the preview and receiving approval for the exact changes, use
+`confirm-set-correction ACTIVITY_ID --rows-json JSON --approval HASH --confirm`
+or sanctioned MCP `confirm_set_correction`. Both re-read account evidence and
+refuse stale proposals. A single uncertain PUT is never retried automatically.
+Read fresh source evidence before recovery.
+
+Pre-write approval still binds the complete account/local evidence. Post-write
+verification compares the ordered ACTIVE/REST sequence, exercise identities,
+repetitions, gram weights and retained duration/start times. Existing `setId`,
+`setIndex` and `messageIndex` values must still match. Newly supplied server IDs,
+probabilities and other metadata do not establish a mismatch; integer/float
+representations and equivalent ISO timestamps compare by value. Missing timezone
+information is never inferred.
+
+An explicit HTTP 4xx rejection reports `account_write: rejected` and its status;
+the correction remains active. The pinned transport exposes these statuses in
+its `API Error NNN` prefix, interpreted only by the ETL adapter. HTTP 408, 5xx,
+unknown error formats and network/timeouts remain `unknown` and are never retried
+automatically. Both outcomes retain their own recovery guidance. Invalid CLI JSON,
+identities and stale approvals exit 2 with a concise error.
+
+Account write, read-back verification, durable captured save, correction retirement
+and derived refresh are separate outcomes. Only matching, durably saved evidence
+can retire an unchanged active overlay; history remains retained. A later mart
+failure leaves saved facts and names offline recovery. These commands do not claim
+to update Garmin personal records. Source-format and UI acceptance are separate
+operator checks recorded in #117; fake transport alone cannot establish them.
+
 ## Dated fitness and running comparisons
 
 `fitness-history --from YYYY-MM-DD --to YYYY-MM-DD` reads saved dated status,
@@ -716,4 +800,4 @@ observation-age fallback without claiming a fresh estimate. Rebuild persisted
 weekly evidence with offline `features` after updating; old source dates remain
 unknown unless a supported reimport provides them. ADR 0009 records these rules
 and the measurement-settings fixture investigation. Fresh authenticated-client
-acceptance for #120 remains pending.
+acceptance evidence is recorded in #120 and its delivery PR.

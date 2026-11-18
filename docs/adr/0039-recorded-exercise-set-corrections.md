@@ -3,8 +3,9 @@
 ## Status
 
 Accepted design ([#117](https://github.com/bchabros/garmin-coach/issues/117),
-2026-10-31); implementation, transport-format verification and operator acceptance
-remain pending. This record does not describe an available account-editing tool.
+2026-10-31). Preview, approval-bound confirmation, correction history and historical
+rechecks are implemented. The observed nullable add/delete contract extends this
+decision; implementation and operator acceptance evidence are recorded in #117.
 
 ## Context
 
@@ -33,6 +34,12 @@ while retaining recorded timing and the history of their own corrections.
   Movement classifications from #118 cannot supply Garmin exercise identities;
   unresolved names refuse before an account write. This leaves the authored-workout
   unit and unknown-name contracts of [ADR 0016](0016-strength-hiit-authoring.md) intact.
+- A source set may contain several recognition candidates and null variant names.
+  Preserve that complete list for a repetition/weight-only correction against an
+  explicitly selected captured index. An explicit reported identity replaces guesses
+  with the curated choice, using the native certainty value. A known category with
+  a null variant is an explicit generic recorded exercise, not an inferred specific
+  variant; recorded generic identities and authored-workout aliases remain distinct.
 - Build from the complete freshly read account payload, preserving opaque fields,
   rests and captured timing for surviving sets. Propose and show retained/new/deleted
   sets and their alignment with the athlete's correction, allowing alignment changes
@@ -40,10 +47,20 @@ while retaining recorded timing and the history of their own corrections.
   proposed alignment/changes. Re-read immediately before writing; a relevant change
   requires a fresh preview and approval. Never automatically retry an uncertain write
   or restore an old whole payload over a possible concurrent app edit.
-- Add/delete support requires verified source evidence for added-set fields, count
-  changes and timing, with unrecorded time explicit. Unsupported timing refuses a
-  production preview; zero duration is not an established contract. Retained sets do
-  not lose watch timing merely because their names, repetitions or weights change.
+- Added work uses the operator-observed null duration and absent start/identifier
+  contract. Native empty rests use null timing and weight -1 as an unknown sentinel,
+  never a negative load. Garmin can display null time as 0:00; we do not invent a
+  measured zero or synthesize positive timing. New work requires an explicit exercise,
+  repetitions and kilogram weight (zero for bodyweight); unsupported unknown new
+  measurements still refuse. Retained work/rest entries keep their complete source
+  timing and opaque fields. Deleting work removes its following rests; trailing
+  unrecorded rest scaffolding may be removed only when it has no other information.
+- Pairing uses unique identity/weight evidence, then identity, repeated-identity
+  order and remaining source order. Heuristics require review. For an override,
+  every row has a captured work index or null for new work; omitted source indices
+  are deleted. Additions require surviving indices in source order, preserving the
+  source timeline rather than reordering measured segments. Existing alignment-only
+  corrections continue assigning reported values to the reviewed source slots.
 - Persist validated read-back raw-first and replace captured sets atomically. Verify
   identities, counts and approved values/timing against the proposal. Extend ADR 0022
   with durable correction history. For a confirmed account write, only matching,
@@ -81,9 +98,9 @@ records (#121) remain separate capabilities. Historical rereads trade additional
 rate-limited transport work for eventual coverage without assuming an edit timestamp.
 
 An API read-back does not prove that Garmin's UI displays corrected names or updates
-its personal records. Synthetic guesses, another project's implementation and passing
-offline tests do not establish that acceptance. Before closing #117, an explicitly
-authorized operator must establish added/deleted-set payload evidence and inspect the
-Garmin UI and surviving timing. These acceptance gates and all implementation tickets
-remain open in #117. No duplicate-activity upload or deletion of the original recording
-is a fallback.
+its personal records. Another project's implementation and passing offline tests
+cannot replace source-format and UI observation. The operator experiment records
+approved before/after payloads, UI display and surviving timing in #117; only anonymized
+source shapes with artificial measurements enter fixtures. Live operator acceptance
+is separate from development tests, which use temporary SQLite and fake transport.
+No duplicate-activity upload or deletion of the original recording is a fallback.

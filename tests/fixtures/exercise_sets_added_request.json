@@ -1,0 +1,237 @@
+{
+  "activityId": 900001,
+  "exerciseSets": [
+    {
+      "exercises": [
+        {
+          "category": "LUNGE",
+          "name": null,
+          "probability": 60
+        },
+        {
+          "category": "SQUAT",
+          "name": null,
+          "probability": 25
+        },
+        {
+          "category": "SIT_UP",
+          "name": null,
+          "probability": 15
+        }
+      ],
+      "duration": 60.125,
+      "repetitionCount": 8,
+      "weight": 0.0,
+      "setType": "ACTIVE",
+      "startTime": "2026-06-12T17:00:00.0",
+      "wktStepIndex": null,
+      "messageIndex": 0,
+      "minimalViableThreshold": null,
+      "avgConcentricMeanVelocity": null,
+      "maxConcentricMeanVelocity": null,
+      "avgEccentricMeanVelocity": null,
+      "maxEccentricMeanVelocity": null,
+      "avgConcentricPeakVelocity": null,
+      "maxConcentricPeakVelocity": null,
+      "avgEccentricPeakVelocity": null,
+      "maxEccentricPeakVelocity": null,
+      "avgMeanPropulsiveVelocity": null,
+      "maxMeanPropulsiveVelocity": null,
+      "avgConcentricMeanPower": null,
+      "maxConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "maxConcentricPeakPower": null,
+      "avgConcentricDuration": null,
+      "maxConcentricDuration": null,
+      "avgEccentricDuration": null,
+      "maxEccentricDuration": null,
+      "avgConcentricRom": null,
+      "maxConcentricRom": null
+    },
+    {
+      "exercises": [],
+      "duration": 1.375,
+      "repetitionCount": null,
+      "weight": null,
+      "setType": "REST",
+      "startTime": "2026-06-12T17:01:00.0",
+      "wktStepIndex": null,
+      "messageIndex": 1,
+      "minimalViableThreshold": null,
+      "avgConcentricMeanVelocity": null,
+      "maxConcentricMeanVelocity": null,
+      "avgEccentricMeanVelocity": null,
+      "maxEccentricMeanVelocity": null,
+      "avgConcentricPeakVelocity": null,
+      "maxConcentricPeakVelocity": null,
+      "avgEccentricPeakVelocity": null,
+      "maxEccentricPeakVelocity": null,
+      "avgMeanPropulsiveVelocity": null,
+      "maxMeanPropulsiveVelocity": null,
+      "avgConcentricMeanPower": null,
+      "maxConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "maxConcentricPeakPower": null,
+      "avgConcentricDuration": null,
+      "maxConcentricDuration": null,
+      "avgEccentricDuration": null,
+      "maxEccentricDuration": null,
+      "avgConcentricRom": null,
+      "maxConcentricRom": null
+    },
+    {
+      "exercises": [
+        {
+          "category": "BENCH_PRESS",
+          "name": null,
+          "probability": 60
+        },
+        {
+          "category": "SHOULDER_PRESS",
+          "name": null,
+          "probability": 25
+        },
+        {
+          "category": "ROW",
+          "name": null,
+          "probability": 15
+        }
+      ],
+      "duration": 45.75,
+      "repetitionCount": 6,
+      "weight": 0.0,
+      "setType": "ACTIVE",
+      "startTime": "2026-06-12T17:01:01.0",
+      "wktStepIndex": null,
+      "messageIndex": 2,
+      "minimalViableThreshold": null,
+      "avgConcentricMeanVelocity": null,
+      "maxConcentricMeanVelocity": null,
+      "avgEccentricMeanVelocity": null,
+      "maxEccentricMeanVelocity": null,
+      "avgConcentricPeakVelocity": null,
+      "maxConcentricPeakVelocity": null,
+      "avgEccentricPeakVelocity": null,
+      "maxEccentricPeakVelocity": null,
+      "avgMeanPropulsiveVelocity": null,
+      "maxMeanPropulsiveVelocity": null,
+      "avgConcentricMeanPower": null,
+      "maxConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "maxConcentricPeakPower": null,
+      "avgConcentricDuration": null,
+      "maxConcentricDuration": null,
+      "avgEccentricDuration": null,
+      "maxEccentricDuration": null,
+      "avgConcentricRom": null,
+      "maxConcentricRom": null
+    },
+    {
+      "exercises": [],
+      "duration": 3.25,
+      "repetitionCount": null,
+      "weight": null,
+      "setType": "REST",
+      "startTime": "2026-06-12T17:01:47.0",
+      "wktStepIndex": null,
+      "messageIndex": 3,
+      "minimalViableThreshold": null,
+      "avgConcentricMeanVelocity": null,
+      "maxConcentricMeanVelocity": null,
+      "avgEccentricMeanVelocity": null,
+      "maxEccentricMeanVelocity": null,
+      "avgConcentricPeakVelocity": null,
+      "maxConcentricPeakVelocity": null,
+      "avgEccentricPeakVelocity": null,
+      "maxEccentricPeakVelocity": null,
+      "avgMeanPropulsiveVelocity": null,
+      "maxMeanPropulsiveVelocity": null,
+      "avgConcentricMeanPower": null,
+      "maxConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "maxConcentricPeakPower": null,
+      "avgConcentricDuration": null,
+      "maxConcentricDuration": null,
+      "avgEccentricDuration": null,
+      "maxEccentricDuration": null,
+      "avgConcentricRom": null,
+      "maxConcentricRom": null
+    },
+    {
+      "exercises": [
+        {
+          "category": "BENCH_PRESS",
+          "name": null,
+          "probability": 60
+        },
+        {
+          "category": "SHOULDER_PRESS",
+          "name": null,
+          "probability": 25
+        },
+        {
+          "category": "TRICEPS_EXTENSION",
+          "name": null,
+          "probability": 15
+        }
+      ],
+      "duration": 30.625,
+      "repetitionCount": 4,
+      "weight": 0.0,
+      "setType": "ACTIVE",
+      "startTime": "2026-06-12T17:01:50.0",
+      "wktStepIndex": null,
+      "messageIndex": 4,
+      "minimalViableThreshold": null,
+      "avgConcentricMeanVelocity": null,
+      "maxConcentricMeanVelocity": null,
+      "avgEccentricMeanVelocity": null,
+      "maxEccentricMeanVelocity": null,
+      "avgConcentricPeakVelocity": null,
+      "maxConcentricPeakVelocity": null,
+      "avgEccentricPeakVelocity": null,
+      "maxEccentricPeakVelocity": null,
+      "avgMeanPropulsiveVelocity": null,
+      "maxMeanPropulsiveVelocity": null,
+      "avgConcentricMeanPower": null,
+      "maxConcentricMeanPower": null,
+      "avgConcentricPeakPower": null,
+      "maxConcentricPeakPower": null,
+      "avgConcentricDuration": null,
+      "maxConcentricDuration": null,
+      "avgEccentricDuration": null,
+      "maxEccentricDuration": null,
+      "avgConcentricRom": null,
+      "maxConcentricRom": null
+    },
+    {
+      "setType": "REST",
+      "duration": null,
+      "exercises": [],
+      "repetitionCount": null,
+      "weight": -1,
+      "startTime": null
+    },
+    {
+      "exercises": [
+        {
+          "probability": 100,
+          "category": "LUNGE",
+          "name": null
+        }
+      ],
+      "repetitionCount": 1,
+      "duration": null,
+      "weight": 0,
+      "setType": "ACTIVE"
+    },
+    {
+      "setType": "REST",
+      "duration": null,
+      "exercises": [],
+      "repetitionCount": null,
+      "weight": -1,
+      "startTime": null
+    }
+  ]
+}

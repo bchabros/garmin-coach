@@ -22,6 +22,11 @@ One conversational surface needs finished-DB reads, local logs and guarded refre
 - #106 adds offline observation-history reads. Its selected-period refresh reuses
   the bounded repair preview/confirmation, including source/check bindings and
   partial-read outcomes; it does not add another live metric read.
+- ADR 0039 adds cached recorded-set/history reads, explicit selected-source refresh,
+  account-reading preview and approval-bound recorded-set confirmation. The shared
+  application owns complete proposals and independent write/read-back/save outcomes;
+  metrics remain offline. This extends the account-operation scope without enabling
+  unrestricted transport from coaching reads.
 - MCP push uses the separate confirmation token of ADRs 0019/0021; the original
   spec-hash handshake and initial fixed transport-tool count are superseded.
 - Workout status must reconcile the account on each read, without an opt-out.

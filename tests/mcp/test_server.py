@@ -39,6 +39,12 @@ def _past(days: int) -> str:
 
 
 EXPECTED_TOOLS = {
+    "confirm_set_correction",
+    "get_set_correction_state",
+    "refresh_activity_sets",
+    "resolve_set_conflict",
+    "get_activity_sets",
+    "preview_set_correction",
     "get_fitness_history",
     # read (local DB)
     "get_snapshot",
@@ -203,6 +209,9 @@ def test_unschedule_preview_without_a_receipt_never_logs_in(athlete_home, existi
 # only read. Claude Desktop asks before every call unless the tool says so, and only a
 # tool that says so can be allowed for good (issue #79).
 READ_ONLY_TOOLS = {
+    "get_set_correction_state",
+    "get_activity_sets",
+    "preview_set_correction",
     "get_fitness_history",
     "get_exercise_mappings",
     "get_snapshot",
@@ -226,6 +235,9 @@ READ_ONLY_TOOLS = {
 
 # The tools that reach the Garmin account, reading or writing.
 GARMIN_TOOLS = {
+    "confirm_set_correction",
+    "refresh_activity_sets",
+    "preview_set_correction",
     "get_workout_status",
     "push_preview",
     "push_confirm",

@@ -359,7 +359,11 @@ def _write_activity_sets(
     """Normalize and stage the complete overlay without touching captured sets."""
     rows = manual_sets.normalize(activity_id, stations)
     activity_date = _activity_date(conn, activity_id)
+    from . import set_history
+
+    set_history.archive(conn, activity_id, "replaced_manual")
     db.replace_manual_activity_sets(conn, activity_id, rows)
+    set_history.baseline(conn, activity_id)
     return {
         "date": activity_date,
         "n_sets": len(rows),

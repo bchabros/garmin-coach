@@ -219,6 +219,29 @@ read and controlled input errors; MCP protocol registration only delegates.
 The source/settings investigation and its limits are recorded in ADR 0009.
 Authenticated-client acceptance remains separate from synthetic read/protocol tests.
 
+`set_corrections` owns explicit account preview and cached captured/manual reads.
+`core.recorded_sets` builds the pure proposal from validated identities and complete
+source entries: pairing, recognition-candidate replacement/preservation, explicit
+add/delete and nullable unrecorded timing. Neither the builder nor cached reads
+connect to Garmin. Its recorded-set generic identities are distinct from authored
+workout aliases; the authored-workout taxonomy and kilogram contract are unchanged.
+Test its public operations with temporary SQLite and injected source callbacks;
+invalid local proposals must refuse before connecting. Account payload evidence
+is distinct from normalized station summaries. Operator add/delete and Garmin UI
+acceptance cannot be established by fake account tests.
+`tests/fixtures/recorded-sets-provenance.md` distinguishes observed source shapes
+from artificial fixture measurements and links the operator evidence.
+
+`set_history` shares validated raw/core replacement, correction baselines and
+retirement history between selected refresh, normal import and nightly rechecks.
+Its public operations use temporary SQLite and source callbacks in
+`tests/test_set_history.py`; nightly source writes feed the existing final mart pass.
+
+`set_confirm.confirm` owns the approval-bound account write/read-back/save outcome.
+Test with a fake complete account at that public boundary, including stale proposals,
+uncertain PUT, read-back mismatch and saved facts after rebuild failure. The transport
+uses the pinned library's full-payload setter and deliberately has no write retry.
+
 Coach thresholds are read directly through `coach.thresholds.read()`. The report
 loads charts only inside `generate_report()`, so CLI, daily, and MCP startup does
 not initialize Matplotlib even when the CLI imports the report module.
